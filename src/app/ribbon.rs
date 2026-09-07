@@ -802,7 +802,7 @@ impl PaintApp {
                     for style in PaintStyle::ALL {
                         if controls::selectable(
                             ui,
-                            self.fill == style,
+                            self.fill_gradient.is_none() && self.fill == style,
                             if style == PaintStyle::None {
                                 "No fill"
                             } else {
@@ -812,6 +812,25 @@ impl PaintApp {
                         .clicked()
                         {
                             self.fill = style;
+                            self.fill_gradient = None;
+                            ui.close_menu();
+                        }
+                    }
+                    ui.separator();
+                    ui.label("Color 1 to Color 2");
+                    for gradient in Gradient::ALL {
+                        let (keys, description) = match gradient {
+                            Gradient::Vertical => ("V", "Color 1 at the top; Color 2 at the bottom."),
+                            Gradient::Horizontal => ("H", "Color 1 on the left; Color 2 on the right."),
+                            Gradient::Radial => ("R", "Color 1 at the center; Color 2 at the oval boundary of the shape's bounds."),
+                        };
+                        let response = ui.selectable_label(
+                            self.fill_gradient == Some(gradient),
+                            gradient.name(),
+                        ).on_hover_text(description);
+                        controls::register(ui, &response, keys, keytips::Kind::Button);
+                        if response.clicked() {
+                            self.fill_gradient = Some(gradient);
                             ui.close_menu();
                         }
                     }
@@ -1361,5 +1380,124 @@ mod gallery_tests {
         );
         assert_eq!(app.tool, Tool::Lightning);
         assert!(!keytips::popup_open(&ctx));
+    }
+}
+
+#[cfg(test)]
+mod gradient_tests {
+    use super::*;
+
+    fn frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) -> FullOutput {
+        let mut input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 850.0))),
+            time: Some(ctx.cumulative_pass_nr() as f64 / 30.0),
+            events,
+            ..Default::default()
+        };
+        eframe::App::raw_input_hook(app, ctx, &mut input);
+        ctx.run(input, |ctx| {
+            if !app.ribbon_keyboard(ctx) {
+                app.shortcut(ctx);
+            }
+            app.titlebar(ctx);
+            app.ribbon(ctx);
+            app.quick_access_below(ctx);
+            app.status(ctx);
+            app.canvas(ctx);
+            app.keyboard_menu(ctx);
+            app.dialogs(ctx);
+        })
+    }
+
+    fn keys(app: &mut PaintApp, ctx: &Context, keys: &[Key]) {
+        for &key in keys {
+            frame(
+                app,
+                ctx,
+                vec![Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                }],
+            );
+        }
+    }
+
+    fn settle(app: &mut PaintApp, ctx: &Context) -> FullOutput {
+        for _ in 0..2 {
+            frame(app, ctx, vec![]);
+        }
+        frame(app, ctx, vec![])
+    }
+
+    fn has_label(output: &FullOutput, label: &str) -> bool {
+        output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, node)| node.label() == Some(label))
+    }
+
+    #[test]
+    fn fill_gradient_keytips_preserve_all_paint_choices_and_outline_menu() {
+        let context = Context::default();
+        context.enable_accesskit();
+        let mut app = PaintApp::new_with_context(&context, false);
+        app.outline = PaintStyle::Marker;
+        settle(&mut app, &context);
+        for (gradient, key) in [
+            (Gradient::Vertical, Key::V),
+            (Gradient::Horizontal, Key::H),
+            (Gradient::Radial, Key::R),
+        ] {
+            keys(&mut app, &context, &[Key::F10, Key::H, Key::L]);
+            let menu = settle(&mut app, &context);
+            for style in PaintStyle::ALL {
+                assert!(has_label(
+                    &menu,
+                    if style == PaintStyle::None {
+                        "No fill"
+                    } else {
+                        style.name()
+                    }
+                ));
+            }
+            for gradient in Gradient::ALL {
+                assert!(has_label(&menu, gradient.name()));
+            }
+            keys(&mut app, &context, &[key]);
+            settle(&mut app, &context);
+            assert_eq!(app.fill_gradient, Some(gradient));
+            assert_eq!(app.outline, PaintStyle::Marker);
+            assert!(!keytips::active(&context));
+        }
+        for (style, key) in PaintStyle::ALL.into_iter().zip([
+            Key::Num1,
+            Key::Num2,
+            Key::Num3,
+            Key::Num4,
+            Key::Num5,
+            Key::Num6,
+            Key::Num7,
+        ]) {
+            app.fill_gradient = Some(Gradient::Radial);
+            keys(&mut app, &context, &[Key::F10, Key::H, Key::L]);
+            settle(&mut app, &context);
+            keys(&mut app, &context, &[key]);
+            settle(&mut app, &context);
+            assert_eq!(app.fill, style);
+            assert_eq!(app.fill_gradient, None);
+        }
+        keys(&mut app, &context, &[Key::F10, Key::H, Key::O]);
+        let outline = settle(&mut app, &context);
+        for gradient in Gradient::ALL {
+            assert!(!has_label(&outline, gradient.name()));
+        }
+        assert!(has_label(&outline, "No outline"));
     }
 }

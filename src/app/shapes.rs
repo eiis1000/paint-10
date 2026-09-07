@@ -29,7 +29,21 @@ struct ShapeStyle {
     colors: [Color; 2],
     outline: PaintStyle,
     fill: PaintStyle,
+    fill_gradient: Option<Gradient>,
     size: u32,
+}
+
+impl ShapeStyle {
+    fn resolved_fill(self, color_slot: usize) -> ShapeFill {
+        if let Some(direction) = self.fill_gradient {
+            ShapeFill::Gradient {
+                direction,
+                colors: self.colors,
+            }
+        } else {
+            ShapeFill::Paint(self.colors[1 - color_slot], self.fill)
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -226,7 +240,7 @@ impl ShapeDraft {
     fn render(&self, image: &mut RgbaImage) {
         let foreground = self.style.colors[self.color_slot];
         let outline = Some((foreground, self.style.outline));
-        let fill = Some((self.style.colors[1 - self.color_slot], self.style.fill));
+        let fill = Some(self.style.resolved_fill(self.color_slot));
         match &self.geometry {
             ShapeGeometry::Primitive { tool, start, end } => {
                 d::styled_shape(image, *tool, *start, *end, self.style.size, outline, fill);
@@ -274,8 +288,13 @@ impl PaintApp {
             colors: self.colors,
             outline: self.outline,
             fill: self.fill,
+            fill_gradient: self.fill_gradient,
             size: self.size,
         }
+    }
+
+    pub(in crate::app) fn shape_fill(&self, color_slot: usize) -> ShapeFill {
+        self.shape_style().resolved_fill(color_slot)
     }
 
     pub(in crate::app) fn refresh_shape_style(&mut self) {
@@ -415,6 +434,120 @@ mod tests {
             button: PointerButton::Primary,
             pressed,
             modifiers: Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn gradient_shape_and_polygon_drafts_recolor_resize_save_and_undo() {
+        for tool in [Tool::Rectangle, Tool::Polygon] {
+            for gradient in Gradient::ALL {
+                let context = Context::default();
+                let mut app = PaintApp::new_with_context(&context, false);
+                app.doc = Document::from_image(RgbaImage::new(180, 140));
+                app.set_tool(tool);
+                app.outline = PaintStyle::None;
+                app.fill_gradient = Some(gradient);
+                app.colors = [WHITE, [0, 0, 0, 0]];
+                for _ in 0..2 {
+                    canvas_frame(&mut app, &context, vec![]);
+                }
+                let origin = app.canvas_rect.min;
+                let start = origin + vec2(20.5, 20.5);
+                let end = origin + vec2(100.5, if tool == Tool::Polygon { 20.5 } else { 100.5 });
+                canvas_frame(
+                    &mut app,
+                    &context,
+                    vec![
+                        Event::PointerMoved(start),
+                        pointer_button(start, true),
+                        Event::PointerMoved(end),
+                        pointer_button(end, false),
+                    ],
+                );
+                if tool == Tool::Polygon {
+                    let third = origin + vec2(60.5, 100.5);
+                    canvas_frame(
+                        &mut app,
+                        &context,
+                        vec![
+                            Event::PointerMoved(third),
+                            pointer_button(third, true),
+                            pointer_button(third, false),
+                        ],
+                    );
+                    canvas_frame(
+                        &mut app,
+                        &context,
+                        vec![Event::Key {
+                            key: Key::Enter,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: Modifiers::NONE,
+                        }],
+                    );
+                }
+                assert!(app.shape_draft.is_some());
+                assert!(app.polygon.is_empty());
+                let white = app.doc.image.clone();
+                app.colors[0] = [210, 180, 60, 255];
+                canvas_frame(&mut app, &context, vec![]);
+                assert_ne!(app.doc.image, white);
+                assert!(app
+                    .doc
+                    .image
+                    .pixels()
+                    .filter(|pixel| pixel[3] > 0)
+                    .all(|pixel| pixel.0[..3] == app.colors[0][..3]));
+                let colored = app.doc.image.clone();
+                let handle = origin + vec2(101.0, 101.0);
+                canvas_frame(
+                    &mut app,
+                    &context,
+                    vec![
+                        Event::PointerMoved(handle),
+                        pointer_button(handle, true),
+                        pointer_button(handle, false),
+                    ],
+                );
+                assert_eq!(
+                    app.doc.image, colored,
+                    "merely touching a handle must not change a gradient"
+                );
+                canvas_frame(&mut app, &context, vec![pointer_button(handle, true)]);
+                let resized = handle + vec2(40.0, 20.0);
+                canvas_frame(
+                    &mut app,
+                    &context,
+                    vec![Event::PointerMoved(resized), pointer_button(resized, false)],
+                );
+                let draft = app.shape_draft.as_ref().unwrap();
+                assert_eq!(draft.geometry.bounds(), ((20, 20), (140, 120)));
+                let bounds = draft.bounds(&app.doc.image).unwrap();
+                assert!(app
+                    .doc
+                    .image
+                    .enumerate_pixels()
+                    .filter(|(_, _, pixel)| pixel[3] > 0)
+                    .all(|(x, y, _)| bounds.contains((x as i32, y as i32))));
+                let final_pixels = app.doc.image.clone();
+                assert_ne!(final_pixels, colored);
+                app.commit_shape();
+                let mut png = std::io::Cursor::new(Vec::new());
+                app.doc
+                    .composite()
+                    .write_to(&mut png, image::ImageFormat::Png)
+                    .unwrap();
+                assert_eq!(
+                    image::load_from_memory(png.get_ref()).unwrap().to_rgba8(),
+                    final_pixels
+                );
+                app.doc.undo();
+                assert!(app.doc.image.pixels().all(|pixel| pixel[3] == 0));
+                assert!(!app.doc.can_undo());
+                app.doc.redo();
+                assert_eq!(app.doc.image, final_pixels);
+            }
         }
     }
 
@@ -597,6 +730,7 @@ mod tests {
                 colors: [BLACK, WHITE],
                 outline: PaintStyle::Solid,
                 fill: PaintStyle::None,
+                fill_gradient: None,
                 size: 1,
             },
         }
