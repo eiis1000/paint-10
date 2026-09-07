@@ -596,14 +596,71 @@ impl PaintApp {
     }
 
     fn print_dialog(&mut self, ui: &mut Ui) -> bool {
+        use crate::printing::{PaperSize, MAX_PAGES, MAX_PAPER_MM};
+
         let mut close = false;
 
         ui.strong("Page setup");
         ui.horizontal(|ui| {
             ui.label("Paper:");
-            ui.selectable_value(&mut self.page.a4, false, "Letter");
-            ui.selectable_value(&mut self.page.a4, true, "A4");
+            let paper = ComboBox::from_id_salt("print_paper")
+                .width(225.0)
+                .selected_text(self.page.paper.name())
+                .show_ui(ui, |ui| {
+                    for paper in PaperSize::PRESETS {
+                        let (width, height) = paper.dimensions_mm();
+                        ui.selectable_value(
+                            &mut self.page.paper,
+                            paper,
+                            format!("{} ({width:.2} × {height:.2} mm)", paper.name()),
+                        );
+                    }
+                    ui.separator();
+                    if ui
+                        .selectable_label(
+                            matches!(self.page.paper, PaperSize::Custom { .. }),
+                            "Custom paper size",
+                        )
+                        .clicked()
+                    {
+                        let (width_mm, height_mm) = self.page.paper.dimensions_mm();
+                        self.page.paper = PaperSize::Custom {
+                            width_mm,
+                            height_mm,
+                        };
+                    }
+                });
+            register_button(ui, &paper.response);
         });
+        if let PaperSize::Custom {
+            width_mm,
+            height_mm,
+        } = &mut self.page.paper
+        {
+            ui.label("Custom paper size (mm)");
+            ui.horizontal(|ui| {
+                ui.label("Width");
+                ui.add(
+                    DragValue::new(width_mm)
+                        .range(0.0..=MAX_PAPER_MM)
+                        .clamp_existing_to_range(false)
+                        .max_decimals(3)
+                        .speed(0.5),
+                );
+                ui.label("Height");
+                ui.add(
+                    DragValue::new(height_mm)
+                        .range(0.0..=MAX_PAPER_MM)
+                        .clamp_existing_to_range(false)
+                        .max_decimals(3)
+                        .speed(0.5),
+                );
+            });
+            ui.small("Landscape swaps width and height.");
+        } else {
+            let (width, height) = self.page.paper.dimensions_mm();
+            ui.label(format!("{width:.2} × {height:.2} mm"));
+        }
         ui.horizontal(|ui| {
             ui.label("Orientation:");
             ui.selectable_value(&mut self.page.landscape, false, "Portrait");
@@ -621,7 +678,7 @@ impl PaintApp {
             .enumerate()
             {
                 ui.label(label);
-                let response = ui.add(DragValue::new(value).range(0.0..=100.0));
+                let response = ui.add(DragValue::new(value).range(0.0..=MAX_PAPER_MM));
                 if i == 0 {
                     initial_focus(ui, &response);
                 }
@@ -633,9 +690,9 @@ impl PaintApp {
         ui.checkbox(&mut self.page.fit, "Fit to pages");
         if self.page.fit {
             ui.horizontal(|ui| {
-                ui.add(DragValue::new(&mut self.page.fit_across).range(1..=10));
+                ui.add(DragValue::new(&mut self.page.fit_across).range(1..=MAX_PAGES));
                 ui.label("across by");
-                ui.add(DragValue::new(&mut self.page.fit_down).range(1..=10));
+                ui.add(DragValue::new(&mut self.page.fit_down).range(1..=MAX_PAGES));
                 ui.label("down");
             });
         }
@@ -654,7 +711,9 @@ impl PaintApp {
             ui.checkbox(&mut self.page.center_h, "Horizontally");
             ui.checkbox(&mut self.page.center_v, "Vertically");
         });
-        match self.page.layout(&self.doc.image) {
+        let layout = self.page.layout(&self.doc.image);
+        let valid = layout.is_ok();
+        match layout {
             Ok(layout) => {
                 ui.label(format!(
                     "{} page(s) · {} across × {} down",
@@ -669,7 +728,7 @@ impl PaintApp {
         }
         ui.separator();
         ui.horizontal(|ui| {
-            if default_button(ui, "Print…", self.page.layout(&self.doc.image).is_ok()) {
+            if default_button(ui, "Print…", valid) {
                 match crate::printing::print(&self.doc.composite(), &self.page) {
                     Ok(()) => {
                         self.message = "Print job submitted".into();
@@ -678,7 +737,10 @@ impl PaintApp {
                     Err(e) => self.dialog_error = Some(format!("Print: {e}")),
                 }
             }
-            if dialog_button(ui, "Save PDF…") {
+            if ui
+                .add_enabled_ui(valid, |ui| dialog_button(ui, "Save PDF…"))
+                .inner
+            {
                 if let Some(path) = rfd::FileDialog::new()
                     .add_filter("PDF document", &["pdf"])
                     .set_file_name("Untitled.pdf")
@@ -695,7 +757,10 @@ impl PaintApp {
                     }
                 }
             }
-            if dialog_button(ui, "Preview") {
+            if ui
+                .add_enabled_ui(valid, |ui| dialog_button(ui, "Preview"))
+                .inner
+            {
                 self.print_preview = Some(crate::print_preview::PrintPreview::new(
                     self.doc.composite(),
                 ));
