@@ -34,15 +34,19 @@ impl PaintApp {
             return Some(shape.bounds(&self.doc.image));
         }
         if let Some(obj) = self.object.and_then(|i| self.doc.objects.get(i)) {
-            let img = obj.render();
-            Some(Region::between(
-                obj.pos,
-                (
-                    obj.pos.0 + img.width() as i32 - 1,
-                    obj.pos.1 + img.height() as i32 - 1,
-                ),
-                &self.doc.image,
-            ))
+            let (width, height) = obj.rendered_dimensions()?;
+            let left = i64::from(obj.pos.0).max(0);
+            let top = i64::from(obj.pos.1).max(0);
+            let right =
+                (i64::from(obj.pos.0) + i64::from(width)).min(i64::from(self.doc.image.width()));
+            let bottom =
+                (i64::from(obj.pos.1) + i64::from(height)).min(i64::from(self.doc.image.height()));
+            (right > left && bottom > top).then(|| Region {
+                x: left as u32,
+                y: top as u32,
+                w: (right - left) as u32,
+                h: (bottom - top) as u32,
+            })
         } else {
             self.selection
         }
@@ -80,17 +84,40 @@ impl PaintApp {
         })
     }
 
-    pub(in crate::app) fn copy(&mut self) {
-        if let Some(img) = self.selected_image() {
+    pub(in crate::app) fn copy(&mut self) -> bool {
+        // Preserve keyed source colors, so Paste can still switch between
+        // Opaque and Transparent selection without losing background pixels.
+        let image = self
+            .object
+            .and_then(|index| self.doc.objects.get(index))
+            .map(Object::render_unkeyed)
+            .or_else(|| self.selected_image());
+        if let Some(img) = image {
             if let Some(cb) = &mut self.clipboard {
-                let _ = cb.set_image(arboard::ImageData {
+                if let Err(error) = cb.set_image(arboard::ImageData {
                     width: img.width() as usize,
                     height: img.height() as usize,
                     bytes: Cow::Borrowed(img.as_raw()),
-                });
+                }) {
+                    self.message = format!("Could not copy the selection: {error}");
+                    return false;
+                }
             }
             self.copied = Some(img);
-            self.message = "Selection copied".into();
+            self.message = if self.clipboard.is_some() {
+                "Selection copied"
+            } else {
+                "Selection copied within Paint 10; the system clipboard is unavailable"
+            }
+            .into();
+            return true;
+        }
+        false
+    }
+
+    pub(in crate::app) fn cut(&mut self) {
+        if self.copy() {
+            self.delete_selection();
         }
     }
 
@@ -131,23 +158,39 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn paste_clipboard(&mut self) {
-        let img = self
-            .clipboard
-            .as_mut()
-            .and_then(|c| c.get_image().ok())
-            .and_then(|img| {
-                RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.into_owned())
-            })
-            .or_else(|| self.copied.clone());
-        if let Some(img) = img {
-            self.insert_image(img);
+        // Once a system clipboard exists it is authoritative. Its contents may
+        // have changed to text (or been cleared) since our last image copy.
+        // The local fallback is only for systems without clipboard access.
+        let result = if let Some(clipboard) = &mut self.clipboard {
+            clipboard
+                .get_image()
+                .map_err(|error| match error {
+                    arboard::Error::ContentNotAvailable => {
+                        "No picture on the clipboard. Use Paste from to insert a file.".into()
+                    }
+                    error => format!("Could not read the clipboard: {error}"),
+                })
+                .and_then(|image| {
+                    let width = u32::try_from(image.width).unwrap_or(u32::MAX);
+                    let height = u32::try_from(image.height).unwrap_or(u32::MAX);
+                    if !d::valid_size(width, height) {
+                        return Err("Clipboard picture exceeds the image size limit.".into());
+                    }
+                    RgbaImage::from_raw(width, height, image.bytes.into_owned())
+                        .ok_or_else(|| "The clipboard picture has invalid pixel data.".into())
+                })
         } else {
-            self.message = "No picture on the clipboard. Use Paste from to insert a file.".into();
+            self.copied
+                .clone()
+                .ok_or_else(|| "No picture has been copied in Paint 10.".into())
+        };
+        match result {
+            Ok(image) => self.insert_image(image),
+            Err(error) => self.message = error,
         }
     }
 
     pub(in crate::app) fn insert_image(&mut self, img: RgbaImage) {
-        self.commit_shape();
         if !d::valid_size(img.width(), img.height()) {
             self.message = "Picture is too large (16 megapixel limit).".into();
             return;
@@ -158,6 +201,9 @@ impl PaintApp {
             self.message = "The expanded canvas would exceed the 16 megapixel limit.".into();
             return;
         }
+        self.finish_editing();
+        let mut opaque = RgbaImage::from_pixel(img.width(), img.height(), Rgba(self.colors[1]));
+        imageops::overlay(&mut opaque, &img, 0, 0);
         self.doc.begin();
         if img.width() > self.doc.image.width() || img.height() > self.doc.image.height() {
             self.doc.image = d::resize_canvas(
@@ -172,11 +218,12 @@ impl PaintApp {
             );
         }
         let i = self.doc.add_object(Object {
-            kind: ObjectKind::Image(img),
+            kind: ObjectKind::Image(opaque),
             pos: (0, 0),
             angle: 0.,
             scale: 1.,
             color_key: self.transparent.then_some(self.colors[1]),
+            transform: Default::default(),
         });
         self.doc.commit();
         self.tool = Tool::Select;
@@ -229,6 +276,7 @@ impl PaintApp {
             angle: 0.,
             scale: 1.,
             color_key: self.transparent.then_some(self.colors[1]),
+            transform: Default::default(),
         });
         self.select_object(i);
         Some(i)
@@ -327,6 +375,74 @@ fn inside_polygon(p: Point, points: &[Point]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visible_object_selection_is_an_intersection_without_phantom_edge_pixels() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let index = app.doc.add_object(Object::new(
+            ObjectKind::Image(RgbaImage::from_pixel(20, 10, Rgba(BLACK))),
+            (-5, -3),
+        ));
+        app.select_object(index);
+        let visible = app.selected_region().unwrap();
+        assert_eq!((visible.x, visible.y, visible.w, visible.h), (0, 0, 15, 7));
+        for position in [(-20, 0), (0, -10), (900, 0), (0, 600), (i32::MAX, i32::MAX)] {
+            app.doc.objects[index].pos = position;
+            assert!(app.selected_region().is_none(), "{position:?}");
+        }
+    }
+
+    #[test]
+    fn copied_transparent_selection_can_be_pasted_opaque_again() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let mut image = RgbaImage::from_pixel(3, 2, Rgba(WHITE));
+        image.put_pixel(1, 0, Rgba(BLACK));
+        app.transparent = true;
+        app.insert_image(image);
+        let original = app.object.unwrap();
+        assert_eq!(app.doc.objects[original].render().get_pixel(0, 0)[3], 0);
+
+        assert!(app.copy());
+        app.paste_clipboard();
+        let pasted = app.object.unwrap();
+        assert_ne!(original, pasted);
+        assert_eq!(app.doc.objects[pasted].render().get_pixel(0, 0)[3], 0);
+        app.transparent = false;
+        app.sync_image_transparency();
+        assert_eq!(
+            *app.doc.objects[pasted].render().get_pixel(0, 0),
+            Rgba(WHITE)
+        );
+        assert_eq!(
+            *app.doc.objects[pasted].render().get_pixel(1, 0),
+            Rgba(BLACK)
+        );
+    }
+
+    #[test]
+    fn pasted_alpha_uses_color_two_and_remains_reversible_by_selection_mode() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let background = [20, 50, 200, 255];
+        app.colors[1] = background;
+        app.insert_image(RgbaImage::new(2, 2));
+        let index = app.object.unwrap();
+        assert_eq!(
+            *app.doc.objects[index].render().get_pixel(0, 0),
+            Rgba(background)
+        );
+        app.transparent = true;
+        app.sync_image_transparency();
+        assert_eq!(app.doc.objects[index].render().get_pixel(0, 0)[3], 0);
+        app.transparent = false;
+        app.sync_image_transparency();
+        assert_eq!(
+            *app.doc.objects[index].render().get_pixel(0, 0),
+            Rgba(background)
+        );
+    }
 
     #[test]
     fn clearing_a_mask_preserves_unselected_pixels_in_its_bounds() {

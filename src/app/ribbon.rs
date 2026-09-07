@@ -1,6 +1,6 @@
 use super::*;
 
-const PALETTE: [[u8; 3]; 20] = [
+pub(in crate::app) const PALETTE: [[u8; 3]; 20] = [
     [0, 0, 0],
     [127, 127, 127],
     [136, 0, 21],
@@ -21,6 +21,29 @@ const PALETTE: [[u8; 3]; 20] = [
     [153, 217, 234],
     [112, 146, 190],
     [200, 191, 231],
+];
+
+pub(in crate::app) const PALETTE_NAMES: [&str; 20] = [
+    "Black",
+    "Gray",
+    "Dark red",
+    "Red",
+    "Orange",
+    "Yellow",
+    "Green",
+    "Turquoise",
+    "Indigo",
+    "Purple",
+    "White",
+    "Light gray",
+    "Brown",
+    "Rose",
+    "Gold",
+    "Light yellow",
+    "Lime",
+    "Light turquoise",
+    "Blue gray",
+    "Lavender",
 ];
 
 fn ribbon_focus(ui: &Ui, response: &Response) {
@@ -314,7 +337,10 @@ impl PaintApp {
     }
 
     fn clipboard_group(&mut self, ui: &mut Ui, o: Pos2, ctx: &Context) {
-        let has_selection = self.selected_region().is_some();
+        let has_selection = self.text_edit.as_ref().map_or_else(
+            || self.selected_region().is_some(),
+            |state| !state.selection.is_empty(),
+        );
         Self::group(ui, o, 0., 119., "Clipboard");
         if icons::button(
             ui,
@@ -328,7 +354,7 @@ impl PaintApp {
         .on_hover_text("Paste (Ctrl+V)")
         .clicked()
         {
-            self.paste_clipboard();
+            self.action(Action::Paste, ctx);
         }
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(12., 69.), vec2(32., 20.))),
@@ -572,26 +598,85 @@ impl PaintApp {
             0.,
             Color32::WHITE,
         );
-        for (i, tool) in Tool::SHAPES.into_iter().enumerate() {
-            let r = Rect::from_min_size(
-                o + vec2(451. + (i % 8) as f32 * 18., 9. + (i / 8) as f32 * 25.),
-                vec2(18., 25.),
-            );
-            if icons::button(
+        let offset_id = ui.id().with("shape_gallery_offset");
+        let mut offset = ui
+            .ctx()
+            .data(|data| data.get_temp::<f32>(offset_id).unwrap_or(0.0));
+        ui.scope_builder(
+            UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(451.0, 9.0), vec2(126.0, 75.0))),
+            |ui| {
+                let gallery = ScrollArea::vertical()
+                    .id_salt("shape_gallery")
+                    .max_height(75.0)
+                    .auto_shrink([false, false])
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .vertical_scroll_offset(offset)
+                    .show(ui, |ui| {
+                        let (rect, _) = ui.allocate_exact_size(vec2(126.0, 100.0), Sense::hover());
+                        self.shape_gallery_buttons(ui, rect.min, vec2(18.0, 25.0))
+                    });
+                offset = gallery.state.offset.y;
+                // The inner vertical scroll area consumes scroll requests on
+                // both axes. Forward focus to the ribbon's horizontal scroller.
+                if let Some(rect) = gallery.inner.1 {
+                    ui.scroll_to_rect(rect, None);
+                }
+            },
+        );
+        for (row, icon, name, enabled, direction) in [
+            (0, Icon::ChevronUp, "Scroll shapes up", offset > 0.0, -1.0),
+            (
+                1,
+                Icon::ChevronDown,
+                "Scroll shapes down",
+                offset < 25.0,
+                1.0,
+            ),
+        ] {
+            let response = icons::button(
                 ui,
-                tool.name(),
-                r,
-                Icon::Tool(tool),
+                name,
+                Rect::from_min_size(o + vec2(580.0, 9.0 + row as f32 * 25.0), vec2(17.0, 25.0)),
+                icon,
                 "",
-                self.tool == tool,
-                true,
+                false,
+                enabled,
             )
-            .on_hover_text(tool.name())
-            .clicked()
-            {
-                self.set_tool(tool);
+            .on_hover_text(name);
+            response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, name));
+            if response.clicked() {
+                offset = (offset + direction * 25.0).clamp(0.0, 25.0);
             }
         }
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(offset_id, offset));
+        let more = icons::button(
+            ui,
+            "More shapes",
+            Rect::from_min_size(o + vec2(580.0, 59.0), vec2(17.0, 25.0)),
+            Icon::ChevronDown,
+            "",
+            false,
+            true,
+        )
+        .on_hover_text("More shapes");
+        more.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "More shapes"));
+        let popup = ui.id().with("all_shapes");
+        if more.clicked() {
+            ui.memory_mut(|memory| memory.toggle_popup(popup));
+        }
+        egui::popup::popup_below_widget(
+            ui,
+            popup,
+            &more,
+            egui::PopupCloseBehavior::CloseOnClickOutside,
+            |ui| {
+                let (rect, _) = ui.allocate_exact_size(vec2(154.0, 100.0), Sense::hover());
+                if self.shape_gallery_buttons(ui, rect.min, vec2(22.0, 25.0)).0 {
+                    ui.memory_mut(|memory| memory.close_popup());
+                }
+            },
+        );
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(605., 11.), vec2(88., 76.))),
             |ui| {
@@ -683,7 +768,46 @@ impl PaintApp {
         );
     }
 
+    fn shape_gallery_buttons(
+        &mut self,
+        ui: &mut Ui,
+        origin: Pos2,
+        cell: Vec2,
+    ) -> (bool, Option<Rect>) {
+        let mut selected = false;
+        let mut focused = None;
+        for (index, tool) in Tool::SHAPES.into_iter().enumerate() {
+            let rect = Rect::from_min_size(
+                origin + vec2((index % 7) as f32 * cell.x, (index / 7) as f32 * cell.y),
+                cell,
+            );
+            let response = icons::button(
+                ui,
+                tool.name(),
+                rect,
+                Icon::Tool(tool),
+                "",
+                self.tool == tool,
+                true,
+            )
+            .on_hover_text(tool.name());
+            if response.gained_focus() {
+                focused = Some(rect);
+            }
+            if response.clicked() {
+                self.set_tool(tool);
+                selected = true;
+            }
+        }
+        (selected, focused)
+    }
+
     fn colors_group(&mut self, ui: &mut Ui, o: Pos2) {
+        self.colors_group_at(ui, o, 761.0);
+    }
+
+    pub(in crate::app) fn colors_group_at(&mut self, ui: &mut Ui, origin: Pos2, x: f32) {
+        let o = origin + vec2(x - 761.0, 0.0);
         Self::group(ui, o, 761., 346., "Colors");
         for i in 0..2 {
             let r = Rect::from_min_size(o + vec2(767. + i as f32 * 47., 5.), vec2(44., 81.));
@@ -894,6 +1018,13 @@ impl PaintApp {
                 if ui.button("Full screen     F11").clicked() {
                     self.show_picture(ctx);
                 }
+                let mut thumbnail = Self::thumbnail_enabled(ctx);
+                if ui
+                    .add_enabled(self.zoom > 1.0, Checkbox::new(&mut thumbnail, "Thumbnail"))
+                    .changed()
+                {
+                    Self::set_thumbnail_enabled(ctx, thumbnail);
+                }
                 if ui.button("Fit to window").clicked() {
                     let space = ctx.available_rect().size() - vec2(30., 40.);
                     self.zoom = (space.x / self.doc.image.width() as f32)
@@ -923,15 +1054,14 @@ impl PaintApp {
             ui.close_menu();
         }
         if ui.button("Print preview").clicked() {
-            self.commit_text();
-            self.finish_polygon();
-            self.commit_shape();
+            self.finish_editing();
             self.print_preview = Some(crate::print_preview::PrintPreview::new(
                 self.doc.composite(),
             ));
             ui.close_menu();
         }
         if ui.button("Page setup…").clicked() {
+            self.finish_editing();
             self.dialog = Some(Dialog::Print);
             ui.close_menu();
         }
@@ -949,6 +1079,7 @@ impl PaintApp {
             .add_enabled(self.job.is_none(), Button::new("Send in email…"))
             .clicked()
         {
+            self.finish_editing();
             let img = self.doc.composite();
             self.start_job(ctx, move || {
                 JobResult::Status(
@@ -958,6 +1089,7 @@ impl PaintApp {
             ui.close_menu();
         }
         if ui.button("Set as desktop background…").clicked() {
+            self.finish_editing();
             if let Some(size) = ctx.input(|i| i.viewport().monitor_size) {
                 self.wallpaper_size = (size.x as u32, size.y as u32);
             }
@@ -991,5 +1123,148 @@ impl PaintApp {
             self.action(Action::Close, ctx);
             ui.close_menu();
         }
+    }
+}
+
+#[cfg(test)]
+mod gallery_tests {
+    use super::*;
+
+    fn frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) -> FullOutput {
+        ctx.run(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(500.0, 400.0))),
+                events,
+                time: Some(ctx.cumulative_pass_nr() as f64 / 10.0),
+                ..Default::default()
+            },
+            |ctx| app.ribbon(ctx),
+        )
+    }
+
+    fn node(output: &FullOutput, label: &str) -> (egui::accesskit::NodeId, egui::accesskit::Node) {
+        output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some(label))
+            .cloned()
+            .unwrap_or_else(|| panic!("missing accessible shape: {label}"))
+    }
+
+    #[test]
+    fn narrow_ribbon_reveals_and_activates_shapes_through_keyboard_focus() {
+        let ctx = Context::default();
+        ctx.enable_accesskit();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let mut output = frame(&mut app, &ctx, vec![]);
+        for tool in Tool::SHAPES {
+            let (_, item) = node(&output, tool.name());
+            assert!(!item.is_disabled());
+        }
+        for tool in [Tool::CloudCallout, Tool::Lightning, Tool::Line] {
+            let (id, _) = node(&output, tool.name());
+            let _ = frame(
+                &mut app,
+                &ctx,
+                vec![Event::AccessKitActionRequest(
+                    egui::accesskit::ActionRequest {
+                        action: egui::accesskit::Action::Focus,
+                        target: id,
+                        data: None,
+                    },
+                )],
+            );
+            for _ in 0..8 {
+                output = frame(&mut app, &ctx, vec![]);
+            }
+            let (_, item) = node(&output, tool.name());
+            let bounds = item.bounds().unwrap();
+            assert!(
+                bounds.x0 >= 0.0 && bounds.x1 <= 500.0,
+                "{} is outside narrow ribbon: {bounds:?}",
+                tool.name()
+            );
+            assert!(
+                bounds.y0 >= 27.0 && bounds.y1 <= 114.0,
+                "{} is outside gallery viewport: {bounds:?}",
+                tool.name()
+            );
+            output = frame(
+                &mut app,
+                &ctx,
+                vec![Event::Key {
+                    key: Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                }],
+            );
+            assert_eq!(app.tool, tool);
+        }
+        let (inline_lightning, _) = node(&output, Tool::Lightning.name());
+        let (more, _) = node(&output, "More shapes");
+        let _ = frame(
+            &mut app,
+            &ctx,
+            vec![Event::AccessKitActionRequest(
+                egui::accesskit::ActionRequest {
+                    action: egui::accesskit::Action::Focus,
+                    target: more,
+                    data: None,
+                },
+            )],
+        );
+        output = frame(
+            &mut app,
+            &ctx,
+            vec![Event::Key {
+                key: Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        assert!(ctx.memory(|memory| memory.any_popup_open()));
+        let (last_shape, _) = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(id, node)| {
+                *id != inline_lightning && node.label() == Some(Tool::Lightning.name())
+            })
+            .unwrap();
+        let _ = frame(
+            &mut app,
+            &ctx,
+            vec![Event::AccessKitActionRequest(
+                egui::accesskit::ActionRequest {
+                    action: egui::accesskit::Action::Focus,
+                    target: *last_shape,
+                    data: None,
+                },
+            )],
+        );
+        let _ = frame(
+            &mut app,
+            &ctx,
+            vec![Event::Key {
+                key: Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        assert_eq!(app.tool, Tool::Lightning);
+        assert!(!ctx.memory(|memory| memory.any_popup_open()));
     }
 }

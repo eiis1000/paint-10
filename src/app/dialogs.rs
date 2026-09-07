@@ -334,16 +334,11 @@ impl PaintApp {
                 (self.resize_w, self.resize_h) = if self.percent {
                     (100, 100)
                 } else {
-                    self.selected_region()
-                        .map(|region| (region.w, region.h))
-                        .unwrap_or(self.doc.image.dimensions())
+                    self.resize_dimensions()
                 };
             }
         });
-        let original = self
-            .selected_region()
-            .map(|region| (region.w, region.h))
-            .unwrap_or(self.doc.image.dimensions());
+        let original = self.resize_dimensions();
         Grid::new("dimensions")
             .num_columns(2)
             .spacing(vec2(16.0, 10.0))
@@ -413,31 +408,12 @@ impl PaintApp {
                 } else {
                     (self.resize_w, self.resize_h)
                 };
-                if !d::valid_size(dimensions.0, dimensions.1) {
-                    self.dialog_error =
-                        Some("Dimensions must be positive and fit within 16 megapixels.".into());
+                if let Err(error) =
+                    self.resize_picture(dimensions.0, dimensions.1, self.skew_x, self.skew_y)
+                {
+                    self.dialog_error = Some(error);
                     return;
                 }
-                let plan = match super::transforms::SkewPlan::new(
-                    dimensions.0,
-                    dimensions.1,
-                    self.skew_x,
-                    self.skew_y,
-                ) {
-                    Ok(plan) => plan,
-                    Err(error) => {
-                        self.dialog_error = Some(error);
-                        return;
-                    }
-                };
-                self.transform(|image| {
-                    plan.apply(&imageops::resize(
-                        image,
-                        dimensions.0,
-                        dimensions.1,
-                        imageops::FilterType::CatmullRom,
-                    ))
-                });
                 close = true;
             }
             close |= dialog_button(ui, "Cancel");

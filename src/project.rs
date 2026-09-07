@@ -1,4 +1,4 @@
-use crate::document::{rotation_size, valid_size, Document, Object, ObjectKind};
+use crate::document::{valid_size, Document, Object, ObjectKind};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -106,6 +106,7 @@ fn validate_object(object: &Object) -> Result<usize, String> {
         || !object.scale.is_finite()
         || object.scale <= 0.
         || object.scale > 16.
+        || !object.transform.valid()
     {
         return Err("Invalid project object transform.".into());
     }
@@ -127,7 +128,7 @@ fn validate_object(object: &Object) -> Result<usize, String> {
     };
     let width = (width as f64 * object.scale as f64).round().max(1.) as u32;
     let height = (height as f64 * object.scale as f64).round().max(1.) as u32;
-    if !valid_size(width, height) || rotation_size(width, height, object.angle).is_none() {
+    if !valid_size(width, height) || object.rendered_dimensions().is_none() {
         return Err("An object transform exceeds the canvas allocation limit.".into());
     }
     Ok(bytes)
@@ -211,6 +212,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn transformed_text_roundtrips_and_old_projects_default_to_identity() {
+        let mut object = Object::new(
+            ObjectKind::Text {
+                text: "Hello world".into(),
+                format: crate::text::TextFormat::default(),
+            },
+            (-20, 5),
+        );
+        object.rotate_to(90.0).unwrap();
+        object.resize_rendered(120, 420).unwrap();
+        assert_eq!(object.render().dimensions(), (120, 420));
+        object.rotate_to(37.0).unwrap();
+        let mut document = Document::new(600, 600);
+        document.add_object(object);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("transformed-text.p10");
+        save(&document, &path).unwrap();
+        let loaded = load(&path).unwrap();
+        assert!(loaded.objects == document.objects);
+        assert_eq!(loaded.composite(), document.composite());
+
+        let original = Object::new(ObjectKind::Image(RgbaImage::new(3, 2)), (0, 0));
+        let mut json = serde_json::to_value(&original).unwrap();
+        json.as_object_mut().unwrap().remove("transform");
+        let restored: Object = serde_json::from_value(json).unwrap();
+        assert!(restored == original);
+    }
+
+    #[test]
+    fn invalid_affine_transforms_are_rejected_without_rendering() {
+        let mut object = Object::new(ObjectKind::Image(RgbaImage::new(3, 2)), (0, 0));
+        object.transform.xx = 0.0;
+        assert!(validate_object(&object).is_err());
+        object.transform.xx = f64::NAN;
+        assert!(validate_object(&object).is_err());
+        object.transform.xx = 1_000_000.0;
+        assert!(validate_object(&object).is_err());
+        object.transform.xx = 1.0;
+        assert!(validate_object(&object).is_ok());
+    }
+
+    #[test]
     fn invalid_saves_preserve_the_existing_project() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("drawing.p10");
@@ -268,6 +311,7 @@ mod tests {
             angle: 25.,
             scale: 1.,
             color_key: Some(crate::document::WHITE),
+            transform: Default::default(),
         });
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("test.p10");
@@ -334,6 +378,7 @@ mod tests {
                 scale: 1.,
                 angle: 0.,
                 color_key: None,
+                transform: Default::default(),
             });
             assert!(save(&doc, &path).is_err());
             write_malformed_fixture(&doc, &path);
@@ -346,6 +391,7 @@ mod tests {
             scale: 16.,
             angle: 0.,
             color_key: None,
+            transform: Default::default(),
         });
         assert!(save(&doc, &path).is_err());
         write_malformed_fixture(&doc, &path);

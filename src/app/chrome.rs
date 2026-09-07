@@ -1,6 +1,146 @@
 use super::*;
+use crate::preferences::QuickCommand;
 
 impl PaintApp {
+    pub(in crate::app) fn quick_action(&mut self, command: QuickCommand, ctx: &Context) {
+        match command {
+            QuickCommand::New => self.action(Action::New, ctx),
+            QuickCommand::Open => self.action(Action::Open, ctx),
+            QuickCommand::Save => self.action(Action::Save, ctx),
+            QuickCommand::Undo => self.action(Action::Undo, ctx),
+            QuickCommand::Redo => self.action(Action::Redo, ctx),
+            QuickCommand::Print => self.action(Action::Print, ctx),
+            QuickCommand::PrintPreview => {
+                self.finish_editing();
+                self.print_preview = Some(crate::print_preview::PrintPreview::new(
+                    self.doc.composite(),
+                ));
+            }
+            QuickCommand::Email => {
+                self.finish_editing();
+                let image = self.doc.composite();
+                self.start_job(ctx, move || {
+                    JobResult::Status(
+                        crate::integration::compose_email(&image)
+                            .map(|_| "Email draft opened".into()),
+                    )
+                });
+            }
+        }
+    }
+
+    fn quick_access_controls(&mut self, ui: &mut Ui, origin: Pos2) -> f32 {
+        let before = self.quick_access.clone();
+        for (index, command) in before.commands.iter().copied().enumerate() {
+            let icon = match command {
+                QuickCommand::New => Icon::New,
+                QuickCommand::Open => Icon::Open,
+                QuickCommand::Save => Icon::Save,
+                QuickCommand::Undo => Icon::Undo,
+                QuickCommand::Redo => Icon::Redo,
+                QuickCommand::PrintPreview => Icon::PrintPreview,
+                QuickCommand::Print => Icon::Print,
+                QuickCommand::Email => Icon::Email,
+            };
+            let enabled = self.dialog.is_none()
+                && self.pending.is_none()
+                && match command {
+                    QuickCommand::Undo if self.text_edit.is_some() => self.text_can_undo(),
+                    QuickCommand::Undo => {
+                        self.doc.can_undo()
+                            || self.shape_draft.is_some()
+                            || self.curve.is_some()
+                            || !self.polygon.is_empty()
+                    }
+                    QuickCommand::Redo if self.text_edit.is_some() => self.text_can_redo(),
+                    QuickCommand::Redo => self.doc.can_redo(),
+                    QuickCommand::Email => self.job.is_none(),
+                    _ => true,
+                };
+            let response = icons::button(
+                ui,
+                ("quick", index),
+                Rect::from_min_size(origin + vec2(index as f32 * 27.0, 0.0), vec2(25.0, 25.0)),
+                icon,
+                "",
+                false,
+                enabled,
+            )
+            .on_hover_text(command.name());
+            if response.clicked() {
+                self.quick_action(command, ui.ctx());
+            }
+            response.context_menu(|ui| {
+                if ui.button("Remove from Quick Access Toolbar").clicked() {
+                    self.quick_access.commands.retain(|item| *item != command);
+                    ui.close_menu();
+                }
+                if ui
+                    .button(if self.quick_access.below_ribbon {
+                        "Show above the ribbon"
+                    } else {
+                        "Show below the ribbon"
+                    })
+                    .clicked()
+                {
+                    self.quick_access.below_ribbon = !self.quick_access.below_ribbon;
+                    ui.close_menu();
+                }
+            });
+        }
+        let offset = before.commands.len() as f32 * 27.0;
+        ui.scope_builder(
+            UiBuilder::new().max_rect(Rect::from_min_size(
+                origin + vec2(offset, 3.0),
+                vec2(24.0, 24.0),
+            )),
+            |ui| {
+                let menu = ui.menu_button("", |ui| {
+                    ui.strong("Customize Quick Access Toolbar");
+                    for command in QuickCommand::ALL {
+                        let mut selected = self.quick_access.commands.contains(&command);
+                        if ui.checkbox(&mut selected, command.name()).changed() {
+                            if selected {
+                                self.quick_access.commands.push(command);
+                            } else {
+                                self.quick_access.commands.retain(|item| *item != command);
+                            }
+                        }
+                    }
+                    ui.separator();
+                    ui.checkbox(&mut self.quick_access.below_ribbon, "Show below the ribbon");
+                });
+                icons::draw(
+                    ui.painter(),
+                    menu.response.rect.shrink(3.0),
+                    Icon::ChevronDown,
+                );
+                menu.response.widget_info(|| {
+                    WidgetInfo::labeled(WidgetType::Button, true, "Customize Quick Access Toolbar")
+                });
+                menu.response
+                    .on_hover_text("Customize Quick Access Toolbar");
+            },
+        );
+        if self.quick_access != before {
+            if let Err(error) = crate::preferences::save_quick_access(&self.quick_access) {
+                self.message = format!("Could not save toolbar settings: {error}");
+            }
+        }
+        offset + 24.0
+    }
+
+    pub(in crate::app) fn quick_access_below(&mut self, ctx: &Context) {
+        if self.quick_access.below_ribbon {
+            TopBottomPanel::top("quick_access_below")
+                .exact_height(29.0)
+                .frame(Frame::NONE.fill(RIBBON))
+                .show(ctx, |ui| {
+                    self.quick_access_controls(ui, ui.max_rect().min + vec2(5.0, 2.0));
+                });
+        }
+    }
+
     pub(in crate::app) fn titlebar(&mut self, ctx: &Context) {
         TopBottomPanel::top("title")
             .exact_height(31.)
@@ -12,43 +152,14 @@ impl PaintApp {
                     Rect::from_min_size(r.min + vec2(8., 5.), vec2(21., 21.)),
                     Icon::Colors,
                 );
-                for (j, icon, tip, act, enabled) in [
-                    (0, Icon::Save, "Save (Ctrl+S)", Action::Save, true),
-                    (
-                        1,
-                        Icon::Undo,
-                        "Undo (Ctrl+Z)",
-                        Action::Undo,
-                        self.doc.can_undo()
-                            || self.shape_draft.is_some()
-                            || self.curve.is_some()
-                            || !self.polygon.is_empty(),
-                    ),
-                    (
-                        2,
-                        Icon::Redo,
-                        "Redo (Ctrl+Y)",
-                        Action::Redo,
-                        self.doc.can_redo(),
-                    ),
-                ] {
-                    if icons::button(
-                        ui,
-                        ("quick", j),
-                        Rect::from_min_size(r.min + vec2(38. + j as f32 * 27., 3.), vec2(25., 25.)),
-                        icon,
-                        "",
-                        false,
-                        enabled,
-                    )
-                    .on_hover_text(tip)
-                    .clicked()
-                    {
-                        self.action(act, ctx);
-                    }
-                }
+                let quick_width = if self.quick_access.below_ribbon {
+                    0.0
+                } else {
+                    self.quick_access_controls(ui, r.min + vec2(38.0, 3.0))
+                };
+                let title_x = 44.0 + quick_width;
                 ui.painter().line_segment(
-                    [r.min + vec2(125., 8.), r.min + vec2(125., 23.)],
+                    [r.min + vec2(title_x, 8.), r.min + vec2(title_x, 23.)],
                     Stroke::new(1.0_f32, Color32::from_gray(217)),
                 );
                 let name = self
@@ -62,8 +173,12 @@ impl PaintApp {
                     if self.doc.dirty() { "*" } else { "" },
                     name
                 );
-                ui.painter().text(
-                    r.min + vec2(138., 15.),
+                let title_rect = Rect::from_min_max(
+                    r.min + vec2(title_x + 10.0, 0.0),
+                    r.right_top() + vec2(-140.0, 31.0),
+                );
+                ui.painter().with_clip_rect(title_rect).text(
+                    r.min + vec2(title_x + 10.0, 15.),
                     Align2::LEFT_CENTER,
                     &title,
                     FontId::proportional(13.),
@@ -71,7 +186,7 @@ impl PaintApp {
                 );
                 ctx.send_viewport_cmd(ViewportCommand::Title(title));
                 let drag = ui.interact(
-                    Rect::from_min_max(r.min + vec2(130., 0.), r.right_top() + vec2(-138., 31.)),
+                    title_rect,
                     Id::new("title_drag"),
                     Sense::click_and_drag().difference(Sense::FOCUSABLE),
                 );

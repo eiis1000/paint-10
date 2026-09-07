@@ -8,6 +8,38 @@ struct CanvasPointer {
 }
 
 impl PaintApp {
+    pub(in crate::app) fn text_geometry_gesture(&self) -> bool {
+        matches!(
+            self.gesture,
+            Some(Gesture::MoveText { .. } | Gesture::ResizeText { .. })
+        )
+    }
+
+    pub(in crate::app) fn continue_text_geometry_gesture(
+        &mut self,
+        ui: &Ui,
+        ctx: &Context,
+        rect: Rect,
+    ) {
+        if !self.text_geometry_gesture() {
+            return;
+        }
+        if let Some(position) = ctx.input(|input| input.pointer.interact_pos()) {
+            let raw = self.point(position, rect);
+            self.continue_canvas_gesture(
+                ui,
+                rect,
+                ctx,
+                CanvasPointer {
+                    raw,
+                    clamped: raw,
+                    shift: false,
+                    released: ctx.input(|input| input.pointer.any_released()),
+                },
+            );
+        }
+    }
+
     pub(in crate::app) fn canvas_input(
         &mut self,
         ui: &Ui,
@@ -49,6 +81,12 @@ impl PaintApp {
             return;
         }
         if let Some(mut curve) = self.curve {
+            if pressed {
+                curve.dragging = true;
+            }
+            if !curve.dragging {
+                return;
+            }
             let color = self.colors[curve.color_slot];
             self.doc.restore_preview();
             if let Some(c1) = curve.first {
@@ -73,9 +111,6 @@ impl PaintApp {
                 );
             }
             self.refresh = true;
-            if pressed {
-                curve.dragging = true;
-            }
             if released && curve.dragging {
                 if let Some(first) = curve.first {
                     self.curve = None;
@@ -186,7 +221,7 @@ impl PaintApp {
                 self.set_tool(self.previous_tool);
             }
             Tool::Magnifier => {
-                self.zoom = (self.zoom * if right { 0.5 } else { 2. }).clamp(0.125, 8.);
+                self.magnify_at(p, right, ctx);
             }
             Tool::Text => {
                 self.gesture = Some(Gesture::TextBox { start: p });
@@ -241,6 +276,7 @@ impl PaintApp {
                         angle: 0.,
                         scale: 1.,
                         color_key: self.transparent.then_some(self.colors[1]),
+                        transform: Default::default(),
                     });
                     self.select_object(i);
                     self.gesture = Some(Gesture::Move {
@@ -265,6 +301,7 @@ impl PaintApp {
                     last: p,
                     color,
                     erase_target: right.then_some(self.colors[0]),
+                    first: true,
                 });
             }
         }
@@ -285,6 +322,46 @@ impl PaintApp {
         } = pointer;
         if let Some(mut gesture) = self.gesture.take() {
             match &mut gesture {
+                Gesture::MoveText { start, origin } => {
+                    if let Some(state) = &mut self.text_edit {
+                        state.origin = (origin.0 + raw.0 - start.0, origin.1 + raw.1 - start.1);
+                    }
+                    if released {
+                        self.finish_text_geometry_history(ctx.input(|input| input.time));
+                    }
+                }
+                Gesture::ResizeText {
+                    start,
+                    origin,
+                    width,
+                    height,
+                    minimum_height,
+                    handle,
+                } => {
+                    if let Some(state) = &mut self.text_edit {
+                        let (position, (new_width, new_height)) = resized_bounds(
+                            *origin,
+                            (*width, *height),
+                            *handle,
+                            (raw.0 - start.0, raw.1 - start.1),
+                            false,
+                        );
+                        let mut format = state.format.clone();
+                        format.width = new_width.max(10);
+                        format.minimum_height = if raw == *start {
+                            *minimum_height
+                        } else {
+                            new_height
+                        };
+                        if format.validate_for_text(&state.text).is_ok() {
+                            state.origin = position;
+                            state.format = format;
+                        }
+                    }
+                    if released {
+                        self.finish_text_geometry_history(ctx.input(|input| input.time));
+                    }
+                }
                 Gesture::MoveShape { start, original } => {
                     self.shape_draft =
                         Some(original.translated((raw.0 - start.0, raw.1 - start.1)));
@@ -300,63 +377,32 @@ impl PaintApp {
                 Gesture::ResizeObject {
                     index,
                     original,
-                    source,
+                    start,
                     base,
                     handle,
                 } => {
-                    let (mut x, mut y, mut right, mut bottom) = (
-                        original.x as i32,
-                        original.y as i32,
-                        (original.x + original.w) as i32,
-                        (original.y + original.h) as i32,
-                    );
-                    if matches!(*handle, 0 | 2 | 6) {
-                        x = raw.0.min(right - 1);
+                    if index.is_none() && raw != *start {
+                        *index = self.lift_selection();
+                        *base = index.map(|index| self.doc.objects[index].clone());
                     }
-                    if matches!(*handle, 1 | 3 | 7) {
-                        right = raw.0.max(x + 1);
-                    }
-                    if matches!(*handle, 0 | 1 | 4) {
-                        y = raw.1.min(bottom - 1);
-                    }
-                    if matches!(*handle, 2 | 3 | 5) {
-                        bottom = raw.1.max(y + 1);
-                    }
-                    let mut w = (right - x) as u32;
-                    let mut h = (bottom - y) as u32;
-                    if shift {
-                        if matches!(*handle, 4 | 5) {
-                            w = (h as f32 * original.w as f32 / original.h as f32)
-                                .round()
-                                .max(1.) as u32;
-                            x = original.x as i32 + (original.w as i32 - w as i32) / 2;
-                        } else {
-                            h = (w as f32 * original.h as f32 / original.w as f32)
-                                .round()
-                                .max(1.) as u32;
-                            if matches!(*handle, 0 | 1) {
-                                y = bottom - h as i32;
-                            }
+                    let Some((index, base)) = index.as_ref().zip(base.as_ref()) else {
+                        if !released {
+                            self.gesture = Some(gesture);
                         }
-                    }
+                        return;
+                    };
+                    let (position, (w, h)) = resized_bounds(
+                        base.pos,
+                        (original.w, original.h),
+                        *handle,
+                        (raw.0 - start.0, raw.1 - start.1),
+                        shift,
+                    );
                     if d::valid_size(w, h) {
-                        let resized = if matches!(base.kind, ObjectKind::Text { .. }) {
-                            resize_text_object(base, w, original.w, shift)
-                        } else {
-                            let mut object = base.clone();
-                            object.kind = ObjectKind::Image(imageops::resize(
-                                source,
-                                w,
-                                h,
-                                imageops::FilterType::Nearest,
-                            ));
-                            object.angle = 0.;
-                            object.scale = 1.;
-                            Ok(object)
-                        };
-                        match resized {
-                            Ok(mut object) => {
-                                object.pos = (x, y);
+                        let mut object = base.clone();
+                        match object.resize_rendered(w, h) {
+                            Ok(()) => {
+                                object.pos = position;
                                 self.doc.objects[*index] = object;
                                 self.refresh = true;
                             }
@@ -385,12 +431,14 @@ impl PaintApp {
                             format: crate::text::TextFormat {
                                 color: self.colors[0],
                                 width: if r.w > 20 { r.w } else { 280 },
+                                minimum_height: r.h,
                                 ..self.text_format.clone()
                             },
                             focus: true,
                             selection: 0..0,
                             insertion_style: None,
                             history: Default::default(),
+                            palette_colors: self.colors,
                         });
                         self.refresh = true;
                     }
@@ -400,8 +448,9 @@ impl PaintApp {
                     last,
                     color,
                     erase_target,
+                    first,
                 } => {
-                    let mut end = p;
+                    let mut end = if self.tool.is_shape() { p } else { raw };
                     if shift && self.tool.is_shape() {
                         let dx = p.0 - start.0;
                         let dy = p.1 - start.1;
@@ -423,7 +472,11 @@ impl PaintApp {
                         self.doc.restore_preview();
                         d::styled_shape(
                             &mut self.doc.image,
-                            self.tool,
+                            if self.tool == Tool::Polygon {
+                                Tool::Line
+                            } else {
+                                self.tool
+                            },
                             *start,
                             end,
                             self.size,
@@ -431,7 +484,7 @@ impl PaintApp {
                             Some((self.colors[usize::from(erase_target.is_none())], self.fill)),
                         );
                     } else if shift && matches!(self.tool, Tool::Brush | Tool::Pencil) {
-                        let delta = (p.0 - start.0, p.1 - start.1);
+                        let delta = (raw.0 - start.0, raw.1 - start.1);
                         let angle = (delta.1 as f32).atan2(delta.0 as f32);
                         let snapped = (angle / std::f32::consts::FRAC_PI_4).round()
                             * std::f32::consts::FRAC_PI_4;
@@ -461,7 +514,17 @@ impl PaintApp {
                             *color
                         };
                         let moves: Vec<Point> = ctx.input(|i| {
-                            i.events
+                            let first_event = if *first {
+                                i.events
+                                    .iter()
+                                    .position(|event| {
+                                        matches!(event, Event::PointerButton { pressed: true, .. })
+                                    })
+                                    .map_or(0, |index| index + 1)
+                            } else {
+                                0
+                            };
+                            i.events[first_event..]
                                 .iter()
                                 .filter_map(|e| {
                                     if let Event::PointerMoved(pos) = e {
@@ -472,11 +535,10 @@ impl PaintApp {
                                 })
                                 .collect()
                         });
-                        for point in moves.into_iter().chain(std::iter::once(p)) {
-                            let point = (
-                                point.0.clamp(0, self.doc.image.width() as i32 - 1),
-                                point.1.clamp(0, self.doc.image.height() as i32 - 1),
-                            );
+                        for point in moves.into_iter().chain(std::iter::once(raw)) {
+                            if !*first && point == *last {
+                                continue;
+                            }
                             if self.tool == Tool::Eraser {
                                 if erase_target.is_some() {
                                     let before = self.doc.composite();
@@ -510,18 +572,34 @@ impl PaintApp {
                                 } else {
                                     Brush::Round
                                 };
-                                d::line(&mut self.doc.image, *last, point, width, c, brush);
+                                if *first {
+                                    d::stamp(&mut self.doc.image, *last, width, c, brush);
+                                }
+                                d::line_from_previous(
+                                    &mut self.doc.image,
+                                    *last,
+                                    point,
+                                    width,
+                                    c,
+                                    brush,
+                                );
                             }
+                            *first = false;
                             *last = point;
+                            self.refresh = true;
                         }
                         if self.tool == Tool::Brush && self.brush == Brush::Airbrush {
                             self.spray_seed = self.spray_seed.wrapping_add(1);
-                            d::airbrush_stamp(&mut self.doc.image, p, width, c, self.spray_seed);
+                            d::airbrush_stamp(&mut self.doc.image, raw, width, c, self.spray_seed);
+                            self.refresh = true;
                             ctx.request_repaint_after(std::time::Duration::from_millis(30));
                         }
                     }
-                    *last = end;
-                    self.refresh = true;
+                    if self.tool.is_shape() || shift {
+                        *last = end;
+                        self.refresh = true;
+                        *first = false;
+                    }
                     if released {
                         if self.tool == Tool::Curve {
                             self.curve = Some(CurveBend {
@@ -600,6 +678,7 @@ impl PaintApp {
                         copy.angle = 0.;
                         copy.scale = 1.;
                         copy.color_key = None;
+                        copy.transform = Default::default();
                         self.doc.objects.insert(*index, copy);
                         *index += 1;
                         self.object = Some(*index);
@@ -654,39 +733,48 @@ impl PaintApp {
     }
 }
 
-/// Resize text without applying the same width change to both layout and scale.
-fn resize_text_object(
-    source: &Object,
-    width: u32,
-    original_width: u32,
+/// Move the requested edges by the pointer delta, preserving off-canvas origins.
+fn resized_bounds(
+    origin: Point,
+    dimensions: (u32, u32),
+    handle: usize,
+    delta: Point,
     preserve_aspect: bool,
-) -> Result<Object, String> {
-    let mut object = source.clone();
-    let ObjectKind::Text { text, format } = &mut object.kind else {
-        return Err("Only text objects can use text-box resizing.".into());
-    };
+) -> (Point, (u32, u32)) {
+    let (mut x, mut y) = origin;
+    let (mut right, mut bottom) = (x + dimensions.0 as i32, y + dimensions.1 as i32);
+    if matches!(handle, 0 | 2 | 6) {
+        x = (x + delta.0).min(right - 1);
+    }
+    if matches!(handle, 1 | 3 | 7) {
+        right = (right + delta.0).max(x + 1);
+    }
+    if matches!(handle, 0 | 1 | 4) {
+        y = (y + delta.1).min(bottom - 1);
+    }
+    if matches!(handle, 2 | 3 | 5) {
+        bottom = (bottom + delta.1).max(y + 1);
+    }
+    let (mut width, mut height) = ((right - x) as u32, (bottom - y) as u32);
     if preserve_aspect {
-        object.scale *= width as f32 / original_width.max(1) as f32;
-        if !object.scale.is_finite() || object.scale <= 0.0 || object.scale > 16.0 {
-            return Err("Text can be enlarged to at most 1600%.".into());
+        if matches!(handle, 4 | 5) {
+            width = (height as f64 * dimensions.0 as f64 / dimensions.1 as f64)
+                .round()
+                .max(1.0) as u32;
+            x = origin.0 + (dimensions.0 as i32 - width as i32) / 2;
+        } else {
+            height = (width as f64 * dimensions.1 as f64 / dimensions.0 as f64)
+                .round()
+                .max(1.0) as u32;
+            if matches!(handle, 0 | 1) {
+                y = bottom - height as i32;
+            }
+            if matches!(handle, 6 | 7) {
+                y = origin.1 + (dimensions.1 as i32 - height as i32) / 2;
+            }
         }
-    } else {
-        let layout_width = (width as f32 / object.scale).round().max(10.0);
-        if layout_width > crate::text::MAX_TEXT_WIDTH as f32 {
-            return Err("The text box would exceed the maximum supported width.".into());
-        }
-        format.width = layout_width as u32;
     }
-    format.validate_for_text(text)?;
-    let (raw_width, raw_height) = format.dimensions(text);
-    let rendered_width = (raw_width as f64 * object.scale as f64).round().max(1.0) as u32;
-    let rendered_height = (raw_height as f64 * object.scale as f64).round().max(1.0) as u32;
-    if !d::valid_size(rendered_width, rendered_height)
-        || d::rotation_size(rendered_width, rendered_height, object.angle).is_none()
-    {
-        return Err("The resized text would exceed the 16 megapixel limit.".into());
-    }
-    Ok(object)
+    ((x, y), (width, height))
 }
 
 /// Test the original button-down position, including ownership of overlapping UI.
@@ -726,6 +814,276 @@ pub(in crate::app) fn pointer_press_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn gesture_frame(app: &mut PaintApp, ctx: &Context, point: Point, released: bool) {
+        let _ = ctx.run(RawInput::default(), |ctx| {
+            CentralPanel::default().show(ctx, |ui| {
+                app.continue_canvas_gesture(
+                    ui,
+                    Rect::from_min_size(Pos2::ZERO, vec2(200.0, 100.0)),
+                    ctx,
+                    CanvasPointer {
+                        raw: point,
+                        clamped: (point.0.clamp(0, 199), point.1.clamp(0, 99)),
+                        shift: false,
+                        released,
+                    },
+                );
+            });
+        });
+    }
+
+    #[test]
+    fn stationary_marker_frames_do_not_replay_the_initial_stamp() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.doc = Document::new(200, 100);
+        app.tool = Tool::Brush;
+        app.brush = Brush::Marker;
+        app.size = 12;
+        app.doc.begin();
+        app.gesture = Some(Gesture::Paint {
+            start: (20, 20),
+            last: (20, 20),
+            color: BLACK,
+            erase_target: None,
+            first: true,
+        });
+        gesture_frame(&mut app, &ctx, (20, 20), false);
+        let once = app.doc.image.clone();
+        for _ in 0..10 {
+            gesture_frame(&mut app, &ctx, (20, 20), false);
+        }
+        gesture_frame(&mut app, &ctx, (20, 20), true);
+        assert_eq!(app.doc.image, once);
+    }
+
+    #[test]
+    fn freehand_motion_outside_canvas_does_not_paint_along_its_edge() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.doc = Document::new(200, 100);
+        app.tool = Tool::Pencil;
+        app.size = 1;
+        app.doc.begin();
+        app.gesture = Some(Gesture::Paint {
+            start: (20, 20),
+            last: (20, 20),
+            color: BLACK,
+            erase_target: None,
+            first: true,
+        });
+        gesture_frame(&mut app, &ctx, (30, -20), false);
+        gesture_frame(&mut app, &ctx, (150, -20), true);
+        assert!((40..150).all(|x| app.doc.image.get_pixel(x, 0).0 == WHITE));
+        assert_eq!(app.doc.image.get_pixel(20, 20).0, BLACK);
+    }
+
+    #[test]
+    fn clicking_a_raster_selection_handle_does_not_lift_or_dirty_pixels() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let region = Region {
+            x: 20,
+            y: 20,
+            w: 50,
+            h: 30,
+        };
+        app.selection = Some(region);
+        app.gesture = Some(Gesture::ResizeObject {
+            index: None,
+            original: region,
+            start: (73, 35),
+            base: None,
+            handle: 7,
+        });
+        gesture_frame(&mut app, &ctx, (73, 35), true);
+        assert!(app.doc.objects.is_empty());
+        assert!(!app.doc.dirty());
+        assert!(app.selection.is_some());
+    }
+
+    #[test]
+    fn curve_preview_does_not_follow_hover_between_bend_drags() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.doc = Document::new(200, 100);
+        app.doc.begin();
+        d::styled_curve(
+            &mut app.doc.image,
+            (20, 30),
+            (150, 30),
+            (80, 75),
+            3,
+            BLACK,
+            PaintStyle::Solid,
+        );
+        let preview = app.doc.image.clone();
+        app.curve = Some(CurveBend {
+            start: (20, 30),
+            end: (150, 30),
+            first: Some((80, 75)),
+            color_slot: 0,
+            dragging: false,
+        });
+        let _ = ctx.run(
+            RawInput {
+                events: vec![Event::PointerMoved(pos2(100.0, 20.0))],
+                ..Default::default()
+            },
+            |ctx| {
+                CentralPanel::default().show(ctx, |ui| {
+                    let rect = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 100.0));
+                    let response =
+                        ui.interact(rect, Id::new("curve-test"), Sense::click_and_drag());
+                    app.canvas_input(ui, &response, rect, ctx);
+                });
+            },
+        );
+        assert_eq!(app.doc.image, preview);
+        assert!(app.curve.is_some());
+    }
+
+    #[test]
+    fn initial_polygon_drag_previews_only_the_first_edge() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.doc = Document::new(200, 100);
+        app.tool = Tool::Polygon;
+        app.doc.begin();
+        app.gesture = Some(Gesture::Paint {
+            start: (20, 20),
+            last: (20, 20),
+            color: BLACK,
+            erase_target: None,
+            first: true,
+        });
+        gesture_frame(&mut app, &ctx, (120, 70), false);
+        let mut expected = Document::new(200, 100).image;
+        d::styled_shape(
+            &mut expected,
+            Tool::Line,
+            (20, 20),
+            (120, 70),
+            app.size,
+            Some((BLACK, app.outline)),
+            Some((WHITE, app.fill)),
+        );
+        assert_eq!(app.doc.image, expected);
+    }
+
+    fn editor_frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) {
+        let _ = ctx.run(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 800.0))),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                app.canvas(ctx);
+                app.text_editor(ctx);
+            },
+        );
+    }
+
+    #[test]
+    fn active_text_box_handle_reflows_without_committing_the_editor() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.text_edit = Some(TextEditState {
+            index: None,
+            origin: (40, 40),
+            text: "Hello world".into(),
+            format: crate::text::TextFormat {
+                width: 200,
+                minimum_height: 60,
+                ..Default::default()
+            },
+            focus: true,
+            selection: 0..0,
+            insertion_style: None,
+            history: Default::default(),
+            palette_colors: app.colors,
+        });
+        editor_frame(&mut app, &ctx, vec![]);
+        editor_frame(&mut app, &ctx, vec![]);
+        let editor = ctx
+            .data(|data| data.get_temp::<Rect>(Id::new("paint10_text_editor_rect")))
+            .unwrap();
+        let press = editor.expand(3.0).right_center();
+        editor_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::PointerMoved(press),
+                Event::PointerButton {
+                    pos: press,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+        assert!(app.text_geometry_gesture());
+        let end = press + vec2(80.0, 0.0);
+        editor_frame(&mut app, &ctx, vec![Event::PointerMoved(end)]);
+        editor_frame(
+            &mut app,
+            &ctx,
+            vec![Event::PointerButton {
+                pos: end,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        let state = app
+            .text_edit
+            .as_ref()
+            .expect("Resizing must keep the text editor open");
+        assert_eq!(state.format.width, 280);
+        assert_eq!(state.text, "Hello world");
+        assert_eq!(state.origin, (40, 40));
+        assert!(app.doc.objects.is_empty());
+        app.text_history_action(Action::Undo, &ctx);
+        assert_eq!(app.text_edit.as_ref().unwrap().format.width, 200);
+        app.text_history_action(Action::Redo, &ctx);
+        assert_eq!(app.text_edit.as_ref().unwrap().format.width, 280);
+
+        editor_frame(&mut app, &ctx, vec![]);
+        let editor = ctx
+            .data(|data| data.get_temp::<Rect>(Id::new("paint10_text_editor_rect")))
+            .unwrap();
+        let press = editor.expand(3.0).left_top() + vec2(30.0, 0.0);
+        editor_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::PointerMoved(press),
+                Event::PointerButton {
+                    pos: press,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+        let end = press + vec2(15.0, 20.0);
+        editor_frame(&mut app, &ctx, vec![Event::PointerMoved(end)]);
+        editor_frame(
+            &mut app,
+            &ctx,
+            vec![Event::PointerButton {
+                pos: end,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        assert_eq!(app.text_edit.as_ref().unwrap().origin, (55, 60));
+        app.text_history_action(Action::Undo, &ctx);
+        assert_eq!(app.text_edit.as_ref().unwrap().origin, (40, 40));
+    }
 
     fn frame(ctx: &Context, input: RawInput, popup: bool) -> Option<Pos2> {
         let mut result = None;
@@ -777,55 +1135,46 @@ mod tests {
     }
 
     #[test]
-    fn shift_text_resize_scales_once_and_survives_project_roundtrip() {
-        let object = Object::new(
-            ObjectKind::Text {
-                text: "Hello world".into(),
-                format: crate::text::TextFormat::default(),
-            },
-            (4, 5),
-        );
-        let doubled = resize_text_object(&object, 560, 280, true).unwrap();
-        assert_eq!(doubled.render().width(), 560);
-        let tripled = resize_text_object(&doubled, 840, 560, true).unwrap();
-        assert_eq!(tripled.render().width(), 840);
-        let ObjectKind::Text { format, .. } = &tripled.kind else {
-            panic!()
-        };
-        assert_eq!(format.width, 280);
-        assert_eq!(tripled.scale, 3.0);
-
-        let mut document = Document::new(1000, 200);
-        document.add_object(tripled);
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("resized-text.p10");
-        crate::project::save(&document, &path).unwrap();
-        assert_eq!(
-            crate::project::load(&path).unwrap().composite(),
-            document.composite()
-        );
-        assert!(resize_text_object(&object, 5000, 280, true).is_err());
-    }
-
-    #[test]
-    fn wide_text_boxes_reflow_without_changing_the_existing_scale() {
+    fn rotated_text_handle_touch_preserves_text_and_history() {
         let mut object = Object::new(
             ObjectKind::Text {
                 text: "Hello world".into(),
                 format: crate::text::TextFormat::default(),
             },
-            (0, 0),
+            (-20, 5),
         );
-        object.scale = 2.0;
-        let resized = resize_text_object(&object, 1000, 560, false).unwrap();
-        assert_eq!(resized.scale, 2.0);
-        assert_eq!(resized.render().width(), 1000);
-        object.scale = 1.0;
-        let wide = resize_text_object(&object, 10000, 280, false).unwrap();
-        let ObjectKind::Text { text, format } = &wide.kind else {
-            panic!()
-        };
-        assert!(format.validate_for_text(text).is_ok());
-        assert_eq!(wide.render().width(), 10000);
+        object.rotate_to(90.0).unwrap();
+        let dimensions = object.rendered_dimensions().unwrap();
+        let mut document = Document::new(200, 500);
+        let index = document.add_object(object.clone());
+        document.mark_saved();
+        document.begin();
+        for handle in 0..8 {
+            let (position, size) = resized_bounds(object.pos, dimensions, handle, (0, 0), false);
+            document.objects[index]
+                .resize_rendered(size.0, size.1)
+                .unwrap();
+            document.objects[index].pos = position;
+            assert!(document.objects[index] == object);
+        }
+        document.commit();
+        assert!(!document.dirty());
+        assert!(!document.can_undo());
+    }
+
+    #[test]
+    fn resize_handles_keep_the_full_off_canvas_rectangle() {
+        assert_eq!(
+            resized_bounds((-20, 10), (100, 50), 7, (0, 0), false),
+            ((-20, 10), (100, 50))
+        );
+        assert_eq!(
+            resized_bounds((-20, 10), (100, 50), 7, (20, 0), false),
+            ((-20, 10), (120, 50))
+        );
+        assert_eq!(
+            resized_bounds((-20, 10), (100, 50), 5, (0, 25), true),
+            ((-45, 10), (150, 75))
+        );
     }
 }

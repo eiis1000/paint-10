@@ -12,6 +12,7 @@ mod selection;
 mod shapes;
 mod shortcuts;
 mod text_editing;
+mod thumbnail;
 mod transforms;
 
 use canvas::dashed_rect;
@@ -79,6 +80,7 @@ struct TextEditState {
     selection: std::ops::Range<usize>,
     insertion_style: Option<crate::text::TextStyle>,
     history: text_editing::TextHistory,
+    palette_colors: [Color; 2],
 }
 enum Gesture {
     Paint {
@@ -86,6 +88,7 @@ enum Gesture {
         last: Point,
         color: Color,
         erase_target: Option<Color>,
+        first: bool,
     },
     Select {
         start: Point,
@@ -106,11 +109,23 @@ enum Gesture {
     TextBox {
         start: Point,
     },
+    MoveText {
+        start: Point,
+        origin: Point,
+    },
+    ResizeText {
+        start: Point,
+        origin: Point,
+        width: u32,
+        height: u32,
+        minimum_height: u32,
+        handle: usize,
+    },
     ResizeObject {
-        index: usize,
+        index: Option<usize>,
         original: Region,
-        source: RgbaImage,
-        base: Object,
+        start: Point,
+        base: Option<Object>,
         handle: usize,
     },
     MoveShape {
@@ -163,6 +178,7 @@ pub struct PaintApp {
     copied: Option<RgbaImage>,
     mask: Option<image::GrayImage>,
     recent: Vec<PathBuf>,
+    quick_access: crate::preferences::QuickAccess,
     dialog: Option<Dialog>,
     dialog_error: Option<String>,
     pending: Option<Action>,
@@ -203,7 +219,10 @@ pub struct PaintApp {
 
 impl PaintApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let ctx = &cc.egui_ctx;
+        Self::new_with_context(&cc.egui_ctx, true)
+    }
+
+    fn new_with_context(ctx: &Context, load_environment: bool) -> Self {
         ctx.set_visuals(Visuals::light());
         let mut style = (*ctx.style()).clone();
         style
@@ -226,14 +245,12 @@ impl PaintApp {
         ctx.set_style(style);
         let doc = Document::new(900, 600);
         let mut font_db = fontdb::Database::new();
-        font_db.load_system_fonts();
+        if load_environment {
+            font_db.load_system_fonts();
+        }
         let mut font_names: Vec<_> = font_db
             .faces()
-            .filter(|f| {
-                f.index == 0
-                    && f.style == fontdb::Style::Normal
-                    && f.weight == fontdb::Weight::NORMAL
-            })
+            .filter(|f| f.style == fontdb::Style::Normal && f.weight == fontdb::Weight::NORMAL)
             .filter_map(|f| f.families.first().map(|n| (n.0.clone(), f.id)))
             .collect();
         font_names.sort_by(|a, b| a.0.cmp(&b.0));
@@ -249,7 +266,11 @@ impl PaintApp {
             size: 3,
             colors: [BLACK, WHITE],
             active_color: 0,
-            custom_colors: crate::preferences::custom_colors(),
+            custom_colors: if load_environment {
+                crate::preferences::custom_colors()
+            } else {
+                Vec::new()
+            },
             outline: PaintStyle::Solid,
             fill: PaintStyle::None,
             spray_seed: 0,
@@ -274,11 +295,24 @@ impl PaintApp {
             file: None,
             message: "For Help, click ? or press F1".into(),
             cursor: None,
-            clipboard: arboard::Clipboard::new().ok(),
+            clipboard: if load_environment {
+                arboard::Clipboard::new().ok()
+            } else {
+                None
+            },
             copied: None,
             mask: None,
-            recent: crate::preferences::recent_files(),
+            recent: if load_environment {
+                crate::preferences::recent_files()
+            } else {
+                Vec::new()
+            },
             dialog: None,
+            quick_access: if load_environment {
+                crate::preferences::quick_access()
+            } else {
+                Default::default()
+            },
             dialog_error: None,
             pending: None,
             pending_path: None,
@@ -315,8 +349,10 @@ impl PaintApp {
             wallpaper_style: Default::default(),
             wallpaper_size: (1920, 1080),
         };
-        if let Some(path) = std::env::args_os().nth(1) {
-            app.load(PathBuf::from(path));
+        if load_environment {
+            if let Some(path) = std::env::args_os().nth(1) {
+                app.load(PathBuf::from(path));
+            }
         }
         app
     }
@@ -407,8 +443,10 @@ impl eframe::App for PaintApp {
         } else {
             self.titlebar(ctx);
             self.ribbon(ctx);
+            self.quick_access_below(ctx);
             self.status(ctx);
             self.canvas(ctx);
+            self.thumbnail(ctx);
         }
         self.keyboard_menu(ctx);
         self.dialogs(ctx);

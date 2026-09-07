@@ -51,6 +51,7 @@ impl Tool {
         Self::Oval,
         Self::Rectangle,
         Self::RoundedRect,
+        Self::Polygon,
         Self::Triangle,
         Self::RightTriangle,
         Self::Diamond,
@@ -63,12 +64,11 @@ impl Tool {
         Self::Star4,
         Self::Star5,
         Self::Star6,
-        Self::Heart,
-        Self::Lightning,
         Self::Callout,
-        Self::Polygon,
         Self::OvalCallout,
         Self::CloudCallout,
+        Self::Heart,
+        Self::Lightning,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -99,7 +99,7 @@ impl Tool {
             Self::Star6 => "Six-point star",
             Self::Heart => "Heart",
             Self::Lightning => "Lightning",
-            Self::Callout => "Speech bubble",
+            Self::Callout => "Rounded rectangular callout",
             Self::Polygon => "Polygon",
             Self::OvalCallout => "Oval callout",
             Self::CloudCallout => "Cloud callout",
@@ -244,7 +244,93 @@ pub struct Object {
     pub scale: f32,
     #[serde(default)]
     pub color_key: Option<Color>,
+    #[serde(default)]
+    pub transform: LinearTransform,
 }
+
+/// A linear transform in canvas coordinates, applied after legacy rotation/scale.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct LinearTransform {
+    pub xx: f64,
+    pub xy: f64,
+    pub yx: f64,
+    pub yy: f64,
+}
+
+impl Default for LinearTransform {
+    fn default() -> Self {
+        Self {
+            xx: 1.0,
+            xy: 0.0,
+            yx: 0.0,
+            yy: 1.0,
+        }
+    }
+}
+
+impl LinearTransform {
+    fn scale(x: f64, y: f64) -> Self {
+        Self {
+            xx: x,
+            yy: y,
+            ..Default::default()
+        }
+    }
+
+    fn rotation(angle: f32) -> Self {
+        let angle = angle.rem_euclid(360.0) as f64;
+        let (sine, cosine) = if (angle / 90.0 - (angle / 90.0).round()).abs() < 0.000001 {
+            match (angle / 90.0).round() as i32 % 4 {
+                0 => (0.0, 1.0),
+                1 => (1.0, 0.0),
+                2 => (0.0, -1.0),
+                _ => (-1.0, 0.0),
+            }
+        } else {
+            angle.to_radians().sin_cos()
+        };
+        Self {
+            xx: cosine,
+            xy: -sine,
+            yx: sine,
+            yy: cosine,
+        }
+    }
+
+    fn then(self, next: Self) -> Self {
+        Self {
+            xx: next.xx * self.xx + next.xy * self.yx,
+            xy: next.xx * self.xy + next.xy * self.yy,
+            yx: next.yx * self.xx + next.yy * self.yx,
+            yy: next.yx * self.xy + next.yy * self.yy,
+        }
+    }
+
+    fn determinant(self) -> f64 {
+        self.xx * self.yy - self.xy * self.yx
+    }
+
+    pub fn valid(self) -> bool {
+        [self.xx, self.xy, self.yx, self.yy]
+            .iter()
+            .all(|value| value.is_finite() && value.abs() <= 1_000_000.0)
+            && self.determinant().abs() > 1e-12
+    }
+
+    fn output_size(self, width: u32, height: u32) -> Option<(u32, u32)> {
+        if !self.valid() {
+            return None;
+        }
+        let width_out = (self.xx.abs() * width as f64 + self.xy.abs() * height as f64 - 1e-9)
+            .ceil()
+            .max(1.0) as u32;
+        let height_out = (self.yx.abs() * width as f64 + self.yy.abs() * height as f64 - 1e-9)
+            .ceil()
+            .max(1.0) as u32;
+        valid_size(width_out, height_out).then_some((width_out, height_out))
+    }
+}
+
 impl Object {
     pub fn new(kind: ObjectKind, pos: Point) -> Self {
         Self {
@@ -253,6 +339,7 @@ impl Object {
             angle: 0.0,
             scale: 1.0,
             color_key: None,
+            transform: Default::default(),
         }
     }
 
@@ -267,6 +354,81 @@ impl Object {
         self.render_with_key(None)
     }
 
+    fn combined_transform(&self) -> LinearTransform {
+        LinearTransform::scale(self.scale as f64, self.scale as f64)
+            .then(LinearTransform::rotation(self.angle))
+            .then(self.transform)
+    }
+
+    pub fn rendered_dimensions(&self) -> Option<(u32, u32)> {
+        if !self.angle.is_finite() || !self.scale.is_finite() || self.scale <= 0.0 {
+            return None;
+        }
+        let (width, height) = match &self.kind {
+            ObjectKind::Raster(image) | ObjectKind::Image(image) => image.dimensions(),
+            ObjectKind::Text { text, format } => format.dimensions(text),
+        };
+        if self.transform == LinearTransform::default() {
+            let scaled_width = (width as f64 * self.scale as f64).round().max(1.0) as u32;
+            let scaled_height = (height as f64 * self.scale as f64).round().max(1.0) as u32;
+            rotation_size(scaled_width, scaled_height, self.angle)
+        } else {
+            self.combined_transform().output_size(width, height)
+        }
+    }
+
+    /// Resize the displayed bounds while retaining the original text/image data.
+    pub fn resize_rendered(&mut self, width: u32, height: u32) -> Result<(), String> {
+        if !valid_size(width, height) {
+            return Err("The resized object would exceed the 16 megapixel limit.".into());
+        }
+        let (old_width, old_height) = self
+            .rendered_dimensions()
+            .ok_or("Invalid object transform.")?;
+        if (width, height) == (old_width, old_height) {
+            return Ok(());
+        }
+        let previous = self.transform;
+        let (source_width, source_height) = match &self.kind {
+            ObjectKind::Image(image) | ObjectKind::Raster(image) => image.dimensions(),
+            ObjectKind::Text { text, format } => format.dimensions(text),
+        };
+        let current = self.combined_transform();
+        let extent_width =
+            current.xx.abs() * source_width as f64 + current.xy.abs() * source_height as f64;
+        let extent_height =
+            current.yx.abs() * source_width as f64 + current.yy.abs() * source_height as f64;
+        self.transform = self.transform.then(LinearTransform::scale(
+            width as f64 / extent_width,
+            height as f64 / extent_height,
+        ));
+        if self.rendered_dimensions().is_none() {
+            self.transform = previous;
+            return Err("The resized object would exceed the supported transform range.".into());
+        }
+        Ok(())
+    }
+
+    /// Rotate the current appearance, preserving earlier nonuniform resizes.
+    pub fn rotate_to(&mut self, angle: f32) -> Result<(), String> {
+        if !angle.is_finite() {
+            return Err("Invalid rotation angle.".into());
+        }
+        let previous = (self.angle, self.transform);
+        let delta = angle.rem_euclid(360.0) - self.angle.rem_euclid(360.0);
+        if self.transform != LinearTransform::default() {
+            self.transform = LinearTransform::rotation(-delta)
+                .then(self.transform)
+                .then(LinearTransform::rotation(delta));
+        }
+        self.angle = angle.rem_euclid(360.0);
+        if self.rendered_dimensions().is_none() {
+            (self.angle, self.transform) = previous;
+            return Err("The rotated object would exceed the 16 megapixel limit.".into());
+        }
+        Ok(())
+    }
+
     fn render_with_key(&self, color_key: Option<Color>) -> RgbaImage {
         let mut raw = match &self.kind {
             ObjectKind::Raster(img) | ObjectKind::Image(img) => img.clone(),
@@ -278,6 +440,9 @@ impl Object {
                     pixel[3] = 0;
                 }
             }
+        }
+        if self.transform != LinearTransform::default() {
+            return transform_image(&raw, self.combined_transform()).unwrap_or(raw);
         }
         let raw = if self.scale.is_finite() && (self.scale - 1.).abs() > 0.001 {
             let (w, h) = scaled_size(raw.width(), raw.height(), self.scale);
@@ -291,6 +456,30 @@ impl Object {
             raw
         }
     }
+}
+
+fn transform_image(image: &RgbaImage, transform: LinearTransform) -> Option<RgbaImage> {
+    let (width, height) = transform.output_size(image.width(), image.height())?;
+    let determinant = transform.determinant();
+    let mut output = RgbaImage::new(width, height);
+    for (x, y, pixel) in output.enumerate_pixels_mut() {
+        let dx = x as f64 - (width as f64 - 1.0) / 2.0;
+        let dy = y as f64 - (height as f64 - 1.0) / 2.0;
+        let source_x = ((transform.yy * dx - transform.xy * dy) / determinant
+            + (image.width() as f64 - 1.0) / 2.0)
+            .round() as i64;
+        let source_y = ((transform.xx * dy - transform.yx * dx) / determinant
+            + (image.height() as f64 - 1.0) / 2.0)
+            .round() as i64;
+        if source_x >= 0
+            && source_y >= 0
+            && source_x < image.width() as i64
+            && source_y < image.height() as i64
+        {
+            *pixel = *image.get_pixel(source_x as u32, source_y as u32);
+        }
+    }
+    Some(output)
 }
 
 pub struct Document {
@@ -478,6 +667,7 @@ impl Document {
                 angle: 0.,
                 scale: 1.,
                 color_key: None,
+                transform: Default::default(),
             });
             self.image = RgbaImage::new(self.image.width(), self.image.height());
         }
@@ -613,7 +803,27 @@ pub fn line(img: &mut RgbaImage, a: Point, b: Point, width: u32, color: Color, b
         stamp(img, a, width, color, brush);
         return;
     }
-    for i in 0..=steps {
+    let seed = if brush == Brush::Airbrush {
+        noise_at(a.0, a.1, 0)
+    } else {
+        0
+    };
+    stamp_seeded(img, a, width, color, brush, seed);
+    line_from_previous(img, a, b, width, color, brush);
+}
+
+/// Continue a stroke whose previous endpoint has already been painted.
+/// Repeated stationary events do nothing; the initial press needs `stamp`.
+pub fn line_from_previous(
+    img: &mut RgbaImage,
+    a: Point,
+    b: Point,
+    width: u32,
+    color: Color,
+    brush: Brush,
+) {
+    let steps = (b.0 - a.0).abs().max((b.1 - a.1).abs());
+    for i in 1..=steps {
         let t = i as f32 / steps as f32;
         let p = (
             (a.0 as f32 + (b.0 - a.0) as f32 * t).round() as i32,
@@ -892,15 +1102,22 @@ pub fn shape_points(tool: Tool) -> Vec<(f32, f32)> {
             (1., 0.3),
             (0.55, 0.3),
         ],
-        Tool::Callout => vec![
-            (0., 0.),
-            (1., 0.),
-            (1., 0.75),
-            (0.45, 0.75),
-            (0.2, 1.),
-            (0.25, 0.75),
-            (0., 0.75),
-        ],
+        Tool::Callout => {
+            let mut points = Vec::new();
+            for (corner, center) in [(0.88, 0.12), (0.88, 0.63), (0.12, 0.63), (0.12, 0.12)]
+                .into_iter()
+                .enumerate()
+            {
+                for step in 0..=8 {
+                    let angle = (corner as f32 - 1.0 + step as f32 / 8.0) * PI / 2.0;
+                    points.push((center.0 + 0.12 * angle.cos(), center.1 + 0.12 * angle.sin()));
+                }
+                if corner == 1 {
+                    points.extend([(0.45, 0.75), (0.2, 1.0), (0.25, 0.75)]);
+                }
+            }
+            points
+        }
         Tool::Polygon => vec![(0., 0.8), (0.2, 0.), (0.6, 0.35), (1., 0.1), (0.85, 1.)],
         Tool::OvalCallout => {
             let mut pts = regular(64, false);
@@ -910,14 +1127,19 @@ pub fn shape_points(tool: Tool) -> Vec<(f32, f32)> {
             pts.splice(39..41, [(0.2, 1.)]);
             pts
         }
-        Tool::CloudCallout => (0..128)
-            .map(|i| {
-                let t = i as f32 * TAU / 128.;
-                let r = 0.43 + 0.07 * (t * 9.).cos();
-                (0.5 + r * t.cos(), 0.43 + r * t.sin() * 0.8)
-            })
-            .chain([(0.25, 0.87), (0.15, 1.), (0.16, 0.78)])
-            .collect(),
+        Tool::CloudCallout => {
+            let mut points: Vec<_> = (0..128)
+                .map(|i| {
+                    let t = i as f32 * TAU / 128.;
+                    let r = 0.43 + 0.07 * (t * 9.).cos();
+                    (0.5 + r * t.cos(), 0.43 + r * t.sin() * 0.8)
+                })
+                .collect();
+            // Replace part of the lower-left edge with the tail. Appending the
+            // tail after the complete perimeter cuts a diagonal through the body.
+            points.splice(39..44, [(0.15, 1.0)]);
+            points
+        }
         _ => vec![(0., 0.), (1., 0.), (1., 1.), (0., 1.)],
     }
 }
@@ -1125,11 +1347,29 @@ mod tests {
             angle: 0.0,
             scale: 1.0,
             color_key: None,
+            transform: Default::default(),
         });
         img = doc.composite();
         assert_eq!(img.get_pixel(7, 7).0, BLACK);
         assert_eq!(img.get_pixel(5, 5).0, WHITE);
     }
+    #[test]
+    fn affine_resize_and_rotation_preserve_operation_order() {
+        let source = RgbaImage::from_fn(7, 5, |x, y| Rgba([x as u8 * 30, y as u8 * 40, 0, 255]));
+        let mut object = Object::new(ObjectKind::Image(source), (0, 0));
+        object.rotate_to(37.0).unwrap();
+        object.resize_rendered(36, 17).unwrap();
+        let resized = object.render();
+        assert_eq!(resized.dimensions(), (36, 17));
+        object.rotate_to(127.0).unwrap();
+        assert_eq!(object.render(), imageops::rotate90(&resized));
+        object.resize_rendered(1000, 7).unwrap();
+        assert_eq!(object.render().dimensions(), (1000, 7));
+        let previous = object.clone();
+        assert!(object.resize_rendered(16384, 16384).is_err());
+        assert!(object == previous);
+    }
+
     #[test]
     fn resize_and_rotate_preserve_pixels() {
         let mut img = Document::new(2, 3).image;
@@ -1227,6 +1467,83 @@ mod tests {
     }
 
     #[test]
+    fn continuing_stationary_brush_does_not_darken_its_stamp() {
+        for brush in Brush::ALL {
+            let mut image = RgbaImage::new(60, 40);
+            stamp(&mut image, (20, 20), 8, BLACK, brush);
+            let original = image.clone();
+            for _ in 0..30 {
+                line_from_previous(&mut image, (20, 20), (20, 20), 8, BLACK, brush);
+            }
+            assert_eq!(image, original, "{brush:?} replayed a stationary endpoint");
+        }
+    }
+
+    #[test]
+    fn brush_continuations_preserve_opacity_across_event_batches() {
+        for brush in Brush::ALL {
+            // Airbrush randomness deliberately varies with its time/seed input.
+            if brush == Brush::Airbrush {
+                continue;
+            }
+            let mut continuous = RgbaImage::new(80, 60);
+            line(&mut continuous, (10, 10), (50, 50), 8, BLACK, brush);
+            let mut batched = RgbaImage::new(80, 60);
+            stamp(&mut batched, (10, 10), 8, BLACK, brush);
+            for coordinate in 11..=50 {
+                line_from_previous(
+                    &mut batched,
+                    (coordinate - 1, coordinate - 1),
+                    (coordinate, coordinate),
+                    8,
+                    BLACK,
+                    brush,
+                );
+            }
+            assert_eq!(continuous, batched, "{brush:?} repainted shared endpoints");
+        }
+    }
+
+    #[test]
+    fn cloud_callout_outline_does_not_cross_its_body() {
+        let points = shape_points(Tool::CloudCallout);
+        let cross = |a: (f32, f32), b: (f32, f32), c: (f32, f32)| {
+            (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
+        };
+        for first in 0..points.len() {
+            let a = points[first];
+            let b = points[(first + 1) % points.len()];
+            for second in first + 2..points.len() {
+                let c = points[second];
+                let d = points[(second + 1) % points.len()];
+                assert!(
+                    cross(a, b, c) * cross(a, b, d) >= 0.0
+                        || cross(c, d, a) * cross(c, d, b) >= 0.0,
+                    "Cloud perimeter edges {first} and {second} intersect"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rounded_callout_cuts_out_corners_and_keeps_the_tail() {
+        let mut image = RgbaImage::new(140, 140);
+        styled_shape(
+            &mut image,
+            Tool::Callout,
+            (10, 10),
+            (110, 110),
+            1,
+            Some((BLACK, PaintStyle::Solid)),
+            Some((WHITE, PaintStyle::Solid)),
+        );
+        assert_eq!(image.get_pixel(10, 10)[3], 0);
+        assert_eq!(image.get_pixel(110, 10)[3], 0);
+        assert_eq!(image.get_pixel(60, 40).0, WHITE);
+        assert_eq!(image.get_pixel(30, 110).0, BLACK);
+    }
+
+    #[test]
     fn textured_shapes_respect_no_fill_and_uniform_marker_corners() {
         let mut image = RgbaImage::new(64, 64);
         styled_shape(
@@ -1281,6 +1598,7 @@ mod tests {
             scale: 1.,
             angle: 0.,
             color_key: None,
+            transform: Default::default(),
         });
         doc.commit();
         doc.mark_saved();
