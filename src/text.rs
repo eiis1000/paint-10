@@ -5,11 +5,49 @@ use std::ops::Range;
 
 const MAX_TEXT_CHARS: usize = 1024 * 1024;
 const MAX_SPANS: usize = 4096;
-const MAX_FONT_BYTES: usize = 32 * 1024 * 1024;
-const MAX_FORMAT_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_FONT_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_FORMAT_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_TEXT_WIDTH: u32 = 16384;
 pub const MAX_TEXT_OUTLINE: u32 = 32;
 pub const FONT_POINT_RANGE: std::ops::RangeInclusive<f32> = 6.0..=200.0;
+pub const MAX_FONT_FACES: usize = 128;
+
+/// Whether the outline renderer can display a character from this face.
+/// Color/bitmap-only glyph IDs do not count as a drawable outline.
+pub fn font_supports_outline(font: &impl Font, character: char) -> bool {
+    let id = font.glyph_id(character);
+    id.0 != 0 && (character.is_whitespace() || character.is_control() || font.outline(id).is_some())
+}
+
+/// A real font face retained with the text, including collection face indices.
+/// Faces from other families also provide deterministic missing-glyph fallback.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct EmbeddedFont {
+    pub family: String,
+    pub data: Vec<u8>,
+    pub index: u32,
+    pub bold: bool,
+    pub italic: bool,
+}
+
+impl EmbeddedFont {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.family.is_empty()
+            || self.family.len() > 256
+            || self.data.is_empty()
+            || self.data.len() > MAX_FONT_BYTES
+        {
+            return Err("The embedded font exceeds the project limit.".into());
+        }
+        let font = FontRef::try_from_slice_and_index(&self.data, self.index)
+            .map_err(|_| "Invalid embedded font or collection face index.")?;
+        let scaled = font.as_scaled(24.0);
+        if !(1.0..=1000.0).contains(&(scaled.height() + scaled.line_gap())) {
+            return Err("Invalid font metrics.".into());
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TextAlignment {
@@ -142,6 +180,8 @@ pub struct TextFormat {
     pub outline_color: Color,
     #[serde(default)]
     pub spans: Vec<TextSpan>,
+    #[serde(default)]
+    pub font_faces: Vec<EmbeddedFont>,
 }
 
 impl Default for TextFormat {
@@ -163,6 +203,7 @@ impl Default for TextFormat {
             outline_width: 0,
             outline_color: BLACK,
             spans: vec![],
+            font_faces: vec![],
         }
     }
 }
@@ -443,6 +484,11 @@ impl TextFormat {
             merged.push(span);
         }
         let bytes = self.font.len()
+            + self
+                .font_faces
+                .iter()
+                .map(|face| face.data.len())
+                .sum::<usize>()
             + merged
                 .iter()
                 .map(|span| span.style.font.len())
@@ -457,6 +503,13 @@ impl TextFormat {
     pub fn memory_bytes(&self) -> usize {
         self.font_name.len()
             + self.font.len()
+            + self
+                .font_faces
+                .iter()
+                .map(|face| {
+                    std::mem::size_of::<EmbeddedFont>() + face.family.len() + face.data.len()
+                })
+                .sum::<usize>()
             + self
                 .spans
                 .iter()
@@ -481,8 +534,14 @@ impl TextFormat {
             );
         }
         validate_style(self.default_style_ref())?;
-        if self.spans.len() > MAX_SPANS || self.memory_bytes() > MAX_FORMAT_BYTES {
+        if self.spans.len() > MAX_SPANS
+            || self.font_faces.len() > MAX_FONT_FACES
+            || self.memory_bytes() > MAX_FORMAT_BYTES
+        {
             return Err("The text formatting exceeds the project limit.".into());
+        }
+        for face in &self.font_faces {
+            face.validate()?;
         }
         let mut end = 0;
         for span in &self.spans {
@@ -547,7 +606,8 @@ impl TextFormat {
                 let style = match style {
                     Some(style) => style,
                     None => {
-                        source_style = RenderStyle::new(self.style_ref_at(character_index));
+                        source_style =
+                            RenderStyle::new(self.style_ref_at(character_index), &self.font_faces);
                         &source_style
                     }
                 };
@@ -582,13 +642,27 @@ impl TextFormat {
     }
 
     fn layout(&self, text: &str) -> TextLayout<'_> {
-        let mut styles = vec![RenderStyle::new(self.default_style_ref())];
+        let mut styles = vec![RenderStyle::new(self.default_style_ref(), &self.font_faces)];
         styles.extend(
             self.spans
                 .iter()
                 .take(MAX_SPANS)
-                .map(|span| RenderStyle::new(span.style.as_ref())),
+                .map(|span| RenderStyle::new(span.style.as_ref(), &self.font_faces)),
         );
+        let base_style_count = styles.len();
+        let available_faces: Vec<_> = self
+            .font_faces
+            .iter()
+            .take(MAX_FONT_FACES)
+            .enumerate()
+            .filter_map(|(index, face)| {
+                FontRef::try_from_slice_and_index(&face.data, face.index)
+                    .ok()
+                    .map(|font| (index, font))
+            })
+            .collect();
+        let mut fallback_styles = std::collections::HashMap::new();
+        let mut character_styles = std::collections::HashMap::new();
         let mut chars = vec![];
         let mut span_index = 0;
         let mut source_count = 0;
@@ -598,15 +672,70 @@ impl TextFormat {
             while span_index < self.spans.len() && self.spans[span_index].range.end <= index {
                 span_index += 1;
             }
-            let style = if self
+            let base_style = if self
                 .spans
                 .get(span_index)
                 .is_some_and(|span| span.range.contains(&index))
-                && span_index + 1 < styles.len()
+                && span_index + 1 < base_style_count
             {
                 span_index + 1
             } else {
                 0
+            };
+            let style = if let Some(&cached) = character_styles.get(&(base_style, character)) {
+                cached
+            } else {
+                let resolved = if !character.is_control()
+                    && !character.is_whitespace()
+                    && !font_supports_outline(&styles[base_style].font, character)
+                {
+                    let source = styles[base_style].source;
+                    let fallback = available_faces
+                        .iter()
+                        .filter(|(_, font)| font_supports_outline(font, character))
+                        .min_by_key(|(index, _)| {
+                            let face = &self.font_faces[*index];
+                            (
+                                u8::from(!face.family.eq_ignore_ascii_case(source.font_name)),
+                                u8::from(face.bold != source.bold)
+                                    + u8::from(face.italic != source.italic),
+                            )
+                        });
+                    if let Some((face_index, _)) = fallback {
+                        *fallback_styles
+                            .entry((base_style, *face_index))
+                            .or_insert_with(|| {
+                                let index = styles.len();
+                                styles.push(RenderStyle::from_face(
+                                    source,
+                                    &self.font_faces[*face_index],
+                                ));
+                                index
+                            })
+                    } else {
+                        *fallback_styles
+                            .entry((base_style, usize::MAX))
+                            .or_insert_with(|| {
+                                let index = styles.len();
+                                styles.push(RenderStyle::from_font(
+                                    source,
+                                    epaint_default_fonts::UBUNTU_LIGHT,
+                                    0,
+                                    false,
+                                    false,
+                                ));
+                                index
+                            })
+                    }
+                } else {
+                    base_style
+                };
+                // Bound the cache independently of input length. Ordinary text
+                // repeatedly uses a small character set in each style run.
+                if character_styles.len() < 4096 {
+                    character_styles.insert((base_style, character), resolved);
+                }
+                resolved
             };
             if character == '\r' && source.peek().is_some_and(|(_, next)| *next == '\n') {
                 continue;
@@ -618,6 +747,16 @@ impl TextFormat {
                     source_index: index,
                 }));
             } else {
+                let character = if !character.is_control()
+                    && !character.is_whitespace()
+                    && styles[style].font.glyph_id(character).0 == 0
+                {
+                    // Preserve the original scalar in editor geometry, while
+                    // displaying an explicit replacement instead of blank ink.
+                    '?'
+                } else {
+                    character
+                };
                 chars.push(StyledChar {
                     character,
                     style,
@@ -751,7 +890,7 @@ impl TextFormat {
                     let bounds = outline.px_bounds();
                     outline.draw(|x, y, coverage| {
                         let y = y as i32 + bounds.min.y as i32;
-                        let shear = if style.source.italic {
+                        let shear = if style.synthetic_italic {
                             ((line.baseline - y as f32) * 0.2).round() as i32
                         } else {
                             0
@@ -760,7 +899,7 @@ impl TextFormat {
                         let mut color = style.source.color;
                         color[3] = (coverage * color[3] as f32) as u8;
                         blend(&mut image, x, y, color);
-                        if style.source.bold {
+                        if style.synthetic_bold {
                             blend(&mut image, x + 1, y, color);
                         }
                     });
@@ -909,14 +1048,57 @@ struct RenderStyle<'a> {
     ascent: f32,
     descent: f32,
     gap: f32,
+    font_index: u32,
+    synthetic_bold: bool,
+    synthetic_italic: bool,
 }
 
 impl<'a> RenderStyle<'a> {
-    fn new(source: TextStyleRef<'a>) -> Self {
+    fn new(source: TextStyleRef<'a>, faces: &'a [EmbeddedFont]) -> Self {
+        let matching = faces
+            .iter()
+            .take(MAX_FONT_FACES)
+            .filter(|face| {
+                face.family.eq_ignore_ascii_case(source.font_name)
+                    && (!face.bold || source.bold)
+                    && (!face.italic || source.italic)
+            })
+            .min_by_key(|face| {
+                (
+                    u8::from(face.bold != source.bold) + u8::from(face.italic != source.italic),
+                    u8::from(
+                        face.index != source.font_index || face.data != font_bytes(source.font),
+                    ),
+                )
+            });
+        if let Some(face) = matching {
+            Self::from_face(source, face)
+        } else {
+            Self::from_font(
+                source,
+                font_bytes(source.font),
+                source.font_index,
+                false,
+                false,
+            )
+        }
+    }
+
+    fn from_face(source: TextStyleRef<'a>, face: &'a EmbeddedFont) -> Self {
+        Self::from_font(source, &face.data, face.index, face.bold, face.italic)
+    }
+
+    fn from_font(
+        source: TextStyleRef<'a>,
+        bytes: &'a [u8],
+        index: u32,
+        bold: bool,
+        italic: bool,
+    ) -> Self {
         let fallback = || FontRef::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT).unwrap();
-        let mut font =
-            FontRef::try_from_slice_and_index(font_bytes(source.font), source.font_index)
-                .unwrap_or_else(|_| fallback());
+        let parsed = FontRef::try_from_slice_and_index(bytes, index);
+        let mut used_fallback = parsed.is_err();
+        let mut font = parsed.unwrap_or_else(|_| fallback());
         let size = if source.size.is_finite() {
             source
                 .size
@@ -927,6 +1109,7 @@ impl<'a> RenderStyle<'a> {
         let scaled = font.as_scaled(size);
         if !(1.0..=1000.0).contains(&(scaled.height() + scaled.line_gap())) {
             font = fallback();
+            used_fallback = true;
         }
         let scaled = font.as_scaled(size);
         let (ascent, descent, gap) = (
@@ -941,15 +1124,18 @@ impl<'a> RenderStyle<'a> {
             ascent,
             descent,
             gap,
+            font_index: if used_fallback { 0 } else { index },
+            synthetic_bold: source.bold && (!bold || used_fallback),
+            synthetic_italic: source.italic && (!italic || used_fallback),
         }
     }
 
     fn overhang(&self) -> f32 {
-        (if self.source.italic {
+        (if self.synthetic_italic {
             self.size * 0.2
         } else {
             0.0
-        }) + if self.source.bold { 1.0 } else { 0.0 }
+        }) + if self.synthetic_bold { 1.0 } else { 0.0 }
     }
 }
 
@@ -999,8 +1185,8 @@ fn advance(
         let prior = &styles[previous_style];
         if prior.size == style.size
             && (previous_style == character.style
-                || (prior.source.font == style.source.font
-                    && prior.source.font_index == style.source.font_index))
+                || (prior.font.font_data() == style.font.font_data()
+                    && prior.font_index == style.font_index))
         {
             scaled.kern(previous, id)
         } else {
@@ -1097,6 +1283,231 @@ fn layout_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn embedded(family: &str, bytes: &[u8], bold: bool, italic: bool) -> EmbeddedFont {
+        EmbeddedFont {
+            family: family.into(),
+            data: bytes.to_vec(),
+            index: 0,
+            bold,
+            italic,
+        }
+    }
+
+    #[test]
+    fn embedded_variant_uses_its_real_metrics_without_extra_bold_or_shear() {
+        // Different bundled faces make selecting the stored variant observable
+        // in both glyph pixels and caret advances, without relying on host fonts.
+        let mut format = TextFormat {
+            font_name: "Variant fixture".into(),
+            font: epaint_default_fonts::UBUNTU_LIGHT.to_vec(),
+            bold: true,
+            italic: true,
+            font_faces: vec![
+                embedded(
+                    "Variant fixture",
+                    epaint_default_fonts::UBUNTU_LIGHT,
+                    false,
+                    false,
+                ),
+                embedded(
+                    "Variant fixture",
+                    epaint_default_fonts::HACK_REGULAR,
+                    true,
+                    true,
+                ),
+            ],
+            ..Default::default()
+        };
+        format.validate().unwrap();
+        let expected = TextFormat {
+            font: epaint_default_fonts::HACK_REGULAR.to_vec(),
+            ..Default::default()
+        };
+        assert_eq!(
+            format.render("Wide AV text"),
+            expected.render("Wide AV text")
+        );
+        let actual = format.editor_layout("Wide AV text");
+        let expected = expected.editor_layout("Wide AV text");
+        assert_eq!(actual.rows[0].height, expected.rows[0].height);
+        for (actual, expected) in actual.rows[0].glyphs.iter().zip(&expected.rows[0].glyphs) {
+            assert_eq!(actual.x, expected.x);
+            assert_eq!(actual.advance, expected.advance);
+        }
+        format.italic = false;
+        let style = RenderStyle::new(format.default_style_ref(), &format.font_faces);
+        assert!(style.synthetic_bold);
+        assert!(!style.synthetic_italic);
+        assert_eq!(style.font.font_data(), epaint_default_fonts::UBUNTU_LIGHT);
+    }
+
+    #[test]
+    fn missing_glyph_fallback_keeps_original_characters_and_shared_geometry() {
+        let character = '\u{1f600}';
+        assert_eq!(
+            FontRef::try_from_slice(epaint_default_fonts::HACK_REGULAR)
+                .unwrap()
+                .glyph_id(character)
+                .0,
+            0
+        );
+        assert_ne!(
+            FontRef::try_from_slice(epaint_default_fonts::NOTO_EMOJI_REGULAR)
+                .unwrap()
+                .glyph_id(character)
+                .0,
+            0
+        );
+        let format = TextFormat {
+            font: epaint_default_fonts::HACK_REGULAR.to_vec(),
+            width: 100,
+            font_faces: vec![embedded(
+                "Noto Emoji",
+                epaint_default_fonts::NOTO_EMOJI_REGULAR,
+                false,
+                false,
+            )],
+            ..Default::default()
+        };
+        let expected = TextFormat {
+            font: epaint_default_fonts::NOTO_EMOJI_REGULAR.to_vec(),
+            width: 100,
+            ..Default::default()
+        };
+        assert_eq!(format.render("😀"), expected.render("😀"));
+        let text = "A😀\tB😀\r\n😀";
+        let layout = format.layout(text);
+        assert_eq!(
+            layout.styles.len(),
+            2,
+            "reuse the same fallback face for repeated glyphs"
+        );
+        for line in &layout.lines {
+            for glyph in &line.glyphs {
+                assert_ne!(glyph.id.0, 0);
+            }
+        }
+        let editor = format.editor_layout(text);
+        let reconstructed: String = editor
+            .rows
+            .iter()
+            .flat_map(|row| {
+                row.glyphs
+                    .iter()
+                    .map(|glyph| glyph.character)
+                    .chain(row.ends_with_newline.then_some('\n'))
+            })
+            .collect();
+        assert_eq!(reconstructed, text);
+    }
+
+    #[test]
+    fn glyph_ids_without_outlines_use_a_drawable_fallback() {
+        // Remove only the outline table from a real font. Its cmap and metrics
+        // still resolve glyph IDs, reproducing the color/bitmap-only face case.
+        let mut bytes = epaint_default_fonts::HACK_REGULAR.to_vec();
+        let count = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+        let mut removed = false;
+        for entry in bytes[12..].chunks_exact_mut(16).take(count) {
+            if &entry[..4] == b"glyf" {
+                entry[..4].copy_from_slice(b"TEST");
+                removed = true;
+            }
+        }
+        assert!(removed);
+        let without_outlines = FontRef::try_from_slice(&bytes).unwrap();
+        assert_ne!(without_outlines.glyph_id('A').0, 0);
+        assert!(!font_supports_outline(&without_outlines, 'A'));
+        let format = TextFormat {
+            font: bytes,
+            font_faces: vec![embedded(
+                "Fallback",
+                epaint_default_fonts::UBUNTU_LIGHT,
+                false,
+                false,
+            )],
+            ..Default::default()
+        };
+        assert_eq!(format.render("ABC"), TextFormat::default().render("ABC"));
+        let mut without_supplied_fallback = format.clone();
+        without_supplied_fallback.font_faces.clear();
+        assert_eq!(
+            without_supplied_fallback.render("ABC"),
+            TextFormat::default().render("ABC")
+        );
+        assert_eq!(
+            without_supplied_fallback.render("\u{10ffff}"),
+            TextFormat::default().render("?")
+        );
+        assert_eq!(
+            without_supplied_fallback.editor_layout("\u{10ffff}").rows[0].glyphs[0].character,
+            '\u{10ffff}'
+        );
+    }
+
+    #[test]
+    fn matching_family_faces_preserve_exact_embedded_source_bytes() {
+        let expected = TextFormat {
+            font_name: "Same family".into(),
+            font: epaint_default_fonts::HACK_REGULAR.to_vec(),
+            ..Default::default()
+        };
+        let mut with_faces = expected.clone();
+        with_faces.font_faces = vec![
+            embedded(
+                "Same family",
+                epaint_default_fonts::UBUNTU_LIGHT,
+                false,
+                false,
+            ),
+            embedded(
+                "Same family",
+                epaint_default_fonts::HACK_REGULAR,
+                false,
+                false,
+            ),
+        ];
+        assert_eq!(
+            with_faces.render("Saved font version"),
+            expected.render("Saved font version")
+        );
+    }
+
+    #[test]
+    fn embedded_faces_are_bounded_validated_and_optional_in_legacy_text() {
+        let format = TextFormat::default();
+        let mut value = serde_json::to_value(&format).unwrap();
+        value.as_object_mut().unwrap().remove("font_faces");
+        let legacy: TextFormat = serde_json::from_value(value).unwrap();
+        assert!(legacy.font_faces.is_empty());
+        assert_eq!(
+            legacy.render("Existing project"),
+            format.render("Existing project")
+        );
+        let face = embedded("Hack", epaint_default_fonts::HACK_REGULAR, false, false);
+        let mut invalid = TextFormat {
+            font_faces: vec![face.clone()],
+            ..Default::default()
+        };
+        invalid.font_faces[0].index = u32::MAX;
+        assert!(invalid.validate().is_err());
+        invalid.font_faces[0] = face.clone();
+        invalid.font_faces[0].data = b"not a font".to_vec();
+        assert!(invalid.validate().is_err());
+        invalid.font_faces = (0..=MAX_FONT_FACES)
+            .map(|_| EmbeddedFont {
+                data: vec![],
+                ..face.clone()
+            })
+            .collect();
+        assert!(invalid.validate().unwrap_err().contains("limit"));
+        let with_face = TextFormat {
+            font_faces: vec![face.clone()],
+            ..Default::default()
+        };
+        assert!(with_face.memory_bytes() >= format.memory_bytes() + face.data.len());
+    }
 
     #[test]
     fn editor_rows_preserve_original_character_indices_through_wrapping_and_whitespace() {
