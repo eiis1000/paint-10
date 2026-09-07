@@ -179,6 +179,10 @@ impl PaintApp {
                     imageops::flip_vertical(img)
                 }
             }),
+            Action::ClearPicture => {
+                self.clear_selection();
+                self.execute(Action::Clear, ctx);
+            }
             Action::Clear => {
                 if self.selection.is_some() || self.object.is_some() {
                     self.delete_selection();

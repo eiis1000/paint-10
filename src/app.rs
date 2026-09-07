@@ -48,6 +48,7 @@ enum Action {
     Flip(bool),
     Properties,
     Clear,
+    ClearPicture,
     SelectAll,
     Invert,
     Print,
