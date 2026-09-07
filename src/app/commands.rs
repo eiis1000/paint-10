@@ -1,16 +1,23 @@
 use super::*;
 
 impl PaintApp {
+    /// Finish the current drawing operation before another command consumes
+    /// the document, while retaining the committed shape's selection bounds.
+    pub(in crate::app) fn finish_editing(&mut self) -> Option<Region> {
+        self.commit_text();
+        self.finish_polygon();
+        let shape = self.commit_shape();
+        if self.curve.take().is_some() {
+            self.doc.commit();
+        }
+        shape
+    }
+
     pub(in crate::app) fn set_tool(&mut self, tool: Tool) {
         if self.dialog.is_some() || self.pending.is_some() {
             return;
         }
-        self.commit_text();
-        self.finish_polygon();
-        self.commit_shape();
-        if self.curve.take().is_some() {
-            self.doc.commit();
-        }
+        self.finish_editing();
         if tool == Tool::Picker {
             self.previous_tool = self.tool;
         }
@@ -35,6 +42,15 @@ impl PaintApp {
         if self.dialog.is_some() || self.pending.is_some() {
             return;
         }
+        if self.text_history_action(action, ctx) || self.text_clipboard_action(action, ctx) {
+            return;
+        }
+        if matches!(action, Action::Paste) {
+            // Reading an empty or unavailable clipboard must not finish an
+            // unrelated text/shape edit. Valid image insertion settles it.
+            self.paste_clipboard();
+            return;
+        }
         if self.shape_draft.is_some() {
             match action {
                 Action::Copy => {
@@ -42,8 +58,7 @@ impl PaintApp {
                     return;
                 }
                 Action::Cut => {
-                    self.copy();
-                    self.delete_selection();
+                    self.cut();
                     return;
                 }
                 Action::Clear => {
@@ -53,9 +68,7 @@ impl PaintApp {
                 _ => {}
             }
         }
-        self.commit_text();
-        self.finish_polygon();
-        if let Some(bounds) = self.commit_shape() {
+        if let Some(bounds) = self.finish_editing() {
             if matches!(
                 action,
                 Action::Copy
@@ -69,9 +82,6 @@ impl PaintApp {
             ) {
                 self.selection = Some(bounds);
             }
-        }
-        if self.curve.take().is_some() {
-            self.doc.commit();
         }
         if matches!(action, Action::New | Action::Open | Action::Close) && self.doc.dirty() {
             self.pending = Some(action);
@@ -127,11 +137,10 @@ impl PaintApp {
                     h: self.doc.image.height(),
                 });
             }
-            Action::Copy => self.copy(),
-            Action::Cut => {
+            Action::Copy => {
                 self.copy();
-                self.delete_selection();
             }
+            Action::Cut => self.cut(),
             Action::Paste => self.paste_clipboard(),
             Action::PasteFrom => {
                 if let Some(path) = Self::file_dialog().pick_file() {
@@ -152,10 +161,7 @@ impl PaintApp {
                 }
             }
             Action::Resize => {
-                let (w, h) = self
-                    .selected_region()
-                    .map(|r| (r.w, r.h))
-                    .unwrap_or(self.doc.image.dimensions());
+                let (w, h) = self.resize_dimensions();
                 self.resize_w = w;
                 self.resize_h = h;
                 self.percent = false;
@@ -172,13 +178,7 @@ impl PaintApp {
             Action::Rotate(angle) => {
                 self.rotate_picture(angle, false);
             }
-            Action::Flip(horizontal) => self.transform(|img| {
-                if horizontal {
-                    imageops::flip_horizontal(img)
-                } else {
-                    imageops::flip_vertical(img)
-                }
-            }),
+            Action::Flip(horizontal) => self.flip_picture(horizontal),
             Action::ClearPicture => {
                 self.clear_selection();
                 self.execute(Action::Clear, ctx);
@@ -199,11 +199,14 @@ impl PaintApp {
                     self.refresh = true;
                 }
             }
-            Action::Invert => self.transform(|img| {
-                let mut img = img.clone();
-                imageops::invert(&mut img);
-                img
-            }),
+            Action::Invert => self.transform_with_key(
+                |img| {
+                    let mut img = img.clone();
+                    imageops::invert(&mut img);
+                    img
+                },
+                |[r, g, b, a]| [255 - r, 255 - g, 255 - b, a],
+            ),
             Action::Print => {
                 self.dialog = Some(Dialog::Print);
             }
@@ -211,6 +214,82 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn transform(&mut self, f: impl FnOnce(&RgbaImage) -> RgbaImage) {
+        self.transform_with_key(f, |key| key);
+    }
+
+    fn flip_picture(&mut self, horizontal: bool) {
+        if let Some(index) = self.object {
+            self.doc.begin();
+            let transform = &mut self.doc.objects[index].transform;
+            if horizontal {
+                transform.xx = -transform.xx;
+                transform.xy = -transform.xy;
+            } else {
+                transform.yx = -transform.yx;
+                transform.yy = -transform.yy;
+            }
+            self.doc.commit();
+            self.refresh = true;
+        } else {
+            self.transform(|image| {
+                if horizontal {
+                    imageops::flip_horizontal(image)
+                } else {
+                    imageops::flip_vertical(image)
+                }
+            });
+        }
+    }
+
+    /// Resizing an object includes the portion outside the canvas; cropping
+    /// and copying use the visible selection instead.
+    pub(in crate::app) fn resize_dimensions(&self) -> (u32, u32) {
+        self.object
+            .and_then(|index| self.doc.objects[index].rendered_dimensions())
+            .or_else(|| self.selected_region().map(|region| (region.w, region.h)))
+            .unwrap_or(self.doc.image.dimensions())
+    }
+
+    pub(in crate::app) fn resize_picture(
+        &mut self,
+        width: u32,
+        height: u32,
+        skew_x: f32,
+        skew_y: f32,
+    ) -> Result<(), String> {
+        if !d::valid_size(width, height) {
+            return Err("Dimensions must be positive and fit within 16 megapixels.".into());
+        }
+        let plan = super::transforms::SkewPlan::new(width, height, skew_x, skew_y)?;
+        if skew_x == 0.0 && skew_y == 0.0 {
+            if (width, height) == self.resize_dimensions() {
+                return Ok(());
+            }
+            if let Some(index) = self.object {
+                let mut resized = self.doc.objects[index].clone();
+                resized.resize_rendered(width, height)?;
+                self.doc.begin();
+                self.doc.objects[index] = resized;
+                self.doc.commit();
+                self.refresh = true;
+                return Ok(());
+            }
+        }
+        let background = self.colors[1];
+        self.transform(|image| {
+            plan.apply(
+                &imageops::resize(image, width, height, imageops::FilterType::CatmullRom),
+                background,
+            )
+        });
+        Ok(())
+    }
+
+    fn transform_with_key(
+        &mut self,
+        f: impl FnOnce(&RgbaImage) -> RgbaImage,
+        map_key: impl FnOnce(Color) -> Color,
+    ) {
         self.doc.begin();
         if let Some(i) = self.object {
             let rendered = self.doc.objects[i].render_unkeyed();
@@ -218,6 +297,8 @@ impl PaintApp {
             self.doc.objects[i].kind = ObjectKind::Image(img);
             self.doc.objects[i].angle = 0.;
             self.doc.objects[i].scale = 1.;
+            self.doc.objects[i].transform = Default::default();
+            self.doc.objects[i].color_key = self.doc.objects[i].color_key.map(map_key);
         } else if let Some(r) = self.selection {
             let source = self.selected_image().unwrap();
             let img = f(&source);
@@ -228,12 +309,19 @@ impl PaintApp {
                 pos: (r.x as i32, r.y as i32),
                 angle: 0.,
                 scale: 1.,
-                color_key: self.transparent.then_some(self.colors[1]),
+                color_key: self.transparent.then(|| map_key(self.colors[1])),
+                transform: Default::default(),
             });
             self.select_object(i);
         } else {
             self.doc.flatten();
             self.doc.image = f(&self.doc.image);
+        }
+        if let Some(key) = self
+            .object
+            .and_then(|index| self.doc.objects[index].color_key)
+        {
+            self.colors[1] = key;
         }
         self.doc.commit();
         self.refresh = true;
@@ -247,15 +335,13 @@ impl PaintApp {
             } else {
                 object.angle + angle
             };
-            let mut unrotated = object.clone();
-            unrotated.angle = 0.0;
-            let image = unrotated.render();
-            if d::rotation_size(image.width(), image.height(), requested).is_none() {
-                self.message = "The rotated picture would exceed the 16 megapixel limit.".into();
+            let mut rotated = object.clone();
+            if let Err(error) = rotated.rotate_to(requested) {
+                self.message = error;
                 return false;
             }
             self.doc.begin();
-            self.doc.objects[index].angle = requested.rem_euclid(360.0);
+            self.doc.objects[index] = rotated;
             self.doc.commit();
             self.refresh = true;
         } else {
@@ -267,16 +353,17 @@ impl PaintApp {
                 self.message = "The rotated picture would exceed the 16 megapixel limit.".into();
                 return false;
             }
+            let background = self.colors[1];
             let quarter_turn = (angle.rem_euclid(180.0) - 90.0).abs() < 0.001;
             if self.selection.is_none() && quarter_turn {
                 self.doc.begin();
                 self.doc.flatten();
-                self.doc.image = d::rotate(&self.doc.image, angle, WHITE);
+                self.doc.image = d::rotate(&self.doc.image, angle, background);
                 std::mem::swap(&mut self.doc.resolution.x, &mut self.doc.resolution.y);
                 self.doc.commit();
                 self.refresh = true;
             } else {
-                self.transform(|image| d::rotate(image, angle, WHITE));
+                self.transform(|image| d::rotate(image, angle, background));
             }
         }
         true
@@ -288,5 +375,153 @@ impl PaintApp {
         }
         let points = std::mem::take(&mut self.polygon);
         self.start_shape_draft(ShapeGeometry::Polygon(points), self.polygon_color_slot);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_image_paste_keeps_uncommitted_text_open() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let index = app.doc.add_object(Object::new(
+            ObjectKind::Text {
+                text: "Before".into(),
+                format: Default::default(),
+            },
+            (10, 10),
+        ));
+        app.edit_text_object(index);
+        app.text_edit.as_mut().unwrap().text = "Still editing".into();
+
+        app.action(Action::Paste, &ctx);
+
+        assert_eq!(app.text_edit.as_ref().unwrap().text, "Still editing");
+        assert!(
+            matches!(&app.doc.objects[index].kind, ObjectKind::Text { text, .. } if text == "Before")
+        );
+    }
+
+    #[test]
+    fn flips_preserve_editable_rotated_text_and_match_visible_raster() {
+        let ctx = Context::default();
+        for horizontal in [true, false] {
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            let mut object = Object::new(
+                ObjectKind::Text {
+                    text: "Mirror".into(),
+                    format: Default::default(),
+                },
+                (12, 20),
+            );
+            object.rotate_to(90.0).unwrap();
+            let before = object.render();
+            let index = app.doc.add_object(object);
+            app.select_object(index);
+
+            app.action(Action::Flip(horizontal), &ctx);
+
+            let flipped = &app.doc.objects[index];
+            assert!(matches!(flipped.kind, ObjectKind::Text { .. }));
+            assert_eq!(flipped.pos, (12, 20));
+            let expected = if horizontal {
+                imageops::flip_horizontal(&before)
+            } else {
+                imageops::flip_vertical(&before)
+            };
+            assert_eq!(flipped.render(), expected);
+            app.doc.undo();
+            assert_eq!(app.doc.objects[index].render(), before);
+        }
+    }
+
+    #[test]
+    fn resize_dialog_uses_complete_off_canvas_object_and_preserves_text() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let mut object = Object::new(
+            ObjectKind::Text {
+                text: "Still editable".into(),
+                format: Default::default(),
+            },
+            (-30, -5),
+        );
+        object.rotate_to(90.0).unwrap();
+        let original = object.rendered_dimensions().unwrap();
+        let index = app.doc.add_object(object);
+        app.select_object(index);
+        app.execute(Action::Resize, &ctx);
+        assert_eq!((app.resize_w, app.resize_h), original);
+
+        app.resize_picture(original.0 * 2, original.1 * 3, 0.0, 0.0)
+            .unwrap();
+        let resized = &app.doc.objects[index];
+        assert_eq!(resized.pos, (-30, -5));
+        assert_eq!(
+            resized.rendered_dimensions(),
+            Some((original.0 * 2, original.1 * 3))
+        );
+        assert!(matches!(&resized.kind, ObjectKind::Text { text, .. } if text == "Still editable"));
+        app.doc.undo();
+        assert_eq!(app.doc.objects[index].rendered_dimensions(), Some(original));
+    }
+
+    #[test]
+    fn inverting_a_keyed_picture_preserves_transparency_and_undo() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let mut image = RgbaImage::from_pixel(3, 2, Rgba(WHITE));
+        image.put_pixel(1, 0, Rgba(BLACK));
+        let mut object = Object::new(ObjectKind::Image(image), (10, 10));
+        object.color_key = Some(WHITE);
+        app.doc.begin();
+        let index = app.doc.add_object(object);
+        app.doc.commit();
+        app.select_object(index);
+        app.transparent = true;
+
+        app.action(Action::Invert, &ctx);
+        let selected = &app.doc.objects[index];
+        assert_eq!(selected.color_key, Some(BLACK));
+        assert_eq!(selected.render().get_pixel(0, 0)[3], 0);
+        assert_eq!(*selected.render().get_pixel(1, 0), Rgba(WHITE));
+        app.sync_image_transparency();
+        assert_eq!(app.doc.objects[index].color_key, Some(BLACK));
+
+        app.action(Action::Undo, &ctx);
+        assert_eq!(app.doc.objects[index].color_key, Some(WHITE));
+        assert_eq!(
+            *app.doc.objects[index].render().get_pixel(1, 0),
+            Rgba(BLACK)
+        );
+    }
+
+    #[test]
+    fn inserting_a_picture_preserves_uncommitted_text_edits() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let index = app.doc.add_object(Object::new(
+            ObjectKind::Text {
+                text: "Before".into(),
+                format: Default::default(),
+            },
+            (10, 10),
+        ));
+        app.edit_text_object(index);
+        app.text_edit.as_mut().unwrap().text = "After".into();
+
+        app.insert_image(RgbaImage::from_pixel(5, 5, Rgba(BLACK)));
+
+        assert!(app.text_edit.is_none());
+        assert!(matches!(
+            &app.doc.objects[index].kind,
+            ObjectKind::Text { text, .. } if text == "After"
+        ));
+        assert!(matches!(
+            app.doc.objects[app.object.unwrap()].kind,
+            ObjectKind::Image(_)
+        ));
     }
 }

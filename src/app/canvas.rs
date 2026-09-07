@@ -1,6 +1,18 @@
 use super::*;
 
+const CANVAS_CENTER_REQUEST: &str = "paint10_canvas_center_request";
+
 impl PaintApp {
+    pub(in crate::app) fn center_canvas_on(&self, point: Point, ctx: &Context) {
+        ctx.data_mut(|data| data.insert_temp(Id::new(CANVAS_CENTER_REQUEST), point));
+        ctx.request_repaint();
+    }
+
+    pub(in crate::app) fn magnify_at(&mut self, point: Point, zoom_out: bool, ctx: &Context) {
+        self.zoom = (self.zoom * if zoom_out { 0.5 } else { 2.0 }).clamp(0.125, 8.0);
+        self.center_canvas_on(point, ctx);
+    }
+
     pub(in crate::app) fn refresh_texture(&mut self, ctx: &Context) {
         if !self.refresh {
             return;
@@ -24,6 +36,10 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn canvas(&mut self, ctx: &Context) {
+        // Requests created by canvas input are applied next frame, when the
+        // canvas dimensions already reflect any change in zoom.
+        let center_request =
+            ctx.data_mut(|data| data.remove_temp::<Point>(Id::new(CANVAS_CENTER_REQUEST)));
         self.refresh_shape_style();
         self.sync_image_transparency();
         self.refresh_texture(ctx);
@@ -40,9 +56,10 @@ impl PaintApp {
                 if wheel != 0. {
                     self.zoom = (self.zoom * if wheel > 0. { 1.25 } else { 0.8 }).clamp(0.125, 8.);
                 }
-                ScrollArea::both()
+                let scroll = ScrollArea::both()
                     .auto_shrink([false, false])
-                    .show(ui, |ui| {
+                    .animated(center_request.is_none())
+                    .show_viewport(ui, |ui, viewport| {
                         let ruler = if self.rulers { 22. } else { 0. };
                         let origin = ui.cursor().min + vec2(8. + ruler, 8. + ruler);
                         let size = vec2(
@@ -52,6 +69,13 @@ impl PaintApp {
                         let rect = Rect::from_min_size(origin, size);
                         self.canvas_rect = rect;
                         ui.allocate_space(size + vec2(22. + ruler, 22. + ruler));
+                        if let Some(point) = center_request {
+                            let offset = (vec2(point.0 as f32, point.1 as f32) * self.zoom
+                                + Vec2::splat(8.0 + ruler)
+                                - viewport.size() / 2.0)
+                                .max(Vec2::ZERO);
+                            ui.scroll_with_delta(viewport.min.to_vec2() - offset);
+                        }
                         ui.painter().rect_filled(
                             rect.translate(vec2(2., 2.)),
                             0.,
@@ -98,10 +122,11 @@ impl PaintApp {
                         if self.rulers {
                             self.draw_rulers(ui, rect);
                         }
-                        if let Some(r) = self.selected_region().filter(|_| self.text_edit.is_none())
+                        if let Some((position, r)) =
+                            self.selection_bounds().filter(|_| self.text_edit.is_none())
                         {
                             let sr = Rect::from_min_size(
-                                rect.min + vec2(r.x as f32, r.y as f32) * self.zoom,
+                                rect.min + vec2(position.0 as f32, position.1 as f32) * self.zoom,
                                 vec2(r.w as f32, r.h as f32) * self.zoom,
                             );
                             dashed_rect(ui.painter(), sr);
@@ -136,36 +161,41 @@ impl PaintApp {
                                     0 | 3 => CursorIcon::ResizeNwSe,
                                     _ => CursorIcon::ResizeNeSw,
                                 });
-                                let pressed = pointer_press_in(
+                                let press = pointer_press_in(
                                     ui,
                                     ctx,
                                     Rect::from_center_size(pos, vec2(9., 9.)),
                                     true,
-                                )
-                                .is_some();
-                                if pressed
-                                    && self.text_edit.is_none()
-                                    && self.dialog.is_none()
-                                    && self.pending.is_none()
-                                {
+                                );
+                                if let Some(press) = press.filter(|_| {
+                                    self.text_edit.is_none()
+                                        && self.dialog.is_none()
+                                        && self.pending.is_none()
+                                }) {
                                     if let Some(shape) = &self.shape_draft {
                                         self.gesture = Some(Gesture::ResizeShape {
                                             bounds: r,
                                             original: shape.clone(),
                                             handle,
                                         });
-                                    } else if let Some(i) = self.lift_selection() {
+                                    } else {
+                                        if self.object.is_some() {
+                                            self.doc.begin();
+                                        }
                                         self.gesture = Some(Gesture::ResizeObject {
-                                            index: i,
+                                            index: self.object,
                                             original: r,
-                                            source: self.doc.objects[i].render_unkeyed(),
-                                            base: self.doc.objects[i].clone(),
+                                            start: self.point(press, rect),
+                                            base: self
+                                                .object
+                                                .map(|index| self.doc.objects[index].clone()),
                                             handle,
                                         });
                                     }
                                 }
                             }
                         }
+                        self.text_geometry_handles(ui, ctx, rect);
                         let blocked = self.dialog.is_some()
                             || self.pending.is_some()
                             || self.text_edit.is_some();
@@ -225,6 +255,9 @@ impl PaintApp {
                             self.canvas_input(ui, &response, rect, ctx);
                         }
                     });
+                ctx.data_mut(|data| {
+                    data.insert_temp(Id::new("paint10_canvas_viewport"), scroll.inner_rect);
+                });
             });
     }
 
@@ -233,6 +266,118 @@ impl PaintApp {
             ((p.x - rect.left()) / self.zoom).floor() as i32,
             ((p.y - rect.top()) / self.zoom).floor() as i32,
         )
+    }
+
+    /// Object handles describe the complete object, including pixels outside the canvas.
+    fn selection_bounds(&self) -> Option<(Point, Region)> {
+        if let Some(object) = self.object.and_then(|index| self.doc.objects.get(index)) {
+            let (w, h) = object.rendered_dimensions()?;
+            return Some((object.pos, Region { x: 0, y: 0, w, h }));
+        }
+        self.selected_region()
+            .map(|region| ((region.x as i32, region.y as i32), region))
+    }
+
+    fn text_geometry_handles(&mut self, ui: &Ui, ctx: &Context, canvas: Rect) {
+        let Some(state) = &self.text_edit else {
+            return;
+        };
+        if self.dialog.is_some()
+            || self.pending.is_some()
+            || ctx.memory(|memory| memory.any_popup_open())
+        {
+            return;
+        }
+        let Some(editor) =
+            ctx.data(|data| data.get_temp::<Rect>(Id::new("paint10_text_editor_rect")))
+        else {
+            return;
+        };
+        let border = editor.expand(3.0);
+        let handles = [
+            border.left_top(),
+            border.right_top(),
+            border.left_bottom(),
+            border.right_bottom(),
+            border.center_top(),
+            border.center_bottom(),
+            border.left_center(),
+            border.right_center(),
+        ];
+        let painter = ctx
+            .layer_painter(LayerId::new(Order::Foreground, Id::new("text_box_handles")))
+            .with_clip_rect(ui.clip_rect());
+        for point in handles {
+            painter.rect(
+                Rect::from_center_size(point, vec2(5.0, 5.0)),
+                0.0,
+                Color32::WHITE,
+                Stroke::new(1.0_f32, BLUE),
+                StrokeKind::Inside,
+            );
+        }
+        if let Some(position) = ctx
+            .input(|input| input.pointer.hover_pos())
+            .filter(|position| ui.clip_rect().contains(*position))
+        {
+            if let Some(handle) = handles.iter().position(|point| {
+                Rect::from_center_size(*point, vec2(11.0, 11.0)).contains(position)
+            }) {
+                ctx.set_cursor_icon(match handle {
+                    4 | 5 => CursorIcon::ResizeVertical,
+                    6 | 7 => CursorIcon::ResizeHorizontal,
+                    0 | 3 => CursorIcon::ResizeNwSe,
+                    _ => CursorIcon::ResizeNeSw,
+                });
+            } else if border.expand(5.0).contains(position)
+                && !editor.shrink(5.0).contains(position)
+            {
+                ctx.set_cursor_icon(CursorIcon::Move);
+            }
+        }
+        let events = ctx.input(|input| input.events.clone());
+        let press = events.iter().find_map(|event| {
+            let Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: true,
+                ..
+            } = event
+            else {
+                return None;
+            };
+            let layer = ctx.layer_id_at(*pos);
+            let allowed = layer == Some(ui.layer_id())
+                || layer == Some(LayerId::new(Order::Foreground, Id::new("inline_text")));
+            (allowed
+                && ui.clip_rect().contains(*pos)
+                && border.expand(5.0).contains(*pos)
+                && !editor.shrink(5.0).contains(*pos))
+            .then_some(*pos)
+        });
+        if let Some(press) = press {
+            let start = self.point(press, canvas);
+            if let Some(handle) = handles
+                .iter()
+                .position(|point| Rect::from_center_size(*point, vec2(11.0, 11.0)).contains(press))
+            {
+                self.gesture = Some(Gesture::ResizeText {
+                    start,
+                    origin: state.origin,
+                    width: state.format.width,
+                    height: (editor.height() / self.zoom).round().max(1.0) as u32,
+                    minimum_height: state.format.minimum_height,
+                    handle,
+                });
+            } else {
+                self.gesture = Some(Gesture::MoveText {
+                    start,
+                    origin: state.origin,
+                });
+            }
+            self.begin_text_geometry_history();
+        }
+        self.continue_text_geometry_gesture(ui, ctx, canvas);
     }
 
     pub(in crate::app) fn draw_rulers(&self, ui: &Ui, r: Rect) {
@@ -309,5 +454,75 @@ pub(in crate::app) fn dashed_rect(p: &Painter, r: Rect) {
                 Stroke::new(1.0_f32, Color32::from_gray(30)),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn canvas_frame(app: &mut PaintApp, ctx: &Context) -> Rect {
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(640.0, 480.0))),
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            TopBottomPanel::top("test_toolbar")
+                .exact_height(53.0)
+                .show(ctx, |_| {});
+            SidePanel::left("test_sidebar")
+                .exact_width(79.0)
+                .show(ctx, |_| {});
+            app.canvas(ctx);
+        });
+        ctx.data(|data| data.get_temp::<Rect>(Id::new("paint10_canvas_viewport")))
+            .unwrap()
+    }
+
+    #[test]
+    fn magnifier_centers_the_clicked_detail_in_the_actual_viewport() {
+        for rulers in [false, true] {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            app.doc = Document::new(1600, 1200);
+            app.rulers = rulers;
+            canvas_frame(&mut app, &ctx);
+            canvas_frame(&mut app, &ctx);
+            let point = (350, 280);
+            app.magnify_at(point, false, &ctx);
+            assert_eq!(app.zoom, 2.0);
+            for _ in 0..3 {
+                canvas_frame(&mut app, &ctx);
+            }
+            let viewport = canvas_frame(&mut app, &ctx);
+            let detail = app.canvas_rect.min + vec2(point.0 as f32, point.1 as f32) * app.zoom;
+            assert!(
+                detail.distance(viewport.center()) < 1.0,
+                "detail {detail:?}, viewport {viewport:?}"
+            );
+            app.magnify_at(point, true, &ctx);
+            for _ in 0..3 {
+                canvas_frame(&mut app, &ctx);
+            }
+            let viewport = canvas_frame(&mut app, &ctx);
+            let detail = app.canvas_rect.min + vec2(point.0 as f32, point.1 as f32) * app.zoom;
+            assert_eq!(app.zoom, 1.0);
+            assert!(detail.distance(viewport.center()) < 1.0);
+        }
+    }
+
+    #[test]
+    fn centering_a_canvas_corner_clamps_the_scroll_offset() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.doc = Document::new(1600, 1200);
+        app.center_canvas_on((0, 0), &ctx);
+        for _ in 0..3 {
+            canvas_frame(&mut app, &ctx);
+        }
+        let viewport = canvas_frame(&mut app, &ctx);
+        assert!(viewport.contains(app.canvas_rect.min));
+        assert!((app.canvas_rect.left() - viewport.left() - 8.0).abs() < 1.0);
+        assert!((app.canvas_rect.top() - viewport.top() - 8.0).abs() < 1.0);
     }
 }

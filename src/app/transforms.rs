@@ -1,4 +1,4 @@
-use crate::document::{self, WHITE};
+use crate::document::{self, Color};
 use image::{Rgba, RgbaImage};
 
 /// Validate the output allocation and inverse map before changing a document.
@@ -43,8 +43,8 @@ impl SkewPlan {
         })
     }
 
-    pub(in crate::app) fn apply(&self, image: &RgbaImage) -> RgbaImage {
-        let mut output = RgbaImage::from_pixel(self.width, self.height, Rgba(WHITE));
+    pub(in crate::app) fn apply(&self, image: &RgbaImage, background: Color) -> RgbaImage {
+        let mut output = RgbaImage::from_pixel(self.width, self.height, Rgba(background));
         let determinant = 1.0 - self.x * self.y;
         for (x, y, pixel) in output.enumerate_pixels_mut() {
             let translated_x = x as f32 + self.x.min(0.0) * image.height() as f32;
@@ -78,8 +78,23 @@ mod tests {
     fn zero_skew_preserves_every_pixel() {
         let image = RgbaImage::from_fn(31, 19, |x, y| Rgba([x as u8, y as u8, 150, 255]));
         assert_eq!(
-            SkewPlan::new(31, 19, 0.0, 0.0).unwrap().apply(&image),
+            SkewPlan::new(31, 19, 0.0, 0.0)
+                .unwrap()
+                .apply(&image, [20, 60, 150, 255]),
             image
         );
+    }
+
+    #[test]
+    fn skew_uses_the_requested_background_for_exposed_wedges() {
+        let image = RgbaImage::from_pixel(12, 8, Rgba([0, 0, 0, 255]));
+        let background = [180, 20, 40, 255];
+        let output = SkewPlan::new(12, 8, 30.0, 0.0)
+            .unwrap()
+            .apply(&image, background);
+        assert_eq!(output.get_pixel(output.width() - 1, 0).0, background);
+        assert!(output
+            .pixels()
+            .all(|pixel| pixel.0 == background || pixel.0 == [0, 0, 0, 255]));
     }
 }

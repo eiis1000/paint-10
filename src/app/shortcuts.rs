@@ -77,11 +77,10 @@ impl PaintApp {
         let events = ctx.input(|i| i.events.clone());
         for event in events {
             match event {
-                Event::Copy => self.copy(),
-                Event::Cut => {
+                Event::Copy => {
                     self.copy();
-                    self.delete_selection();
                 }
+                Event::Cut => self.cut(),
                 Event::Paste(_) => {
                     self.paste_clipboard();
                 }
@@ -128,10 +127,14 @@ impl PaintApp {
             (Key::ArrowUp, (0, -1)),
             (Key::ArrowDown, (0, 1)),
         ] {
-            if !ctx.wants_keyboard_input()
+            if ctx
+                .memory(|memory| memory.focused().is_none() || memory.has_focus(Id::new("canvas")))
                 && ctx.input_mut(|i| consume_shortcut(i, Modifiers::NONE, key))
             {
-                if let Some(i) = self.lift_selection() {
+                if let Some(shape) = &self.shape_draft {
+                    self.shape_draft = Some(shape.translated(delta));
+                    self.redraw_shape();
+                } else if let Some(i) = self.lift_selection() {
                     self.doc.objects[i].pos.0 += delta.0;
                     self.doc.objects[i].pos.1 += delta.1;
                     self.doc.commit();
@@ -156,6 +159,73 @@ pub(super) fn consume_shortcut(input: &mut InputState, modifiers: Modifiers, key
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_selection_moves_when_the_canvas_has_keyboard_focus() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.selection = Some(Region {
+            x: 10,
+            y: 20,
+            w: 30,
+            h: 40,
+        });
+        let _ = ctx.run(RawInput::default(), |ctx| {
+            app.canvas(ctx);
+            ctx.memory_mut(|memory| memory.request_focus(Id::new("canvas")));
+        });
+        let _ = ctx.run(
+            RawInput {
+                events: vec![Event::Key {
+                    key: Key::ArrowRight,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ctx| {
+                app.shortcut(ctx);
+                app.canvas(ctx);
+            },
+        );
+        assert_eq!(app.doc.objects[app.object.unwrap()].pos, (11, 20));
+    }
+
+    #[test]
+    fn arrow_keys_move_an_active_shape_without_committing_it() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.doc.begin();
+        app.start_shape_draft(
+            ShapeGeometry::Primitive {
+                tool: Tool::Rectangle,
+                start: (20, 20),
+                end: (60, 60),
+            },
+            0,
+        );
+        let before = app.selected_region().unwrap();
+        let _ = ctx.run(
+            RawInput {
+                events: vec![Event::Key {
+                    key: Key::ArrowRight,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ctx| app.shortcut(ctx),
+        );
+        let after = app.selected_region().unwrap();
+        assert_eq!(after.x, before.x + 1);
+        assert_eq!(after.w, before.w);
+        assert!(app.shape_draft.is_some());
+        assert!(app.doc.objects.is_empty());
+    }
 
     #[test]
     fn shifted_actions_are_not_consumed_by_plain_shortcuts() {

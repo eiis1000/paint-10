@@ -22,6 +22,8 @@ pub fn pixels_to_points(pixels: f32) -> f32 {
 pub struct TextStyle {
     pub font_name: String,
     pub font: Vec<u8>,
+    #[serde(default)]
+    pub font_index: u32,
     pub size: f32,
     pub color: Color,
     pub bold: bool,
@@ -41,6 +43,7 @@ pub struct TextSpan {
 pub struct TextStyleRef<'a> {
     pub font_name: &'a str,
     pub font: &'a [u8],
+    pub font_index: u32,
     pub size: f32,
     pub color: Color,
     pub bold: bool,
@@ -54,6 +57,7 @@ impl<'a> TextStyleRef<'a> {
         TextStyle {
             font_name: self.font_name.to_owned(),
             font: self.font.to_vec(),
+            font_index: self.font_index,
             size: self.size,
             color: self.color,
             bold: self.bold,
@@ -72,6 +76,8 @@ impl<'a> TextStyleRef<'a> {
 pub struct TextFormat {
     pub font_name: String,
     pub font: Vec<u8>,
+    #[serde(default)]
+    pub font_index: u32,
     pub size: f32,
     pub color: Color,
     pub bold: bool,
@@ -81,6 +87,8 @@ pub struct TextFormat {
     pub background: Option<Color>,
     pub width: u32,
     #[serde(default)]
+    pub minimum_height: u32,
+    #[serde(default)]
     pub spans: Vec<TextSpan>,
 }
 
@@ -89,6 +97,7 @@ impl Default for TextFormat {
         Self {
             font_name: "Sans serif".into(),
             font: vec![],
+            font_index: 0,
             size: 24.0,
             color: BLACK,
             bold: false,
@@ -97,6 +106,7 @@ impl Default for TextFormat {
             strikeout: false,
             background: None,
             width: 280,
+            minimum_height: 0,
             spans: vec![],
         }
     }
@@ -107,6 +117,7 @@ impl TextStyle {
         TextStyleRef {
             font_name: &self.font_name,
             font: &self.font,
+            font_index: self.font_index,
             size: self.size,
             color: self.color,
             bold: self.bold,
@@ -126,6 +137,7 @@ impl TextFormat {
         TextStyleRef {
             font_name: &self.font_name,
             font: &self.font,
+            font_index: self.font_index,
             size: self.size,
             color: self.color,
             bold: self.bold,
@@ -142,6 +154,7 @@ impl TextFormat {
     pub fn set_default_style(&mut self, style: &TextStyle) {
         self.font_name.clone_from(&style.font_name);
         self.font.clone_from(&style.font);
+        self.font_index = style.font_index;
         self.size = style.size;
         self.color = style.color;
         self.bold = style.bold;
@@ -387,8 +400,11 @@ impl TextFormat {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if !(10..=MAX_TEXT_WIDTH).contains(&self.width) {
-            return Err("Invalid text-box width.".into());
+        if !(10..=MAX_TEXT_WIDTH).contains(&self.width)
+            || self.minimum_height > 16384
+            || self.width as u64 * self.minimum_height as u64 > MAX_PIXELS
+        {
+            return Err("Invalid text-box dimensions.".into());
         }
         validate_style(self.default_style_ref())?;
         if self.spans.len() > MAX_SPANS || self.memory_bytes() > MAX_FORMAT_BYTES {
@@ -509,7 +525,11 @@ impl TextFormat {
             styles,
             lines,
             width,
-            height: (top + 4.0).ceil().max(1.0).min(max_height as f32) as u32,
+            height: (top + 4.0)
+                .ceil()
+                .max(self.minimum_height as f32)
+                .max(1.0)
+                .min(max_height as f32) as u32,
         }
     }
 
@@ -578,8 +598,8 @@ fn validate_style(style: TextStyleRef<'_>) -> Result<(), String> {
     if style.font_name.len() > 256 || style.font.len() > MAX_FONT_BYTES {
         return Err("The embedded font exceeds the project limit.".into());
     }
-    let font =
-        FontRef::try_from_slice(font_bytes(style.font)).map_err(|_| "Invalid embedded font.")?;
+    let font = FontRef::try_from_slice_and_index(font_bytes(style.font), style.font_index)
+        .map_err(|_| "Invalid embedded font or collection face index.")?;
     let scaled = font.as_scaled(style.size);
     if !(1.0..=1000.0).contains(&(scaled.height() + scaled.line_gap())) {
         return Err("Invalid font metrics.".into());
@@ -617,7 +637,8 @@ impl<'a> RenderStyle<'a> {
     fn new(source: TextStyleRef<'a>) -> Self {
         let fallback = || FontRef::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT).unwrap();
         let mut font =
-            FontRef::try_from_slice(font_bytes(source.font)).unwrap_or_else(|_| fallback());
+            FontRef::try_from_slice_and_index(font_bytes(source.font), source.font_index)
+                .unwrap_or_else(|_| fallback());
         let size = if source.size.is_finite() {
             source
                 .size
@@ -779,6 +800,20 @@ fn layout_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn minimum_text_box_height_preserves_background_and_is_bounded() {
+        let mut format = TextFormat {
+            minimum_height: 120,
+            background: Some([30, 80, 150, 255]),
+            ..Default::default()
+        };
+        let image = format.render("Hello");
+        assert_eq!(image.dimensions(), (280, 120));
+        assert_eq!(image.get_pixel(279, 119).0, [30, 80, 150, 255]);
+        format.minimum_height = 20000;
+        assert!(format.validate_for_text("Hello").is_err());
+    }
 
     #[test]
     fn explicit_blank_lines_and_crlf_are_preserved() {
@@ -963,8 +998,19 @@ mod tests {
     fn old_serialized_formats_default_to_no_spans_and_bad_ranges_are_rejected() {
         let mut value = serde_json::to_value(TextFormat::default()).unwrap();
         value.as_object_mut().unwrap().remove("spans");
+        value.as_object_mut().unwrap().remove("minimum_height");
+        value.as_object_mut().unwrap().remove("font_index");
         let mut format: TextFormat = serde_json::from_value(value).unwrap();
         assert!(format.spans.is_empty());
+        assert_eq!(format.minimum_height, 0);
+        assert_eq!(format.font_index, 0);
+        let mut old_style = serde_json::to_value(format.default_style()).unwrap();
+        old_style.as_object_mut().unwrap().remove("font_index");
+        let old_style: TextStyle = serde_json::from_value(old_style).unwrap();
+        assert_eq!(old_style.font_index, 0);
+        let mut invalid_face = format.default_style();
+        invalid_face.font_index = 1;
+        assert!(invalid_face.validate().is_err());
         format
             .apply_style(
                 0..20,

@@ -24,6 +24,9 @@ impl PaintApp {
     pub(in crate::app) fn poll_job(&mut self) {
         if let Some(result) = self.job.as_ref().and_then(|rx| rx.try_recv().ok()) {
             self.job = None;
+            if self.job_cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
             match result {
                 JobResult::Devices(Ok(devices)) => {
                     self.devices = devices;
@@ -39,5 +42,33 @@ impl PaintApp {
                 | JobResult::Status(Err(e)) => self.message = e,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canceled_capture_ignores_a_success_already_waiting_in_the_channel() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        sender
+            .send(JobResult::Image(Ok(RgbaImage::from_pixel(
+                4,
+                4,
+                Rgba(BLACK),
+            ))))
+            .unwrap();
+        app.job = Some(receiver);
+        app.job_cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        app.poll_job();
+
+        assert!(app.job.is_none());
+        assert!(app.doc.objects.is_empty());
+        assert!(!app.doc.dirty());
     }
 }
