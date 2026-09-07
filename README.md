@@ -35,6 +35,8 @@ Save as a **Paint 10 project (`.p10`)** to retain editable text, image objects, 
 
 The Save As format selector updates the filename extension and supports monochrome, 16-color, 256-color, and 24-bit BMP files, as well as PNG, JPEG, GIF, TIFF, WebP, icons, and editable projects. JPEG aliases such as `.jpe` and bitmap files named `.dib` are accepted. Indexed BMP export reduces the picture to the selected number of colors.
 
+Page Setup offers Letter, Legal, Tabloid, Executive, Statement, A0–A6, ISO B4/B5, photo and envelope presets, plus custom dimensions in millimeters. Orientation, individual margins, centering, actual-size scaling, and fitting across multiple pages apply to both print preview and PDF export. Actual size uses the image's DPI. Invalid dimensions or margins disable printing and export until corrected.
+
 The canvas is limited to 16 megapixels and 16,384 pixels on either axis. Undo history has a memory budget. Editable projects support up to 1,000 objects and 128 MB of object data; invalid or oversized saves preserve the existing destination. Large scanned pictures may need a lower capture resolution.
 
 ## Keyboard shortcuts

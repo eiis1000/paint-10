@@ -16,7 +16,7 @@ The target is Windows 10's ribbon-based Paint. A checked feature means implement
 - [x] In-canvas rich text entry, font family, point size, bold/italic/underline/strikeout, opacity
 - [x] Image properties units, DPI metadata and monochrome conversion
 - [x] Zoom, rulers, pixel grid, image-only view
-- [x] Page setup, multi-page print preview, PDF export and system print dialog
+- [x] Page setup with 19 paper presets/custom dimensions, multi-page print preview, PDF export and system print dialog
 - [x] Scanner/camera import, email drafts and desktop background integration where supported
 - [x] Context menus, keyboard command navigation and Paint keyboard shortcuts
 - [x] Crisp vector icons, brush previews, keyboard focus and accessible control labels
@@ -24,4 +24,4 @@ The target is Windows 10's ribbon-based Paint. A checked feature means implement
 
 Implementation notes: native Rust eframe/egui desktop app. Standard raster saves flatten objects; `.p10` preserves them. Text spans can be formatted independently, and shapes remain adjustable until committed. Image transparency keys preserve the original pixels. History and image inputs have memory limits.
 
-The checklist records implemented capability, not a claim of pixel-for-pixel or exhaustive behavioral equivalence. Brush textures, font rendering, native dialogs and keyboard command presentation differ from Microsoft Paint. Scanner/camera drivers, physical printing, email composition and wallpaper portals require supported host services; these external operations were not exercised during isolated desktop testing. Print layout currently offers Letter and A4. `TESTING.md` distinguishes automated checks, manual evidence and remaining verification limits.
+The checklist records implemented capability, not a claim of pixel-for-pixel or exhaustive behavioral equivalence. Brush textures, font rendering, native dialogs and keyboard command presentation differ from Microsoft Paint. Scanner/camera drivers, physical printing, email composition and wallpaper portals require supported host services; these external operations were not exercised during isolated desktop testing. `TESTING.md` distinguishes automated checks, manual evidence and remaining verification limits.
