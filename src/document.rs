@@ -616,15 +616,15 @@ impl Document {
         let mut out = if self.objects.is_empty() {
             self.image.clone()
         } else {
-            RgbaImage::from_pixel(self.image.width(), self.image.height(), Rgba(WHITE))
+            RgbaImage::new(self.image.width(), self.image.height())
         };
         for (i, obj) in self.objects.iter().enumerate() {
             if skip != Some(i) {
-                imageops::overlay(&mut out, &obj.render(), obj.pos.0 as i64, obj.pos.1 as i64);
+                overlay(&mut out, &obj.render(), obj.pos.0 as i64, obj.pos.1 as i64);
             }
         }
         if !self.objects.is_empty() {
-            imageops::overlay(&mut out, &self.image, 0, 0);
+            overlay(&mut out, &self.image, 0, 0);
         }
         if self.mono {
             for p in out.pixels_mut() {
@@ -642,6 +642,60 @@ impl Document {
         self.image = self.composite();
         self.objects.clear();
     }
+
+    /// Change canvas bounds, copying existing pixels exactly and placing newly
+    /// exposed background beneath retained objects. A new bottom raster can
+    /// shift object indices; callers must clear or re-establish their selection.
+    pub fn resize_canvas(
+        &mut self,
+        width: u32,
+        height: u32,
+        background: Color,
+    ) -> Result<(), String> {
+        if !valid_size(width, height) {
+            return Err("The canvas must fit within 16 megapixels.".into());
+        }
+        let previous = self.image.dimensions();
+        if previous == (width, height) {
+            return Ok(());
+        }
+        if self.objects.is_empty() {
+            self.image = resize_canvas(&self.image, width, height, background);
+            return Ok(());
+        }
+        if background[3] > 0 && (width > previous.0 || height > previous.1) {
+            let bottom = self.objects.first_mut().and_then(|object| {
+                if width >= previous.0
+                    && height >= previous.1
+                    && object.pos == (0, 0)
+                    && object.angle == 0.0
+                    && object.scale == 1.0
+                    && object.color_key.is_none()
+                    && object.transform == LinearTransform::default()
+                {
+                    if let ObjectKind::Raster(raster) = &mut object.kind {
+                        return (raster.dimensions() == previous).then_some(raster);
+                    }
+                }
+                None
+            });
+            if let Some(bottom) = bottom {
+                *bottom = resize_canvas(bottom, width, height, background);
+            } else {
+                let mut padding = RgbaImage::new(width, height);
+                for (x, y, pixel) in padding.enumerate_pixels_mut() {
+                    if x >= previous.0 || y >= previous.1 {
+                        *pixel = Rgba(background);
+                    }
+                }
+                self.objects
+                    .insert(0, Object::new(ObjectKind::Raster(padding), (0, 0)));
+            }
+        }
+        self.image = resize_canvas(&self.image, width, height, [0, 0, 0, 0]);
+        Ok(())
+    }
+
     pub fn add_object(&mut self, obj: Object) -> usize {
         if self.image.pixels().any(|p| p[3] > 0) {
             let mut bounds = (self.image.width(), self.image.height(), 0, 0);
@@ -726,15 +780,43 @@ pub fn blend(img: &mut RgbaImage, x: i32, y: i32, color: Color) {
     }
     let p = img.get_pixel_mut(x as u32, y as u32);
     let alpha = color[3] as u32;
-    let out_alpha = alpha + p[3] as u32 * (255 - alpha) / 255;
-    if out_alpha == 0 {
+    if alpha == 0 {
         return;
     }
-    for i in 0..3 {
-        p[i] = ((color[i] as u32 * alpha + p[i] as u32 * p[3] as u32 * (255 - alpha) / 255)
-            / out_alpha) as u8;
+    if alpha == 255 {
+        *p = Rgba(color);
+        return;
     }
-    p[3] = out_alpha as u8;
+    // Keep alpha in 1/255 units until RGB has been normalized. Rounding it
+    // first can make the channel quotient exceed 255 and wrap back to black.
+    let background_alpha = p[3] as u32 * (255 - alpha);
+    let combined_alpha = alpha * 255 + background_alpha;
+    for i in 0..3 {
+        let premultiplied = color[i] as u32 * alpha * 255 + p[i] as u32 * background_alpha;
+        p[i] = ((premultiplied + combined_alpha / 2) / combined_alpha) as u8;
+    }
+    p[3] = ((combined_alpha + 127) / 255) as u8;
+}
+
+/// Composite straight-alpha pixels without introducing floating-point opacity loss.
+pub fn overlay(image: &mut RgbaImage, source: &RgbaImage, x: i64, y: i64) {
+    let start_x = x.clamp(0, image.width() as i64) as u32;
+    let start_y = y.clamp(0, image.height() as i64) as u32;
+    let end_x = x
+        .saturating_add(source.width() as i64)
+        .clamp(0, image.width() as i64) as u32;
+    let end_y = y
+        .saturating_add(source.height() as i64)
+        .clamp(0, image.height() as i64) as u32;
+    for destination_y in start_y..end_y {
+        for destination_x in start_x..end_x {
+            let pixel = source.get_pixel(
+                (destination_x as i64 - x) as u32,
+                (destination_y as i64 - y) as u32,
+            );
+            blend(image, destination_x as i32, destination_y as i32, pixel.0);
+        }
+    }
 }
 
 fn noise_at(x: i32, y: i32, seed: u32) -> u32 {
@@ -1081,19 +1163,32 @@ pub fn shape_points(tool: Tool) -> Vec<(f32, f32)> {
                 })
                 .collect()
         }
-        Tool::Heart => (0..100)
-            .map(|i| {
-                let t = i as f32 * TAU / 100.;
+        Tool::Heart => {
+            let mut points: Vec<_> = (0..100)
+                .map(|i| {
+                    let t = i as f32 * TAU / 100.0;
+                    (
+                        t.sin().powi(3),
+                        -(13.0 * t.cos()
+                            - 5.0 * (2.0 * t).cos()
+                            - 2.0 * (3.0 * t).cos()
+                            - (4.0 * t).cos()),
+                    )
+                })
+                .collect();
+            let (min, max) = points.iter().fold(
                 (
-                    0.5 + t.sin().powi(3) * 0.5,
-                    0.5 - (13. * t.cos()
-                        - 5. * (2. * t).cos()
-                        - 2. * (3. * t).cos()
-                        - (4. * t).cos())
-                        / 32.,
-                )
-            })
-            .collect(),
+                    (f32::INFINITY, f32::INFINITY),
+                    (f32::NEG_INFINITY, f32::NEG_INFINITY),
+                ),
+                |(min, max), &(x, y)| ((min.0.min(x), min.1.min(y)), (max.0.max(x), max.1.max(y))),
+            );
+            for point in &mut points {
+                point.0 = (point.0 - min.0) / (max.0 - min.0);
+                point.1 = (point.1 - min.1) / (max.1 - min.1);
+            }
+            points
+        }
         Tool::Lightning => vec![
             (0.55, 0.),
             (0., 0.55),
@@ -1200,6 +1295,52 @@ pub fn styled_curve(
     styled_path(img, &pts, false, width, color, style);
 }
 
+/// Integer bounds enclosing the curve itself, excluding its stroke thickness.
+pub fn cubic_bounds(start: Point, end: Point, controls: [Point; 2]) -> (Point, Point) {
+    let axis = |points: [i32; 4]| {
+        let [p0, p1, p2, p3] = points.map(f64::from);
+        let evaluate = |t: f64| {
+            let s = 1.0 - t;
+            s * s * s * p0 + 3.0 * s * s * t * p1 + 3.0 * s * t * t * p2 + t * t * t * p3
+        };
+        // The derivative divided by three is a*t² + b*t + c.
+        let a = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
+        let b = 2.0 * (p0 - 2.0 * p1 + p2);
+        let c = p1 - p0;
+        let mut extrema = [None, None];
+        if a.abs() < 1e-12 {
+            if b.abs() >= 1e-12 {
+                extrema[0] = Some(-c / b);
+            }
+        } else {
+            let discriminant = b * b - 4.0 * a * c;
+            if discriminant >= 0.0 {
+                let q = -0.5 * (b + discriminant.sqrt().copysign(b));
+                if q.abs() < 1e-12 {
+                    extrema[0] = Some(-b / (2.0 * a));
+                } else {
+                    extrema = [Some(q / a), Some(c / q)];
+                }
+            }
+        }
+        let mut min = p0.min(p3);
+        let mut max = p0.max(p3);
+        for t in extrema
+            .into_iter()
+            .flatten()
+            .filter(|t| *t > 0.0 && *t < 1.0)
+        {
+            let value = evaluate(t);
+            min = min.min(value);
+            max = max.max(value);
+        }
+        (min.floor() as i32, max.ceil() as i32)
+    };
+    let x = axis([start.0, controls[0].0, controls[1].0, end.0]);
+    let y = axis([start.1, controls[0].1, controls[1].1, end.1]);
+    ((x.0, y.0), (x.1, y.1))
+}
+
 pub fn styled_cubic(
     img: &mut RgbaImage,
     a: Point,
@@ -1231,7 +1372,7 @@ pub fn styled_cubic(
 
 pub fn resize_canvas(img: &RgbaImage, w: u32, h: u32, bg: Color) -> RgbaImage {
     let mut out = RgbaImage::from_pixel(w, h, Rgba(bg));
-    imageops::overlay(&mut out, img, 0, 0);
+    imageops::replace(&mut out, img, 0, 0);
     out
 }
 
@@ -1288,6 +1429,215 @@ pub fn rotation_size(w: u32, h: u32, angle: f32) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canvas_growth_copies_rgba_and_places_background_below_revealed_objects() {
+        let green = [20, 150, 70, 255];
+        let mut original = RgbaImage::new(20, 20);
+        original.put_pixel(5, 5, Rgba([80, 30, 200, 127]));
+        let expanded = resize_canvas(&original, 30, 25, green);
+        assert_eq!(expanded.get_pixel(5, 5), original.get_pixel(5, 5));
+        assert_eq!(expanded.get_pixel(0, 0)[3], 0);
+        assert_eq!(expanded.get_pixel(29, 24).0, green);
+
+        let mut document = Document::from_image(original);
+        document.add_object(Object::new(
+            ObjectKind::Image(RgbaImage::from_pixel(8, 8, Rgba([255, 0, 0, 255]))),
+            (18, 2),
+        ));
+        let old_objects = document.objects.clone();
+        let before = document.composite();
+        document.begin();
+        document.resize_canvas(30, 25, green).unwrap();
+        document.commit();
+        let expanded = document.composite();
+        assert_eq!(expanded.get_pixel(5, 5).0, [80, 30, 200, 127]);
+        assert_eq!(expanded.get_pixel(0, 0)[3], 0);
+        assert_eq!(expanded.get_pixel(25, 5).0, [255, 0, 0, 255]);
+        assert_eq!(expanded.get_pixel(29, 24).0, green);
+        document.undo();
+        assert!(document.objects == old_objects);
+        assert_eq!(document.composite(), before);
+        document.redo();
+        assert_eq!(document.composite(), expanded);
+        let count = document.objects.len();
+        document.resize_canvas(40, 30, green).unwrap();
+        assert_eq!(document.objects.len(), count);
+        assert_eq!(document.composite().get_pixel(0, 0)[3], 0);
+    }
+
+    #[test]
+    fn canvas_resize_noops_and_transparent_growth_keep_object_indices_stable() {
+        let mut document = Document::from_image(RgbaImage::new(20, 20));
+        document.add_object(Object::new(
+            ObjectKind::Image(RgbaImage::from_pixel(8, 8, Rgba(BLACK))),
+            (18, 2),
+        ));
+        let objects = document.objects.clone();
+        document.mark_saved();
+        document.begin();
+        document.resize_canvas(20, 20, WHITE).unwrap();
+        assert!(document.resize_canvas(0, 20, WHITE).is_err());
+        document.commit();
+        assert!(!document.dirty());
+        assert!(!document.can_undo());
+        assert!(document.objects == objects);
+        document.resize_canvas(30, 30, [0, 0, 0, 0]).unwrap();
+        assert!(document.objects == objects);
+        let expanded = document.composite();
+        assert_eq!(expanded.get_pixel(29, 29)[3], 0);
+        assert_eq!(expanded.get_pixel(25, 5).0, BLACK);
+    }
+
+    #[test]
+    fn mixed_axis_canvas_resize_keeps_retained_raster_pixels_outside_the_canvas() {
+        let mut document = Document::new(20, 20);
+        document.image.put_pixel(18, 5, Rgba([10, 40, 200, 255]));
+        document.add_object(Object::new(
+            ObjectKind::Image(RgbaImage::from_pixel(1, 1, Rgba(BLACK))),
+            (1, 1),
+        ));
+        document.resize_canvas(10, 30, WHITE).unwrap();
+        document.resize_canvas(20, 30, WHITE).unwrap();
+        assert_eq!(document.composite().get_pixel(18, 5).0, [10, 40, 200, 255]);
+    }
+
+    #[test]
+    fn editable_objects_keep_the_original_canvas_opacity_and_undo_state() {
+        for background in [WHITE, [0, 0, 0, 0]] {
+            let original = RgbaImage::from_pixel(180, 100, Rgba(background));
+            let mut document = Document::from_image(original.clone());
+            document.begin();
+            document.add_object(Object::new(
+                ObjectKind::Text {
+                    text: "Caption".into(),
+                    format: crate::text::TextFormat {
+                        width: 120,
+                        ..Default::default()
+                    },
+                },
+                (10, 10),
+            ));
+            document.add_object(Object::new(
+                ObjectKind::Image(RgbaImage::from_pixel(10, 10, Rgba([255, 0, 0, 128]))),
+                (140, 70),
+            ));
+            document.commit();
+            let composed = document.composite();
+            assert_eq!(composed.get_pixel(179, 99).0, background);
+            assert_eq!(
+                composed.get_pixel(140, 70)[3],
+                if background[3] == 0 { 128 } else { 255 }
+            );
+            assert!(composed.pixels().any(|pixel| pixel.0 == BLACK));
+            document.undo();
+            assert!(document.objects.is_empty());
+            assert_eq!(document.image, original);
+            document.redo();
+            assert_eq!(document.composite(), composed);
+        }
+    }
+
+    #[test]
+    fn translucent_layers_preserve_their_color_at_every_alpha_pair() {
+        let mut image = RgbaImage::new(1, 1);
+        for rgb in [[255, 255, 255], [240, 73, 19]] {
+            for foreground in 0..=255u32 {
+                for background in 0..=255u32 {
+                    image.put_pixel(0, 0, Rgba([rgb[0], rgb[1], rgb[2], background as u8]));
+                    blend(&mut image, 0, 0, [rgb[0], rgb[1], rgb[2], foreground as u8]);
+                    let expected_alpha =
+                        (foreground * 255 + background * (255 - foreground) + 127) / 255;
+                    let actual = image.get_pixel(0, 0).0;
+                    assert_eq!(actual[3], expected_alpha as u8);
+                    assert_eq!(actual[..3], rgb, "alphas {foreground}, {background}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn translucent_source_over_mixes_distinct_colors_without_darkening() {
+        let mut image = RgbaImage::from_pixel(1, 1, Rgba([0, 0, 255, 128]));
+        blend(&mut image, 0, 0, [255, 0, 0, 128]);
+        assert_eq!(image.get_pixel(0, 0).0, [170, 0, 85, 192]);
+        blend(&mut image, 0, 0, [255, 255, 0, 0]);
+        assert_eq!(image.get_pixel(0, 0).0, [170, 0, 85, 192]);
+        blend(&mut image, 0, 0, [10, 20, 30, 255]);
+        assert_eq!(image.get_pixel(0, 0).0, [10, 20, 30, 255]);
+    }
+
+    #[test]
+    fn integer_overlay_clips_pixels_and_extreme_offsets_without_opacity_loss() {
+        let mut image = RgbaImage::from_pixel(4, 4, Rgba(WHITE));
+        let source = RgbaImage::from_pixel(3, 3, Rgba([255, 0, 0, 128]));
+        overlay(&mut image, &source, -2, -1);
+        assert_eq!(image.get_pixel(0, 0).0, [255, 127, 127, 255]);
+        assert_eq!(image.get_pixel(0, 1).0, [255, 127, 127, 255]);
+        assert_eq!(image.get_pixel(1, 0).0, WHITE);
+        assert_eq!(image.get_pixel(0, 2).0, WHITE);
+        let expected = image.clone();
+        for coordinate in [i64::MIN, i64::MAX] {
+            overlay(&mut image, &source, coordinate, 0);
+            overlay(&mut image, &source, 0, coordinate);
+        }
+        assert_eq!(image, expected);
+    }
+
+    #[test]
+    fn cubic_bounds_handle_internal_extrema_and_degenerate_axes() {
+        assert_eq!(
+            cubic_bounds((40, 40), (140, 40), [(40, 140), (140, 140)]),
+            ((40, 40), (140, 115))
+        );
+        assert_eq!(
+            cubic_bounds((50, 150), (250, 150), [(50, -150), (250, 450)]),
+            ((50, 63), (250, 237))
+        );
+        assert_eq!(
+            cubic_bounds((30, 10), (30, 90), [(30, 30), (30, 70)]),
+            ((30, 10), (30, 90))
+        );
+        assert_eq!(
+            cubic_bounds((4, 7), (4, 7), [(4, 7), (4, 7)]),
+            ((4, 7), (4, 7))
+        );
+    }
+
+    #[test]
+    fn heart_path_fits_its_drag_rectangle_in_both_directions() {
+        let points = shape_points(Tool::Heart);
+        assert!(points
+            .iter()
+            .all(|&(x, y)| (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)));
+        for axis in [0, 1] {
+            let values: Vec<_> = points
+                .iter()
+                .map(|point| if axis == 0 { point.0 } else { point.1 })
+                .collect();
+            assert_eq!(values.iter().copied().reduce(f32::min), Some(0.0));
+            assert_eq!(values.iter().copied().reduce(f32::max), Some(1.0));
+        }
+        let mut image = RgbaImage::new(220, 200);
+        styled_shape(
+            &mut image,
+            Tool::Heart,
+            (180, 150),
+            (30, 25),
+            1,
+            Some((BLACK, PaintStyle::Solid)),
+            Some(([180, 50, 70, 255], PaintStyle::Solid)),
+        );
+        let painted: Vec<_> = image
+            .enumerate_pixels()
+            .filter(|(_, _, pixel)| pixel[3] > 0)
+            .map(|(x, y, _)| (x, y))
+            .collect();
+        assert_eq!(painted.iter().map(|p| p.0).min(), Some(30));
+        assert_eq!(painted.iter().map(|p| p.0).max(), Some(180));
+        assert_eq!(painted.iter().map(|p| p.1).min(), Some(25));
+        assert_eq!(painted.iter().map(|p| p.1).max(), Some(150));
+    }
     #[test]
     fn fill_stays_inside_outline_and_handles_edges() {
         let mut img = Document::new(64, 64).image;
