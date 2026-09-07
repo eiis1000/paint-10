@@ -34,6 +34,7 @@
             excluded = [
               "target"
               "tmp"
+              "artworks"
               ".git"
               ".codex"
               ".agents"
