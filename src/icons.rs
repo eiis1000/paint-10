@@ -10,6 +10,11 @@ use eframe::egui::{self, *};
 pub enum Icon {
     Tool(Tool),
     Brush(Brush),
+    New,
+    Open,
+    Print,
+    PrintPreview,
+    Email,
     Save,
     Undo,
     Redo,
@@ -31,6 +36,11 @@ impl Icon {
         match self {
             Self::Tool(tool) => tool.name(),
             Self::Brush(brush) => brush.name(),
+            Self::New => "New",
+            Self::Open => "Open",
+            Self::Print => "Print",
+            Self::PrintPreview => "Print preview",
+            Self::Email => "Send in email",
             Self::Save => "Save",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
