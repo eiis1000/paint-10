@@ -4,11 +4,120 @@ use std::io::Write;
 
 const POINTS_PER_MM: f32 = 72.0 / 25.4;
 pub const MAX_PAGES: u32 = 100;
+/// Acrobat's interoperable PDF 1.4 page limit: 14,400 points, or 200 inches.
+/// See PDF Reference 1.4, Appendix C, page 707.
+pub const MAX_PAPER_MM: f32 = 5080.0;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum PaperSize {
+    #[default]
+    Letter,
+    Legal,
+    Tabloid,
+    Executive,
+    Statement,
+    A0,
+    A1,
+    A2,
+    A3,
+    A4,
+    A5,
+    A6,
+    B4,
+    B5,
+    Photo4x6,
+    Photo5x7,
+    Envelope10,
+    EnvelopeDl,
+    EnvelopeC5,
+    Custom {
+        width_mm: f32,
+        height_mm: f32,
+    },
+}
+
+impl PaperSize {
+    pub const PRESETS: [Self; 19] = [
+        Self::Letter,
+        Self::Legal,
+        Self::Tabloid,
+        Self::Executive,
+        Self::Statement,
+        Self::A0,
+        Self::A1,
+        Self::A2,
+        Self::A3,
+        Self::A4,
+        Self::A5,
+        Self::A6,
+        Self::B4,
+        Self::B5,
+        Self::Photo4x6,
+        Self::Photo5x7,
+        Self::Envelope10,
+        Self::EnvelopeDl,
+        Self::EnvelopeC5,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Letter => "Letter",
+            Self::Legal => "Legal",
+            Self::Tabloid => "Tabloid / Ledger",
+            Self::Executive => "Executive",
+            Self::Statement => "Statement",
+            Self::A0 => "A0",
+            Self::A1 => "A1",
+            Self::A2 => "A2",
+            Self::A3 => "A3",
+            Self::A4 => "A4",
+            Self::A5 => "A5",
+            Self::A6 => "A6",
+            Self::B4 => "B4 (ISO)",
+            Self::B5 => "B5 (ISO)",
+            Self::Photo4x6 => "Photo 4 × 6 in",
+            Self::Photo5x7 => "Photo 5 × 7 in",
+            Self::Envelope10 => "Envelope #10",
+            Self::EnvelopeDl => "Envelope DL",
+            Self::EnvelopeC5 => "Envelope C5",
+            Self::Custom { .. } => "Custom",
+        }
+    }
+
+    /// Base sheet dimensions before the separate Landscape option is applied.
+    pub fn dimensions_mm(self) -> (f32, f32) {
+        match self {
+            Self::Letter => (215.9, 279.4),
+            Self::Legal => (215.9, 355.6),
+            Self::Tabloid => (279.4, 431.8),
+            Self::Executive => (184.15, 266.7),
+            Self::Statement => (139.7, 215.9),
+            Self::A0 => (841.0, 1189.0),
+            Self::A1 => (594.0, 841.0),
+            Self::A2 => (420.0, 594.0),
+            Self::A3 => (297.0, 420.0),
+            Self::A4 => (210.0, 297.0),
+            Self::A5 => (148.0, 210.0),
+            Self::A6 => (105.0, 148.0),
+            Self::B4 => (250.0, 353.0),
+            Self::B5 => (176.0, 250.0),
+            Self::Photo4x6 => (101.6, 152.4),
+            Self::Photo5x7 => (127.0, 177.8),
+            Self::Envelope10 => (104.775, 241.3),
+            Self::EnvelopeDl => (110.0, 220.0),
+            Self::EnvelopeC5 => (162.0, 229.0),
+            Self::Custom {
+                width_mm,
+                height_mm,
+            } => (width_mm, height_mm),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct PageSettings {
     pub landscape: bool,
-    pub a4: bool,
+    pub paper: PaperSize,
     pub margin_left_mm: f32,
     pub margin_right_mm: f32,
     pub margin_top_mm: f32,
@@ -27,7 +136,7 @@ impl Default for PageSettings {
     fn default() -> Self {
         Self {
             landscape: false,
-            a4: false,
+            paper: PaperSize::Letter,
             margin_left_mm: 12.7,
             margin_right_mm: 12.7,
             margin_top_mm: 12.7,
@@ -82,17 +191,19 @@ impl PageSettings {
         self.dpi_y = y;
     }
 
-    pub fn paper_points(&self) -> (f32, f32) {
-        let (w, h) = if self.a4 {
-            (210.0 * POINTS_PER_MM, 297.0 * POINTS_PER_MM)
-        } else {
-            (612.0, 792.0)
-        };
-        if self.landscape {
-            (h, w)
-        } else {
-            (w, h)
+    pub fn paper_points(&self) -> Result<(f32, f32), String> {
+        let (width_mm, height_mm) = self.paper.dimensions_mm();
+        if [width_mm, height_mm]
+            .iter()
+            .any(|value| !value.is_finite() || *value <= 0.0)
+        {
+            return Err("Paper width and height must be positive, finite numbers.".into());
         }
+        if width_mm > MAX_PAPER_MM || height_mm > MAX_PAPER_MM {
+            return Err("Paper width and height cannot exceed 5080 mm (200 inches).".into());
+        }
+        let (w, h) = (width_mm * POINTS_PER_MM, height_mm * POINTS_PER_MM);
+        Ok(if self.landscape { (h, w) } else { (w, h) })
     }
 
     pub fn layout(&self, img: &RgbaImage) -> Result<PrintLayout, String> {
@@ -108,7 +219,10 @@ impl PageSettings {
         }
         let natural_width = img.width() as f32 * 72.0 / self.dpi_x;
         let natural_height = img.height() as f32 * 72.0 / self.dpi_y;
-        let (paper_width, paper_height) = self.paper_points();
+        if !natural_width.is_finite() || !natural_height.is_finite() {
+            return Err("Image resolution produces an unrepresentable print size.".into());
+        }
+        let (paper_width, paper_height) = self.paper_points()?;
         let margins = [
             self.margin_left_mm,
             self.margin_right_mm,
@@ -142,6 +256,15 @@ impl PageSettings {
         };
         let image_width = natural_width * factor;
         let image_height = natural_height * factor;
+        if !image_width.is_finite()
+            || !image_height.is_finite()
+            || image_width <= 0.0
+            || image_height <= 0.0
+        {
+            return Err(
+                "The scaled image has an invalid print size. Adjust the print scale.".into(),
+            );
+        }
         // Floating-point error at an exact page boundary must not create a blank page.
         let columns = ((image_width / printable_width - 0.00001).ceil().max(1.0)) as u32;
         let rows = ((image_height / printable_height - 0.00001).ceil().max(1.0)) as u32;
@@ -307,11 +430,148 @@ mod tests {
     }
 
     #[test]
-    fn fit_does_not_add_blank_pages_at_exact_boundaries() {
-        for a4 in [false, true] {
+    fn common_paper_sizes_have_correct_physical_dimensions_in_both_orientations() {
+        for (paper, expected) in [
+            (PaperSize::Legal, (612.0, 1008.0)),
+            (PaperSize::Tabloid, (792.0, 1224.0)),
+            (PaperSize::Photo4x6, (288.0, 432.0)),
+            (PaperSize::A3, (841.8898, 1190.5512)),
+        ] {
             for landscape in [false, true] {
                 let settings = PageSettings {
-                    a4,
+                    paper,
+                    landscape,
+                    ..Default::default()
+                };
+                let layout = settings.layout(&sample()).unwrap();
+                let (width, height) = if landscape {
+                    (expected.1, expected.0)
+                } else {
+                    expected
+                };
+                assert!((layout.paper_width - width).abs() < 0.001);
+                assert!((layout.paper_height - height).abs() < 0.001);
+            }
+        }
+    }
+
+    #[test]
+    fn legal_paper_changes_tiling_without_changing_actual_image_size() {
+        let image = RgbaImage::new(1200, 1200);
+        let mut settings = PageSettings {
+            fit: false,
+            dpi_x: 100.0,
+            dpi_y: 100.0,
+            ..Default::default()
+        };
+        let letter = settings.layout(&image).unwrap();
+        assert_eq!((letter.columns, letter.rows), (2, 2));
+        settings.paper = PaperSize::Legal;
+        let legal = settings.layout(&image).unwrap();
+        assert_eq!((legal.columns, legal.rows), (2, 1));
+        assert_eq!((legal.image_width, legal.image_height), (864.0, 864.0));
+    }
+
+    #[test]
+    fn custom_paper_preserves_asymmetric_margins_centering_and_axis_dpi() {
+        let image = RgbaImage::new(200, 400);
+        let mut settings = PageSettings {
+            paper: PaperSize::Custom {
+                width_mm: 100.0,
+                height_mm: 160.0,
+            },
+            margin_left_mm: 5.0,
+            margin_right_mm: 15.0,
+            margin_top_mm: 20.0,
+            margin_bottom_mm: 10.0,
+            dpi_x: 254.0,
+            dpi_y: 508.0,
+            fit: false,
+            scale: 300.0,
+            ..Default::default()
+        };
+        for (landscape, origin_mm) in [(false, (15.0, 55.0)), (true, (45.0, 25.0))] {
+            settings.landscape = landscape;
+            let layout = settings.layout(&image).unwrap();
+            assert_eq!(layout.page_count(), 1);
+            assert!((layout.image_width / POINTS_PER_MM - 60.0).abs() < 0.001);
+            assert!((layout.image_height / POINTS_PER_MM - 60.0).abs() < 0.001);
+            let origin = layout.image_origin(0);
+            assert!((origin.0 / POINTS_PER_MM - origin_mm.0).abs() < 0.001);
+            assert!((origin.1 / POINTS_PER_MM - origin_mm.1).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn custom_paper_pdf_uses_selected_media_box_on_every_tiled_page() {
+        let settings = PageSettings {
+            paper: PaperSize::Custom {
+                width_mm: 70.0,
+                height_mm: 100.0,
+            },
+            landscape: true,
+            fit: false,
+            dpi_x: 300.0,
+            dpi_y: 300.0,
+            margin_left_mm: 5.0,
+            margin_right_mm: 5.0,
+            margin_top_mm: 5.0,
+            margin_bottom_mm: 5.0,
+            ..Default::default()
+        };
+        let image = RgbaImage::new(2000, 2000);
+        let layout = settings.layout(&image).unwrap();
+        assert_eq!((layout.columns, layout.rows), (2, 3));
+        let bytes = pdf(&image, &settings).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        let boxes: Vec<_> = text.split("/MediaBox [").skip(1).collect();
+        assert_eq!(boxes.len(), 6);
+        for value in boxes {
+            let coordinates: Vec<f64> = value
+                .split(']')
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .map(|number| number.parse().unwrap())
+                .collect();
+            assert_eq!(&coordinates[..2], &[0.0, 0.0]);
+            assert!((coordinates[2] - 100.0 * 72.0 / 25.4).abs() < 0.001);
+            assert!((coordinates[3] - 70.0 * 72.0 / 25.4).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn invalid_custom_paper_is_rejected_before_pdf_encoding() {
+        let image = RgbaImage::new(1, 1);
+        for invalid in [0.0, -1.0, f32::NAN, f32::INFINITY, MAX_PAPER_MM + 1.0] {
+            for (width_mm, height_mm) in [(invalid, 100.0), (100.0, invalid)] {
+                let settings = PageSettings {
+                    paper: PaperSize::Custom {
+                        width_mm,
+                        height_mm,
+                    },
+                    ..Default::default()
+                };
+                assert!(settings.paper_points().is_err());
+                assert!(pdf(&image, &settings).unwrap_err().starts_with("Paper"));
+            }
+        }
+        let settings = PageSettings {
+            paper: PaperSize::Custom {
+                width_mm: 20.0,
+                height_mm: 30.0,
+            },
+            ..Default::default()
+        };
+        assert!(settings.layout(&image).unwrap_err().contains("margins"));
+    }
+
+    #[test]
+    fn fit_does_not_add_blank_pages_at_exact_boundaries() {
+        for paper in PaperSize::PRESETS {
+            for landscape in [false, true] {
+                let settings = PageSettings {
+                    paper,
                     landscape,
                     ..Default::default()
                 };
