@@ -1,0 +1,145 @@
+{
+  description = "Paint 10 — a native Rust Windows 10 Paint recreation";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  outputs =
+    { self, nixpkgs }:
+    let
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
+      eachSystem = nixpkgs.lib.genAttrs systems;
+      desktopLibs =
+        pkgs: with pkgs; [
+          libGL
+          libxkbcommon
+          wayland
+          libX11
+          libXcursor
+          libXi
+          libXrandr
+        ];
+      captureTools =
+        pkgs: with pkgs; [
+          sane-backends
+          ffmpeg-headless
+        ];
+      source = nixpkgs.lib.cleanSourceWith {
+        name = "paint-10-source";
+        src = ./.;
+        filter =
+          path: type:
+          let
+            name = baseNameOf path;
+            excluded = [
+              "target"
+              "tmp"
+              ".git"
+              ".codex"
+              ".agents"
+              ".direnv"
+              "result"
+            ];
+          in
+          !(builtins.elem name excluded)
+          && !(nixpkgs.lib.hasPrefix "result-" name)
+          && nixpkgs.lib.cleanSourceFilter path type;
+      };
+    in
+    {
+      devShells = eachSystem (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in
+        rec {
+          default = pkgs.mkShell {
+            packages =
+              (with pkgs; [
+                cargo
+                rustc
+                rustfmt
+                clippy
+              ])
+              ++ captureTools pkgs;
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            buildInputs = [
+              pkgs.gtk3
+              pkgs.gsettings-desktop-schemas
+            ];
+            # GLib's setup hook collects schema paths from buildInputs. Keep the
+            # caller's desktop data directories when making those schemas visible.
+            shellHook = ''
+              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath (desktopLibs pkgs)}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              export XDG_DATA_DIRS="''${GSETTINGS_SCHEMAS_PATH}:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+            '';
+          };
+          test = default.overrideAttrs (old: {
+            nativeBuildInputs =
+              old.nativeBuildInputs
+              ++ (with pkgs; [
+                xorg-server
+                dbus
+                xdotool
+                imagemagick
+                openbox
+              ]);
+          });
+        }
+      );
+      packages = eachSystem (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in
+        {
+          default = pkgs.rustPlatform.buildRustPackage {
+            pname = "paint-10";
+            version = "0.1.0";
+            src = source;
+            cargoLock.lockFile = ./Cargo.lock;
+            nativeBuildInputs = [
+              pkgs.wrapGAppsHook3
+              pkgs.pkg-config
+            ];
+            buildInputs = [
+              pkgs.gtk3
+              pkgs.gsettings-desktop-schemas
+            ];
+            postInstall = ''
+              install -Dm644 assets/paint-10.desktop "$out/share/applications/paint-10.desktop"
+              install -Dm644 assets/paint-10.svg "$out/share/icons/hicolor/scalable/apps/paint-10.svg"
+            '';
+            preFixup = ''
+              gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath (desktopLibs pkgs)})
+              gappsWrapperArgs+=(--prefix PATH : ${pkgs.lib.makeBinPath (captureTools pkgs)})
+            '';
+            meta = {
+              description = "A native Rust drawing application with the Windows 10 Paint workflow";
+              license = pkgs.lib.licenses.mit;
+              platforms = systems;
+              mainProgram = "paint-10";
+            };
+          };
+        }
+      );
+      checks = eachSystem (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in
+        {
+          desktop-entry =
+            pkgs.runCommand "paint-10-desktop-entry-check"
+              {
+                nativeBuildInputs = [ pkgs.desktop-file-utils ];
+              }
+              ''
+                desktop-file-validate ${./assets/paint-10.desktop}
+                touch "$out"
+              '';
+        }
+      );
+      formatter = eachSystem (system: (import nixpkgs { inherit system; }).nixfmt);
+    };
+}

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Paint 10</title>
+  <defs>
+    <linearGradient id="palette" x1="0" y1="0" x2="0.8" y2="1">
+      <stop stop-color="#fff7e5"/>
+      <stop offset="1" stop-color="#e9c582"/>
+    </linearGradient>
+    <linearGradient id="handle" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#0874b9"/>
+      <stop offset="0.45" stop-color="#43b5ed"/>
+      <stop offset="1" stop-color="#075fa1"/>
+    </linearGradient>
+  </defs>
+  <path d="M129 35c-58 0-105 38-105 89 0 56 45 96 105 96 32 0 57-13 62-31 6-23-22-27-22-42 0-11 17-14 32-23 14-9 16-23 8-39-14-31-44-50-80-50Z"
+        fill="url(#palette)" stroke="#946b33" stroke-width="6"/>
+  <ellipse cx="124" cy="168" rx="20" ry="16" transform="rotate(-24 124 168)"
+           fill="#fff" stroke="#b8955b" stroke-width="5"/>
+  <circle cx="59" cy="119" r="17" fill="#1d8bcb" stroke="#226b9b" stroke-width="3"/>
+  <circle cx="86" cy="77" r="17" fill="#e8453b" stroke="#b63331" stroke-width="3"/>
+  <circle cx="138" cy="63" r="17" fill="#ffce32" stroke="#c5961c" stroke-width="3"/>
+  <circle cx="181" cy="91" r="17" fill="#6bad3c" stroke="#51852e" stroke-width="3"/>
+  <circle cx="64" cy="167" r="14" fill="#8b61ad" stroke="#63437d" stroke-width="3"/>
+  <g transform="rotate(32 190 128)">
+    <path d="M183 31c0-8 14-8 14 0l3 114h-20Z" fill="url(#handle)" stroke="#165883" stroke-width="4"/>
+    <path d="M180 142h20l3 31h-26Z" fill="#dce5ed" stroke="#5c7183" stroke-width="4"/>
+    <path d="M177 173h26c7 22-1 38-27 48 6-13-8-23 1-48Z" fill="#9b592c" stroke="#623c25" stroke-width="4"/>
+    <path d="M181 183c-2 12 4 19 0 27" fill="none" stroke="#ce9454" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>
