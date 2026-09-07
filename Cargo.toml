@@ -24,6 +24,9 @@ ashpd = { version = "0.11.1", default-features = false, features = ["async-std"]
 pollster = "0.4"
 gtk = { version = "=0.18.2", features = ["v3_24"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+winit = { version = "=0.30.13", default-features = false }
+
 [profile.dev]
 opt-level = 1
 
