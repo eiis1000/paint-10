@@ -74,5 +74,7 @@ correctly in the verified Nix package.
   acquiring initial focus. The modal queue now retains that input. The same
   Ctrl+E, immediate 96, Tab, 64 sequence yields 96 × 64 in the packaged GUI.
 - Independent TIFF inspection found a missing alpha-channel tag in the pinned
-  encoder. A correction and GUI re-export are in progress; the current opaque
-  Mona Lisa TIFF pixels match its PNG, but its metadata is not yet accepted.
+  encoder. The encoder now writes straight-alpha metadata. Mona Lisa was
+  re-exported through the real Save a copy dialog; its alpha tag is correct,
+  pixels match the PNG, and ImageMagick/libtiff reports no warnings. Separate
+  fixtures verify all 256 alpha values and noninteger DPI through that reader.
