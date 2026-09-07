@@ -192,6 +192,36 @@ fn bucket(canvas: &Canvas<'_>) {
 
 pub(super) fn command(canvas: &Canvas<'_>, icon: Icon) {
     match icon {
+        Icon::New => document(canvas),
+        Icon::Open => {
+            canvas.rect((2.0, 5.0), (10.0, 12.0), GOLD, WOOD);
+            canvas.rect((2.0, 8.0), (21.0, 21.0), GOLD, WOOD);
+            canvas.polygon(
+                &[(5.0, 11.0), (23.0, 11.0), (19.0, 21.0), (1.0, 21.0)],
+                Color32::from_rgb(255, 219, 115),
+                WOOD,
+            );
+        }
+        Icon::Print => {
+            canvas.rect((6.0, 1.0), (18.0, 11.0), Color32::WHITE, INK);
+            canvas.rect((2.0, 8.0), (22.0, 18.0), SILVER, INK);
+            canvas.line((4.0, 11.0), (20.0, 11.0), Color32::WHITE, 1.0);
+            canvas.rect((6.0, 15.0), (18.0, 23.0), Color32::WHITE, INK);
+            canvas.line((9.0, 18.0), (15.0, 18.0), BLUE, 1.0);
+            canvas.line((9.0, 20.0), (15.0, 20.0), BLUE, 1.0);
+            canvas.circle((19.0, 13.0), 0.8, Color32::from_rgb(69, 152, 70), CLEAR);
+        }
+        Icon::PrintPreview => {
+            document(canvas);
+            canvas.line((16.0, 17.0), (22.0, 23.0), INK, 3.0);
+            canvas.circle((13.0, 14.0), 5.5, LIGHT_BLUE, BLUE);
+            canvas.line((10.0, 12.0), (14.0, 12.0), Color32::WHITE, 1.0);
+        }
+        Icon::Email => {
+            canvas.rect((1.0, 5.0), (23.0, 20.0), Color32::WHITE, BLUE);
+            canvas.polygon(&[(1.0, 20.0), (12.0, 10.0), (23.0, 20.0)], LIGHT_BLUE, BLUE);
+            canvas.polygon(&[(1.0, 5.0), (23.0, 5.0), (12.0, 15.0)], SILVER, BLUE);
+        }
         Icon::Save => {
             canvas.polygon(
                 &[
@@ -296,6 +326,21 @@ pub(super) fn command(canvas: &Canvas<'_>, icon: Icon) {
             unreachable!("tool and brush artwork is dispatched separately")
         }
     }
+}
+
+fn document(canvas: &Canvas<'_>) {
+    canvas.polygon(
+        &[
+            (4.0, 1.0),
+            (14.0, 1.0),
+            (20.0, 7.0),
+            (20.0, 23.0),
+            (4.0, 23.0),
+        ],
+        Color32::WHITE,
+        INK,
+    );
+    canvas.polygon(&[(14.0, 1.0), (14.0, 7.0), (20.0, 7.0)], SILVER, INK);
 }
 
 fn colors(canvas: &Canvas<'_>) {
