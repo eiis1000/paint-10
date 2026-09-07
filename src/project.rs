@@ -24,6 +24,11 @@ struct Project {
 }
 
 pub fn save(doc: &Document, path: &Path) -> Result<(), String> {
+    atomic_write(path, &encode(doc)?)
+}
+
+/// The same bounded editable project format for disk and browser downloads.
+pub fn encode(doc: &Document) -> Result<Vec<u8>, String> {
     doc.resolution.validate()?;
     if !valid_size(doc.image.width(), doc.image.height()) {
         return Err("The project canvas exceeds the allocation limit.".into());
@@ -49,7 +54,7 @@ pub fn save(doc: &Document, path: &Path) -> Result<(), String> {
         remaining: MAX_PROJECT_BYTES,
     };
     serde_json::to_writer(&mut encoder, &data).map_err(|e| e.to_string())?;
-    atomic_write(path, &encoder.inner.finish().map_err(|e| e.to_string())?)
+    encoder.inner.finish().map_err(|e| e.to_string())
 }
 
 /// Keep save and load limits symmetric without allocating the JSON in memory.
@@ -74,7 +79,17 @@ impl<W: Write> Write for BoundedWriter<W> {
 }
 
 pub fn load(path: &Path) -> Result<Document, String> {
-    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    decode_reader(std::fs::File::open(path).map_err(|e| e.to_string())?)
+}
+
+pub fn decode(bytes: &[u8]) -> Result<Document, String> {
+    if bytes.len() as u64 > MAX_PROJECT_BYTES {
+        return Err("Project exceeds the 256 MB limit.".into());
+    }
+    decode_reader(bytes)
+}
+
+fn decode_reader(mut file: impl Read) -> Result<Document, String> {
     let mut magic = [0; 8];
     file.read_exact(&mut magic).map_err(|e| e.to_string())?;
     if &magic != b"PAINT10\0" {
@@ -164,6 +179,7 @@ fn deserialize_objects<'de, D: serde::Deserializer<'de>>(
     deserializer.deserialize_seq(Objects)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let directory = path
         .parent()
@@ -174,6 +190,11 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     file.as_file().sync_all().map_err(|e| e.to_string())?;
     file.persist(path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn atomic_write(_path: &Path, _bytes: &[u8]) -> Result<(), String> {
+    Err("Browser files must be saved using Download.".into())
 }
 
 pub mod pixels {
@@ -210,6 +231,65 @@ pub mod pixels {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_project_bytes_preserve_editable_objects_and_metadata() {
+        let mut doc =
+            Document::from_image(RgbaImage::from_pixel(40, 30, image::Rgba([12, 34, 56, 0])));
+        doc.resolution = crate::metadata::Resolution { x: 300.0, y: 150.0 };
+        doc.begin();
+        doc.add_object(Object::new(
+            ObjectKind::Text {
+                text: "Still editable".into(),
+                format: crate::text::TextFormat {
+                    width: 140,
+                    ..Default::default()
+                },
+            },
+            (3, 4),
+        ));
+        doc.commit();
+        let reopened = decode(&encode(&doc).unwrap()).unwrap();
+        assert!(reopened.objects == doc.objects);
+        assert_eq!(reopened.composite(), doc.composite());
+        assert_eq!(reopened.resolution, doc.resolution);
+        assert!(!reopened.dirty());
+        assert!(decode(b"wrong project header").is_err());
+    }
+
+    #[test]
+    fn project_bytes_preserve_font_variants_and_missing_glyph_fallback() {
+        let format = crate::text::TextFormat {
+            font: epaint_default_fonts::HACK_REGULAR.to_vec(),
+            font_faces: vec![crate::text::EmbeddedFont {
+                family: "Noto Emoji".into(),
+                data: epaint_default_fonts::NOTO_EMOJI_REGULAR.to_vec(),
+                index: 0,
+                bold: false,
+                italic: false,
+            }],
+            ..Default::default()
+        };
+        let mut document = Document::new(120, 80);
+        document.add_object(Object::new(
+            ObjectKind::Text {
+                text: "A😀B".into(),
+                format,
+            },
+            (4, 5),
+        ));
+        let reopened = decode(&encode(&document).unwrap()).unwrap();
+        assert!(reopened.objects == document.objects);
+        assert_eq!(reopened.composite(), document.composite());
+        let ObjectKind::Text { text, format } = &reopened.objects.last().unwrap().kind else {
+            panic!("text remains editable");
+        };
+        assert_eq!(text, "A😀B");
+        assert_eq!(
+            format.font_faces[0].data,
+            epaint_default_fonts::NOTO_EMOJI_REGULAR
+        );
+    }
 
     #[test]
     fn transparent_project_keeps_base_pixels_and_editable_objects() {
