@@ -113,11 +113,12 @@ impl PaintApp {
             self.doc.restore_preview();
             let mut pts = self.polygon.clone();
             pts.push(p);
+            let fill = self.shape_fill(self.polygon_color_slot);
             d::styled_polygon(
                 &mut self.doc.image,
                 &pts,
                 Some((self.polygon_color, self.outline)),
-                Some((self.colors[1 - self.polygon_color_slot], self.fill)),
+                Some(fill),
                 self.size,
             );
             self.refresh = true;
@@ -549,6 +550,7 @@ impl PaintApp {
                     }
                     if self.tool.is_shape() {
                         self.doc.restore_preview();
+                        let fill = self.shape_fill(usize::from(erase_target.is_some()));
                         d::styled_shape(
                             &mut self.doc.image,
                             if self.tool == Tool::Polygon {
@@ -560,7 +562,7 @@ impl PaintApp {
                             end,
                             self.size,
                             Some((*color, self.outline)),
-                            Some((self.colors[usize::from(erase_target.is_none())], self.fill)),
+                            Some(fill),
                         );
                     } else if shift && matches!(self.tool, Tool::Brush | Tool::Pencil) {
                         let delta = (raw.0 - start.0, raw.1 - start.1);
@@ -1282,7 +1284,7 @@ mod tests {
                     (180, 140),
                     app.tool_sizes[3],
                     Some((app.colors[slot], PaintStyle::None)),
-                    Some((app.colors[1 - slot], PaintStyle::Solid)),
+                    Some((app.colors[1 - slot], PaintStyle::Solid).into()),
                 );
                 if newer_canvas_click {
                     let mut with_next_stroke = expected.clone();
@@ -1668,7 +1670,7 @@ mod tests {
             (120, 70),
             app.size,
             Some((BLACK, app.outline)),
-            Some((WHITE, app.fill)),
+            Some((WHITE, app.fill).into()),
         );
         assert_eq!(app.doc.image, expected);
     }

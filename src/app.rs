@@ -25,8 +25,8 @@ use gestures::pointer_press_in;
 use shapes::{CurveBend, ShapeDraft, ShapeGeometry};
 
 use crate::document::{
-    self as d, Brush, Color, Document, Object, ObjectKind, PaintStyle, Point, Region, Tool, BLACK,
-    WHITE,
+    self as d, Brush, Color, Document, Gradient, Object, ObjectKind, PaintStyle, Point, Region,
+    ShapeFill, Tool, BLACK, WHITE,
 };
 use crate::icons::{self, Icon};
 use eframe::egui::{self, *};
@@ -166,6 +166,7 @@ pub struct PaintApp {
     custom_colors: Vec<Color>,
     outline: PaintStyle,
     fill: PaintStyle,
+    fill_gradient: Option<Gradient>,
     spray_seed: u32,
     zoom: f32,
     grid: bool,
@@ -287,6 +288,7 @@ impl PaintApp {
             },
             outline: PaintStyle::Solid,
             fill: PaintStyle::None,
+            fill_gradient: None,
             spray_seed: 0,
             zoom: 1.,
             grid: false,

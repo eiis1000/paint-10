@@ -72,6 +72,7 @@ impl PaintApp {
             && ctx.input_mut(|input| consume_shortcut(input, Modifiers::NONE, Key::Enter))
         {
             self.commit_shape();
+            self.message = "Shape applied. Draw another shape.".into();
             return;
         }
         for (mods, key, action) in [

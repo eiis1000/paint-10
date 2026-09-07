@@ -183,6 +183,93 @@ impl PaintStyle {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gradient {
+    Vertical,
+    Horizontal,
+    Radial,
+}
+
+impl Gradient {
+    pub const ALL: [Self; 3] = [Self::Vertical, Self::Horizontal, Self::Radial];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Vertical => "Vertical gradient",
+            Self::Horizontal => "Horizontal gradient",
+            Self::Radial => "Radial gradient",
+        }
+    }
+}
+
+/// A fill is distinct from an outline texture. Gradients run from the first
+/// color to the second across the complete, unclipped polygon bounds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShapeFill {
+    Paint(Color, PaintStyle),
+    Gradient {
+        direction: Gradient,
+        colors: [Color; 2],
+    },
+}
+
+impl From<(Color, PaintStyle)> for ShapeFill {
+    fn from((color, style): (Color, PaintStyle)) -> Self {
+        Self::Paint(color, style)
+    }
+}
+
+impl ShapeFill {
+    fn color_at(self, point: Point, bounds: (Point, Point)) -> Color {
+        let (direction, colors) = match self {
+            Self::Paint(color, style) => return texture_color(color, style, point.0, point.1),
+            Self::Gradient { direction, colors } => (direction, colors),
+        };
+        let ((left, top), (right, bottom)) = bounds;
+        let fraction = |position: i32, min: i32, max: i32| {
+            if min == max {
+                0.0
+            } else {
+                ((position as f64 - min as f64) / (max as f64 - min as f64)).clamp(0.0, 1.0)
+            }
+        };
+        let t = match direction {
+            Gradient::Vertical => fraction(point.1, top, bottom),
+            Gradient::Horizontal => fraction(point.0, left, right),
+            Gradient::Radial => {
+                let x = if left == right {
+                    0.0
+                } else {
+                    fraction(point.0, left, right) * 2.0 - 1.0
+                };
+                let y = if top == bottom {
+                    0.0
+                } else {
+                    fraction(point.1, top, bottom) * 2.0 - 1.0
+                };
+                x.hypot(y).min(1.0)
+            }
+        };
+        let [start, end] = colors;
+        let start_alpha = start[3] as f64 * (1.0 - t);
+        let end_alpha = end[3] as f64 * t;
+        let alpha = start_alpha + end_alpha;
+        if alpha <= 0.0 {
+            return [0, 0, 0, 0];
+        }
+        // Interpolate premultiplied RGB so a transparent endpoint's hidden
+        // color cannot introduce a dark or colored halo.
+        let mut color = [0; 4];
+        for channel in 0..3 {
+            color[channel] =
+                ((start[channel] as f64 * start_alpha + end[channel] as f64 * end_alpha) / alpha)
+                    .round() as u8;
+        }
+        color[3] = alpha.round() as u8;
+        color
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Region {
     pub x: u32,
     pub y: u32,
@@ -1076,35 +1163,52 @@ pub fn styled_polygon(
     img: &mut RgbaImage,
     pts: &[Point],
     outline: Option<(Color, PaintStyle)>,
-    fill: Option<(Color, PaintStyle)>,
+    fill: Option<ShapeFill>,
     width: u32,
 ) {
     if pts.len() < 2 {
         return;
     }
-    if let Some((color, style)) = fill.filter(|(_, style)| *style != PaintStyle::None) {
-        let min_y = pts.iter().map(|p| p.1).min().unwrap().max(0);
-        let max_y = pts
-            .iter()
-            .map(|p| p.1)
-            .max()
-            .unwrap()
-            .min(img.height() as i32 - 1);
+    if let Some(fill) = fill.filter(|fill| !matches!(fill, ShapeFill::Paint(_, PaintStyle::None))) {
+        let bounds = pts.iter().fold((pts[0], pts[0]), |(min, max), point| {
+            (
+                (min.0.min(point.0), min.1.min(point.1)),
+                (max.0.max(point.0), max.1.max(point.1)),
+            )
+        });
+        let min_y = bounds.0 .1.max(0);
+        let max_y = bounds.1 .1.min(img.height() as i32 - 1);
         for y in min_y..=max_y {
+            // Paint's existing texture coverage is unchanged. Gradient fills
+            // include their final edge so the second color reaches the bottom.
+            let include_bottom = matches!(fill, ShapeFill::Gradient { .. }) && y == bounds.1 .1;
             let mut intersections = vec![];
             for (a, b) in pts.iter().zip(pts.iter().cycle().skip(1)).take(pts.len()) {
-                if (a.1 <= y && b.1 > y) || (b.1 <= y && a.1 > y) {
-                    intersections.push(
-                        a.0 as f32 + (y - a.1) as f32 * (b.0 - a.0) as f32 / (b.1 - a.1) as f32,
-                    );
+                let crosses = if include_bottom {
+                    (a.1 < y && b.1 >= y) || (b.1 < y && a.1 >= y)
+                } else {
+                    (a.1 <= y && b.1 > y) || (b.1 <= y && a.1 > y)
+                };
+                if crosses {
+                    let intersection = if matches!(fill, ShapeFill::Gradient { .. }) {
+                        a.0 as f64
+                            + (y as f64 - a.1 as f64) * (b.0 as f64 - a.0 as f64)
+                                / (b.1 as f64 - a.1 as f64)
+                    } else {
+                        // Preserve the established raster coverage of the
+                        // original solid and textured Paint fill choices.
+                        (a.0 as f32 + (y - a.1) as f32 * (b.0 - a.0) as f32 / (b.1 - a.1) as f32)
+                            as f64
+                    };
+                    intersections.push(intersection);
                 }
             }
-            intersections.sort_by(f32::total_cmp);
+            intersections.sort_by(f64::total_cmp);
             for pair in intersections.chunks_exact(2) {
                 for x in (pair[0].ceil() as i32).max(0)
                     ..=(pair[1].floor() as i32).min(img.width() as i32 - 1)
                 {
-                    blend(img, x, y, texture_color(color, style, x, y));
+                    blend(img, x, y, fill.color_at((x, y), bounds));
                 }
             }
         }
@@ -1246,7 +1350,7 @@ pub fn styled_shape(
     b: Point,
     width: u32,
     outline: Option<(Color, PaintStyle)>,
-    fill: Option<(Color, PaintStyle)>,
+    fill: Option<ShapeFill>,
 ) {
     if matches!(tool, Tool::Line | Tool::Curve) {
         if let Some((color, style)) = outline {
@@ -1429,6 +1533,130 @@ pub fn rotation_size(w: u32, h: u32, angle: f32) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gradient_fills_reach_their_endpoints_and_ignore_drag_direction() {
+        let colors = [[240, 40, 20, 255], [20, 80, 220, 255]];
+        for direction in Gradient::ALL {
+            let render = |a, b| {
+                let mut image = RgbaImage::new(32, 32);
+                styled_shape(
+                    &mut image,
+                    Tool::Rectangle,
+                    a,
+                    b,
+                    1,
+                    None,
+                    Some(ShapeFill::Gradient { direction, colors }),
+                );
+                image
+            };
+            let image = render((4, 6), (24, 26));
+            assert_eq!(image, render((24, 26), (4, 6)));
+            let (start, middle, end) = match direction {
+                Gradient::Vertical => ((14, 6), (14, 16), (14, 26)),
+                Gradient::Horizontal => ((4, 16), (14, 16), (24, 16)),
+                Gradient::Radial => ((14, 16), (19, 16), (24, 16)),
+            };
+            assert_eq!(image.get_pixel(start.0, start.1).0, colors[0]);
+            assert_eq!(image.get_pixel(middle.0, middle.1).0, [130, 60, 120, 255]);
+            assert_eq!(image.get_pixel(end.0, end.1).0, colors[1]);
+            assert!(image
+                .enumerate_pixels()
+                .filter(|(_, _, pixel)| pixel[3] > 0)
+                .all(|(x, y, _)| (4..=24).contains(&x) && (6..=26).contains(&y)));
+        }
+    }
+
+    #[test]
+    fn gradient_alpha_is_premultiplied_and_has_no_transparent_color_halo() {
+        let render = |colors| {
+            let mut image = RgbaImage::new(25, 25);
+            styled_shape(
+                &mut image,
+                Tool::Rectangle,
+                (2, 2),
+                (22, 22),
+                1,
+                None,
+                Some(ShapeFill::Gradient {
+                    direction: Gradient::Radial,
+                    colors,
+                }),
+            );
+            image
+        };
+        let white_light = render([WHITE, [0, 0, 0, 0]]);
+        assert_eq!(white_light.get_pixel(12, 12).0, WHITE);
+        assert_eq!(white_light.get_pixel(17, 12).0, [255, 255, 255, 128]);
+        assert_eq!(white_light.get_pixel(22, 12)[3], 0);
+        assert_eq!(white_light, render([WHITE, [255, 0, 160, 0]]));
+        let partial = render([[200, 40, 100, 64], [20, 160, 220, 192]]);
+        assert_eq!(partial.get_pixel(17, 12).0, [65, 130, 190, 128]);
+        let mut background = RgbaImage::from_pixel(25, 25, Rgba([0, 0, 255, 255]));
+        overlay(&mut background, &white_light, 0, 0);
+        assert_eq!(background.get_pixel(17, 12).0, [128, 128, 255, 255]);
+        assert_eq!(background.get_pixel(22, 12).0, [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn polygon_gradient_clipping_preserves_its_original_bounds() {
+        let mut image = RgbaImage::new(24, 24);
+        styled_polygon(
+            &mut image,
+            &[(-10, -10), (10, -10), (10, 10), (-10, 10)],
+            None,
+            Some(ShapeFill::Gradient {
+                direction: Gradient::Horizontal,
+                colors: [BLACK, WHITE],
+            }),
+            1,
+        );
+        assert_eq!(image.get_pixel(0, 0).0, [128, 128, 128, 255]);
+        assert_eq!(image.get_pixel(10, 0).0, WHITE);
+        assert_eq!(image.get_pixel(11, 0)[3], 0);
+        let before = image.clone();
+        styled_polygon(
+            &mut image,
+            &[(-40, -40), (-20, -40), (-20, -20)],
+            None,
+            Some(ShapeFill::Gradient {
+                direction: Gradient::Radial,
+                colors: [WHITE, BLACK],
+            }),
+            1,
+        );
+        assert_eq!(image, before);
+        let mut triangle = RgbaImage::new(24, 24);
+        styled_polygon(
+            &mut triangle,
+            &[(2, 2), (18, 2), (10, 18)],
+            None,
+            Some(ShapeFill::Gradient {
+                direction: Gradient::Vertical,
+                colors: [BLACK, WHITE],
+            }),
+            1,
+        );
+        assert_eq!(triangle.get_pixel(10, 2).0, BLACK);
+        assert_eq!(triangle.get_pixel(10, 18).0, WHITE);
+        assert_eq!(triangle.get_pixel(2, 18)[3], 0);
+        assert_eq!(triangle.get_pixel(18, 18)[3], 0);
+        for x in [i32::MIN, i32::MAX] {
+            let mut empty = RgbaImage::new(4, 4);
+            styled_polygon(
+                &mut empty,
+                &[(x, 0), (x, 3)],
+                None,
+                Some(ShapeFill::Gradient {
+                    direction: Gradient::Horizontal,
+                    colors: [BLACK, WHITE],
+                }),
+                1,
+            );
+            assert!(empty.pixels().all(|pixel| pixel[3] == 0));
+        }
+    }
 
     #[test]
     fn canvas_growth_copies_rgba_and_places_background_below_revealed_objects() {
@@ -1626,7 +1854,7 @@ mod tests {
             (30, 25),
             1,
             Some((BLACK, PaintStyle::Solid)),
-            Some(([180, 50, 70, 255], PaintStyle::Solid)),
+            Some(([180, 50, 70, 255], PaintStyle::Solid).into()),
         );
         let painted: Vec<_> = image
             .enumerate_pixels()
@@ -1885,7 +2113,7 @@ mod tests {
             (110, 110),
             1,
             Some((BLACK, PaintStyle::Solid)),
-            Some((WHITE, PaintStyle::Solid)),
+            Some((WHITE, PaintStyle::Solid).into()),
         );
         assert_eq!(image.get_pixel(10, 10)[3], 0);
         assert_eq!(image.get_pixel(110, 10)[3], 0);
@@ -1919,7 +2147,7 @@ mod tests {
                     (50, 50),
                     1,
                     None,
-                    Some((BLACK, style)),
+                    Some((BLACK, style).into()),
                 );
                 image
             })
