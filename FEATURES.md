@@ -3,6 +3,7 @@
 The target is Windows 10's ribbon-based Paint. A checked feature means implemented; manual verification is recorded separately in `TESTING.md`. `PARITY_AUDIT.md` records the reopened audit and remaining differences; this checklist alone does not establish completion.
 
 - [x] Home/View ribbon, quick save/undo/redo, palette, Color 1/2, status, scrolling canvas
+- [x] Responsive ribbon groups down to 500px, keytips anchored to real controls, group and menu navigation
 - [x] Customizable Quick Access Toolbar, above/below placement, persistence and direct numeric Alt shortcuts
 - [x] Pencil, brush, fill, eraser, eyedropper, magnifier
 - [x] All nine brush presets and textured shape outline/fill styles
@@ -15,6 +16,10 @@ The target is Windows 10's ribbon-based Paint. A checked feature means implement
 - [x] Rotate 90/180/270, flips, arbitrary-angle rotation
 - [x] Text/image objects remain selectable and movable during editing
 - [x] In-canvas rich text entry with active move/resize handles, typed font names, collection faces, point size, bold/italic/underline/strikeout, opacity
+- [x] Aligned and outlined captions with identical live and saved rendering
+- [x] 3200% zoom, 1px pencil, independent tool widths, nearest-neighbor resize and transparent canvases
+- [x] Save a copy and Save selection as without changing the working file's destination
+- [x] Linux/Windows/macOS platform paths, native build workflow, named Nix package and consuming overlay
 - [x] Image properties units, DPI metadata and monochrome conversion
 - [x] Zoom, rulers, pixel grid, image-only view and live Thumbnail navigation
 - [x] Page setup with 19 paper presets/custom dimensions, multi-page print preview, PDF export and system print dialog
