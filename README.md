@@ -27,9 +27,11 @@ The flake provides packages and development shells for `x86_64-linux` and `aarch
 
 ## Draw and edit
 
-Use the Home ribbon for brushes, shapes, fill, eraser, text, selections, colors, and image transformations. Color 1 is the foreground; Color 2 is the background. Right-click a palette swatch to choose Color 2. The View ribbon controls zoom, rulers, gridlines, and picture view.
+Use the Home ribbon for brushes, shapes, fill, eraser, text, selections, colors, and image transformations. Color 1 is the foreground; Color 2 is the background. Right-click a palette swatch to choose Color 2. The View ribbon controls zoom, rulers, gridlines, and picture view. Above 100% zoom, enable Thumbnail to navigate the picture through a floating preview.
 
-Text and inserted images remain editable objects. Select an object to move or resize it; double-click a text object to edit its contents. The text ribbon offers installed fonts, size, styles, and an opaque or transparent background. Rotation includes arbitrary angles as well as the familiar quarter turns and flips.
+The title-bar dropdown customizes the Quick Access Toolbar and moves it below the ribbon. Its commands and placement persist. Alt+1, Alt+2, and subsequent numbers invoke the commands in their current order.
+
+Text and inserted images remain editable objects. Select an object to move or resize it; double-click a text object to edit its contents. While typing, drag the box border to move it or its handles to reflow the text. The text ribbon offers typed/searchable installed fonts, size, styles, the Paint palette, and an opaque or transparent background. Home clipboard commands act on selected characters while a text box is active. Rotation includes arbitrary angles as well as the familiar quarter turns and flips; object resizing and flips preserve editable text.
 
 Save as a **Paint 10 project (`.p10`)** to retain editable text, image objects, and their transforms. Saving PNG, JPEG, BMP, GIF, or TIFF exports the visible raster picture; reopening those formats gives a flattened image. Undo history is kept for the current session and is not stored in project files. Destructive raster operations, including lifting a raster selection or transforming the whole canvas, can merge editable objects; undo can restore the previous state while it remains in history.
 
@@ -63,7 +65,7 @@ The canvas is limited to 16 megapixels and 16,384 pixels on either axis. Undo hi
 | Picture view | F11 |
 | Ribbon command navigation | Alt or F10; Alt+F / H / V |
 | Selection context menu | Shift+F10 |
-| Switch Home / View | Ctrl+Tab |
+| Cycle Home / View / contextual Text | Ctrl+Tab / Ctrl+Shift+Tab |
 | Focus canvas / ribbon | F6 |
 | Collapse the ribbon | Ctrl+F1 |
 
@@ -95,7 +97,7 @@ nix develop path:.#test -c scripts/headless-desktop.sh
 
 This starts Paint 10 on a private Xvfb display with its own D-Bus session, GTK settings, and temporary user directories. The script prints the display number and log directory. The test shell includes mouse/keyboard control and screenshot tools. To run an existing binary instead, pass its command after the script name.
 
-[FEATURES.md](FEATURES.md) tracks implementation coverage; [TESTING.md](TESTING.md) records actual automated and manual verification, including outstanding checks. The aim is familiar Paint behavior with useful editing improvements. This project is an independent implementation and does not claim complete behavioral or visual equivalence with Microsoft Paint.
+[FEATURES.md](FEATURES.md) tracks implementation coverage; [TESTING.md](TESTING.md) records actual automated and manual verification. [PARITY_AUDIT.md](PARITY_AUDIT.md) records corrected failures and remaining differences, including narrow-window ribbon behavior, keyboard command presentation, brush rendering, and untested hardware integration. The aim is familiar Paint behavior with useful editing improvements. This project is an independent implementation and does not claim complete behavioral or visual equivalence with Microsoft Paint.
 
 ## Source layout
 
