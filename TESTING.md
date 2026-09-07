@@ -4,7 +4,7 @@
 
 - Native Rust eframe/egui 0.31.1, Nix dev shell, Rust 1.97.1.
 - The shared KDE Wayland desktop locked during implementation. Computer Use screenshots confirmed the lock screen. No session settings were changed.
-- Xvfb display `:99` (1280×900) is used for manual mouse/keyboard tests. Screenshots use the screenshot skill helper. Actions use XTEST/xdotool against the actual application window.
+- Xvfb displays (1280×900) are used for manual mouse/keyboard tests: initially `:99`, then dynamically allocated `:1` and `:2` through the delivered launcher. Screenshots use the screenshot skill helper. Actions use XTEST/xdotool against the actual application window.
 - Isolation correction: GTK initially auto-discovered the host Wayland socket and opened Save on the user's desktop. The test process was stopped. The launcher now forces `GDK_BACKEND=x11`, creates a private runtime directory, and uses `dbus-run-session`. A new screenshot of Xvfb itself confirms the native Save dialog is contained there: `/tmp/paint10-truly-isolated-save.png`.
 - The user's desktop must not be accessed until 2026-09-07 05:07:54 UTC, per their two-hour timer request.
 - Mesa 26.1.8 llvmpipe stalled in `lp_fence_wait` on the isolated display. GDB stacks localized it to the software rasterizer. The isolated test uses `GALLIUM_DRIVER=softpipe`; the application does not force a graphics driver or disable vsync.
@@ -36,12 +36,12 @@
 ## Automated checks
 
 - Initial 7 tests passed: fill boundaries, history/saved state, canceled previews, clipped paste, rotation/canvas sizing, text/PNG round-trip, PDF layout.
-- The integrated suite passed 71 tests (49 library and 22 UI tests), including image metadata, bitmap bit depths, rich text/history, transformed selections, project bounds and modal keyboard behavior. Strict `cargo clippy --all-targets -- -D warnings` and formatting checks passed. The three dialog keyboard tests now use an actual modal Window, and passed again after the manual focus fix.
-- Six focused printing tests pass. Letter, A4 landscape with asymmetric margins, and all four tiled PDF pages were rendered with Poppler and visually inspected. Fixtures are in `tmp/pdfs/`.
+- The final integrated suite passed 76 tests (54 library and 22 UI tests), including image metadata, bitmap bit depths, rich text/history, transformed selections, project bounds, custom paper sizes and modal keyboard behavior. Strict `cargo clippy --all-targets -- -D warnings` and formatting checks passed. The three dialog keyboard tests use an actual modal Window, and passed again after the manual focus fix.
+- Twelve printing tests pass. Letter, A4 landscape with asymmetric margins, Legal, A3 landscape, custom 100×160 mm paper, and every page of two four-page tiled PDFs were rendered with Poppler and visually inspected. Fixtures are in `tmp/pdfs/`.
 
 ## Manual coverage
 
-The passes below cover drawing and fill, rectangle/ellipse/curve, rich text, selected-object movement/resizing, clipboard, native save/reopen, print preview, fullscreen, keyboard navigation, modal entry, rulers/grid/zoom and small-window layout. Polygon completion, arbitrary-angle rotation and every brush/selection combination are implemented and covered in part by core tests, but have not all received an exhaustive manual workflow pass.
+The passes below cover drawing and fill, rectangle/ellipse/curve/polygon, rich text, selected-object movement/resizing/rotation, clipboard, native save/reopen, print preview and PDF export, fullscreen, keyboard navigation, modal entry, rulers/grid/zoom and small-window layout. Every brush/selection combination has not received an exhaustive manual workflow pass.
 
 ## Rebuilt app and icon pass
 
@@ -55,7 +55,16 @@ The passes below cover drawing and fill, rectangle/ellipse/curve, rich text, sel
 - The icon subagent rendered and inspected the actual vector artwork at ribbon sizes, all 23 shapes, nine brushes/stroke samples, and selected/disabled/focused button states. Contact sheet: `tmp/icons-contact-sheet.png`. AccessKit checks verified names and states. Final ribbon inspection: `/tmp/paint10-final-ui.png`.
 - Manual Resize testing caught initial focus being consumed by egui's invisible window-layout pass. The test was changed from a generic panel to an actual modal Window, which reproduced the failure. After the fix, Ctrl+W selected the width; typing `600` and pressing Enter resized 900×600 to 600×400; Ctrl+Z restored the original image. Screenshots: `/tmp/paint10-resize-focus-fixed.png`, `/tmp/paint10-resize-enter-fixed.png`.
 - Ctrl+R and Ctrl+G toggle rulers and gridlines. Ctrl+PageUp zooms the picture; the grid is visible at 400%: `/tmp/paint10-grid-400.png`. An 800×600 window retains the title controls, scrolling ribbon, canvas scrollbars and zoom controls: `/tmp/paint10-small-window.png`.
-- `nix build . --no-link` and `nix flake check .` passed for x86_64-linux. The package's release suite passed all 71 tests. The package wrapper includes GTK schemas, graphics libraries and capture helpers. Aarch64 was not built on this host.
+- `nix build . --no-link` and `nix flake check .` passed for x86_64-linux. The final package's release suite passed all 76 tests. The package wrapper includes GTK schemas, graphics libraries and capture helpers. Aarch64 was not built on this host.
+
+## Final workflow pass
+
+- Launched the packaged entrypoint with `nix develop .#test -c scripts/headless-desktop.sh nix run . -- /tmp/paint10-richtext.p10`: `/tmp/paint10-nix-run.png`.
+- Rotated the selected pasted image to 33° through the angle dialog. Its bounds changed from 420×70 to 391×288; the separate editable text stayed unchanged. Ctrl+Z restored the image: `/tmp/paint10-rotate-33.png`.
+- Drew the polygon's first edge, added vertices, and double-clicked to complete a four-sided adjustable shape. One Ctrl+Z removed it: `/tmp/paint10-polygon-complete.png`, `/tmp/paint10-polygon-undo.png`.
+- Fixed Ctrl+Shift+N clearing only the selected object. The shortcut now clears the whole picture; one Ctrl+Z restores both objects: `/tmp/paint10-clear-selection-before.png`, `/tmp/paint10-clear-picture.png`, `/tmp/paint10-clear-undo.png`.
+- Opened the paper presets and custom dimensions through Page Setup. A zero width displayed a validation error and disabled Print, Save PDF and Preview. Entering 100×160 mm restored them: `/tmp/paint10-paper-presets.png`, `/tmp/paint10-custom-invalid.png`, `/tmp/paint10-custom-100x160.png`.
+- Saved `/tmp/paint10-manual-custom.pdf` through the isolated native dialog. Poppler reported one page with a 283.465×453.543-point MediaBox, matching 100×160 mm. The rendered PDF and live preview show the same content placement: `/tmp/paint10-manual-custom.png`, `/tmp/paint10-custom-preview.png`.
 
 ## Verification limits
 

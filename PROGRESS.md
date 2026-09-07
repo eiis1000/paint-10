@@ -8,17 +8,19 @@ Objective: recreate Windows 10 MS Paint as a native Rust desktop app, with regul
 - [x] Selection, clipboard, text, file operations, image transforms
 - [x] Second isolated desktop test: editing, clipboard and native save
 - [x] Rebuilt app: project reopen, shape drafts, keyboard, icons, native format selector
-- [ ] Final regression checks, Nix run path, documentation
+- [x] Final regression checks, Nix run path, documentation
 
 Use `nix develop -c cargo run`. Native eframe/egui rendering; no web frontend.
 
 The detailed compatibility checklist is in FEATURES.md. Manual evidence and bugs are in TESTING.md.
 
-Current test environment: private Xvfb :1, GALLIUM_DRIVER=softpipe, keyboard/mouse via `PAINT10_TEST_DISPLAY=:1 bash tmp/gui.sh`. Launcher session 91539, logs `/tmp/paint10-desktop.2PrQyJ`. Do not use the host desktop until the restriction below expires. The delivered scripts/headless-desktop.sh launcher has run the real app with Openbox, private runtime/config directories and a private D-Bus session.
+The final private test session has been closed cleanly. Logs are in `/tmp/paint10-desktop.r0PVOy`; the preceding packaged `nix run` session used `/tmp/paint10-desktop.Za3puC`. The delivered scripts/headless-desktop.sh launcher ran the real app with Openbox, private runtime/config directories and a private D-Bus session. Do not use the host desktop until the restriction below expires.
 
-Current work: final package entrypoint verification and documentation. The source passed 71 tests, strict Clippy and Nix release tests. Manual checks verified native saving (including real 4-bit BMP), project reopen, rich text/image paste, selection resizing, adjustable shapes, two-bend curves, fullscreen, zoom/grid/rulers and small-window layout. The final modal focus bug was reproduced with an actual egui Window, fixed and manually retested: Ctrl+W → type 600 → Enter resizes correctly. All subagents have handed back their files.
+Implementation and final verification are complete for this pass. The source passed 76 tests, strict Clippy, formatting and Nix release tests; `nix flake check .` passed on x86_64-linux. The final code package is `/nix/store/72lmhr841l444q3w6bi7mbib095zn3jz-paint-10-0.1.0`. Manual checks verified native saving (including real 4-bit BMP), project reopen, rich text/image paste, selection resizing, adjustable shapes, two-bend curves, polygon completion, arbitrary rotation, fullscreen, zoom/grid/rulers and small-window layout. Custom-paper validation, native PDF export and print preview were verified together. All subagents have handed back their files.
 
-Git: accidental `git add .` was cleared from the index, preserving every working file. Commits: c97ae61 ignore rules; 1b6aa0b engine; d950a65 native editor/icons; d7781d1 Nix/package/test desktop. Documentation follows. Root owns staging and logical commits. Never stage target/, tmp/, .direnv/, or result links.
+Remaining verification limits: no exhaustive comparison against a Windows installation, no physical printer/scanner/camera test, no host wallpaper/email portal invocation, and no aarch64 build. See FEATURES.md and TESTING.md for precise coverage; do not claim complete behavioral equivalence.
+
+Git: accidental `git add .` was cleared from the index, preserving every working file. Logical commits cover ignore rules, the engine, the native editor/icons, Nix packaging/test desktop, and documentation. Final fixes are 60cf07d (standard/custom paper sizes) and fa5673e (Clear Picture with a selection). Never stage target/, tmp/, .direnv/, or result links.
 
 ## Desktop restriction — latest user steering
 
@@ -28,10 +30,10 @@ An early GTK dialog escaped Xvfb because GTK automatically connected to the user
 
 User explicitly authorized subagents and requested readable whitespace and better code structure. Completed ownership:
 
-- desktop_integration: app/dialogs.rs keyboard defaults/errors and HLS colors. Native Save As/raster I/O/packaging and ribbon/chrome accessibility are complete; root owns completed files.
-- printing: src/icons.rs and src/icons/*, per user's explicit iconography request. Crisp Paint-like vectors, brush icons, keyboard focus/accessibility and offscreen visual contact sheet.
-- document_audit: app/selection.rs and app/gestures.rs fixes for stale selection masks, text resize scale/validation and consistent pencil/eraser sizes. Engine files are stable.
-- Root: app.rs/keyboard.rs/shortcuts.rs/text_editing.rs, GUI testing, integration, Git commits and final audit.
+- desktop_integration: native Save As, raster I/O, packaging, ribbon/chrome accessibility, modal keyboard behavior and HLS colors. Complete.
+- printing: iconography requested by the user, PDF generation/preview, and standard/custom paper sizes. Complete; actual vector artwork and rendered PDFs inspected.
+- document_audit: engine audit, selection masks, text resizing, project/DPI handling and package verification. Complete.
+- Root: integration, editable text/shape workflows, keyboard behavior, repeated GUI testing, Git commits and final audit. Complete for this pass.
 
 Keyboard work is integrated: global commands survive button focus and inline editing; Delete is selection-only; F11 sends real fullscreen viewport commands; Alt/F10 command navigation, Shift+F10 context menu and tab/pane cycling are available. Alt+H and fullscreen were manually verified. The vendor patch also enables Ctrl+Insert / Shift+Insert / Shift+Delete on Linux.
 
