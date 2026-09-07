@@ -9,6 +9,14 @@ struct FormatPicker {
 
 impl FormatPicker {
     fn show(&mut self, ctx: &Context) -> Option<Option<RasterFormat>> {
+        let cancel = ctx.input_mut(|input| {
+            input.consume_key(Modifiers::MAC_CMD, Key::Q)
+                || input.consume_key(Modifiers::MAC_CMD, Key::W)
+                || input.consume_key(Modifiers::NONE, Key::Escape)
+        });
+        if cancel {
+            return Some(None);
+        }
         let mut result = None;
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Choose a file format");
@@ -30,10 +38,7 @@ impl FormatPicker {
                 let proceed = ui.add(Button::new("Continue").min_size(egui::vec2(90.0, 26.0)));
                 let cancel = ui.button("Cancel");
                 let enter = ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
-                if cancel.clicked()
-                    || (enter && cancel.has_focus())
-                    || ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
-                {
+                if cancel.clicked() || (enter && cancel.has_focus()) {
                     result = Some(None);
                 } else if proceed.clicked() || enter {
                     result = Some(Some(self.selected));
@@ -64,12 +69,11 @@ pub(super) fn choose(title: &str, initial: RasterFormat) -> Result<Option<Raster
     let output = result.clone();
     eframe::run_native(
         title,
-        eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
+        crate::native_options::with_viewport(
+            egui::ViewportBuilder::default()
                 .with_inner_size([520.0, 275.0])
                 .with_resizable(false),
-            ..Default::default()
-        },
+        ),
         Box::new(move |_| {
             Ok(Box::new(PickerWindow {
                 picker: FormatPicker { selected: initial },
@@ -87,6 +91,44 @@ pub(super) fn choose(title: &str, initial: RasterFormat) -> Result<Option<Raster
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_quit_and_close_cancel_the_picker_without_choosing_a_format() {
+        for key in [Key::Q, Key::W] {
+            for modifiers in [
+                Modifiers::MAC_CMD,
+                Modifiers::CTRL | Modifiers::COMMAND,
+                Modifiers::NONE,
+            ] {
+                let ctx = Context::default();
+                let mut picker = FormatPicker {
+                    selected: RasterFormat::Bmp16,
+                };
+                let mut result = None;
+                let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                    result = picker.show(ctx);
+                });
+                assert!(result.is_none());
+                let _ = ctx.run(
+                    egui::RawInput {
+                        events: vec![egui::Event::Key {
+                            key,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers,
+                        }],
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        result = picker.show(ctx);
+                    },
+                );
+                assert_eq!(result, modifiers.mac_cmd.then_some(None));
+                assert_eq!(picker.selected, RasterFormat::Bmp16);
+            }
+        }
+    }
 
     #[test]
     fn all_formats_and_bitmap_depths_are_accessible_and_cancel_is_distinct() {
