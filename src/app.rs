@@ -372,6 +372,11 @@ impl PaintApp {
 }
 
 impl eframe::App for PaintApp {
+    fn raw_input_hook(&mut self, ctx: &Context, raw_input: &mut RawInput) {
+        self.canvas_raw_input(ctx, raw_input);
+        self.modal_raw_input(ctx, raw_input);
+    }
+
     fn update(&mut self, ctx: &Context, _: &mut eframe::Frame) {
         self.poll_job();
         self.page

@@ -1,4 +1,4 @@
-use super::dialogs::{default_button, dialog_button, initial_focus};
+use super::dialogs::{default_button, dialog_button, initial_focus, numeric_input};
 use super::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -68,7 +68,8 @@ impl PaintApp {
                 ] {
                     ui.label(label);
                     let mut dimension = *pixels as f64 / factor;
-                    let response = ui.add(
+                    let response = numeric_input(
+                        ui,
                         DragValue::new(&mut dimension)
                             .range(1.0 / factor..=16384.0 / factor)
                             .speed(1.0 / factor)
@@ -162,6 +163,213 @@ fn format_utc_date(seconds: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn key(key: Key, modifiers: Modifiers) -> Event {
+        Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn app_frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) {
+        let time = ctx.input(|input| input.time) + 0.045;
+        let mut input = RawInput {
+            time: Some(time),
+            events,
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 800.0))),
+            ..Default::default()
+        };
+        eframe::App::raw_input_hook(app, ctx, &mut input);
+        let _ = ctx.run(input, |ctx| {
+            if !app.ribbon_keyboard(ctx) {
+                app.shortcut(ctx);
+            }
+            app.titlebar(ctx);
+            app.ribbon(ctx);
+            app.quick_access_below(ctx);
+            app.status(ctx);
+            app.canvas(ctx);
+            app.thumbnail(ctx);
+            app.keyboard_menu(ctx);
+            app.dialogs(ctx);
+        });
+    }
+
+    #[test]
+    fn properties_accepts_separate_digits_and_tab_without_corrupting_dimensions() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app_frame(&mut app, &ctx, Vec::new());
+        app_frame(&mut app, &ctx, vec![key(Key::E, Modifiers::CTRL)]);
+        for _ in 0..3 {
+            app_frame(&mut app, &ctx, Vec::new());
+        }
+        for digit in ["7", "2", "0"] {
+            app_frame(&mut app, &ctx, vec![Event::Text(digit.into())]);
+        }
+        assert_eq!(app.resize_w, 720);
+        app_frame(&mut app, &ctx, vec![key(Key::Tab, Modifiers::NONE)]);
+        for digit in ["5", "6", "0"] {
+            app_frame(&mut app, &ctx, vec![Event::Text(digit.into())]);
+        }
+        assert_eq!((app.resize_w, app.resize_h), (720, 560));
+        app_frame(&mut app, &ctx, vec![key(Key::Enter, Modifiers::NONE)]);
+        assert!(app.dialog.is_none());
+        assert_eq!(app.doc.image.dimensions(), (720, 560));
+    }
+
+    #[test]
+    fn properties_preserves_digits_on_both_sides_of_a_batched_tab() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app_frame(&mut app, &ctx, Vec::new());
+        app_frame(&mut app, &ctx, vec![key(Key::E, Modifiers::CTRL)]);
+        for _ in 0..3 {
+            app_frame(&mut app, &ctx, Vec::new());
+        }
+        app_frame(&mut app, &ctx, vec![Event::Text("7".into())]);
+        app_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::Text("2".into()),
+                Event::Text("0".into()),
+                key(Key::Tab, Modifiers::NONE),
+                Event::Text("5".into()),
+                Event::Text("6".into()),
+                Event::Text("0".into()),
+                key(Key::Enter, Modifiers::NONE),
+            ],
+        );
+        for _ in 0..4 {
+            app_frame(&mut app, &ctx, Vec::new());
+        }
+        assert!(app.dialog.is_none());
+        assert_eq!(app.doc.image.dimensions(), (720, 560));
+    }
+
+    #[test]
+    fn modal_numeric_tab_entry_also_preserves_resize_colors_and_print_margins() {
+        for dialog in [Dialog::Resize, Dialog::Colors, Dialog::Print] {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            app_frame(&mut app, &ctx, Vec::new());
+            match dialog {
+                Dialog::Resize => {
+                    app.action(Action::Resize, &ctx);
+                    app.aspect = false;
+                }
+                _ => app.dialog = Some(dialog),
+            }
+            for _ in 0..4 {
+                app_frame(&mut app, &ctx, Vec::new());
+            }
+            let (first, second) = match dialog {
+                Dialog::Resize => ("720", "560"),
+                Dialog::Colors => ("128", "64"),
+                Dialog::Print => ("18.5", "24.5"),
+                _ => unreachable!(),
+            };
+            app_frame(
+                &mut app,
+                &ctx,
+                vec![
+                    Event::Text(first.into()),
+                    key(Key::Tab, Modifiers::NONE),
+                    Event::Text(second.into()),
+                ],
+            );
+            for _ in 0..4 {
+                app_frame(&mut app, &ctx, Vec::new());
+            }
+            match dialog {
+                Dialog::Resize => assert_eq!((app.resize_w, app.resize_h), (720, 560)),
+                Dialog::Colors => assert_eq!(app.colors[app.active_color], [128, 64, 0, 255]),
+                Dialog::Print => {
+                    assert_eq!(app.page.margin_left_mm, 18.5);
+                    assert_eq!(app.page.margin_right_mm, 24.5);
+                }
+                _ => unreachable!(),
+            }
+            assert!(app.dialog == Some(dialog));
+            app_frame(&mut app, &ctx, vec![key(Key::Escape, Modifiers::NONE)]);
+            assert!(app.dialog.is_none());
+            assert_eq!(app.doc.image.dimensions(), (900, 600));
+        }
+    }
+
+    #[test]
+    fn escape_discards_pending_modal_typing_before_it_can_accept_the_dialog() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app_frame(&mut app, &ctx, Vec::new());
+        app_frame(&mut app, &ctx, vec![key(Key::E, Modifiers::CTRL)]);
+        for _ in 0..3 {
+            app_frame(&mut app, &ctx, Vec::new());
+        }
+        app_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::Text("720".into()),
+                key(Key::Tab, Modifiers::NONE),
+                Event::Text("560".into()),
+                key(Key::Enter, Modifiers::NONE),
+            ],
+        );
+        app_frame(&mut app, &ctx, vec![key(Key::Escape, Modifiers::NONE)]);
+        for _ in 0..4 {
+            app_frame(&mut app, &ctx, Vec::new());
+        }
+        assert!(app.dialog.is_none());
+        assert_eq!(app.doc.image.dimensions(), (900, 600));
+        assert!(!app.doc.dirty());
+    }
+
+    #[test]
+    fn properties_accepts_a_number_typed_in_the_same_batch_as_its_mouse_click() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app_frame(&mut app, &ctx, Vec::new());
+        app_frame(&mut app, &ctx, vec![key(Key::E, Modifiers::CTRL)]);
+        for _ in 0..3 {
+            app_frame(&mut app, &ctx, Vec::new());
+        }
+        let width = ctx.memory(|memory| memory.focused().unwrap());
+        app_frame(&mut app, &ctx, vec![key(Key::Tab, Modifiers::NONE)]);
+        let point = ctx.read_response(width).unwrap().rect.center();
+        app_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::Text("560".into()),
+                Event::PointerMoved(point),
+                Event::PointerButton {
+                    pos: point,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+                Event::PointerButton {
+                    pos: point,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                },
+                key(Key::A, Modifiers::CTRL | Modifiers::COMMAND),
+                Event::Text("720".into()),
+                key(Key::Enter, Modifiers::NONE),
+            ],
+        );
+        for _ in 0..3 {
+            app_frame(&mut app, &ctx, Vec::new());
+        }
+        assert!(app.dialog.is_none());
+        assert_eq!(app.doc.image.dimensions(), (720, 560));
+    }
 
     #[test]
     fn physical_units_use_each_axis_resolution() {

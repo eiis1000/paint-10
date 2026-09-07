@@ -102,17 +102,34 @@ fn prepare_modal(ctx: &Context, kind: &str) -> bool {
     escape
 }
 
+pub(in crate::app) fn numeric_input(ui: &mut Ui, value: DragValue<'_>) -> Response {
+    let id = ui.next_auto_id();
+    // Register before constructing DragValue's inner TextEdit so a Tab focus
+    // transition can select the existing number before any typing is handled.
+    if ui.is_enabled() && !ui.is_sizing_pass() {
+        ui.memory_mut(|memory| memory.interested_in_focus(id, ui.layer_id()));
+        if ui.memory(|memory| memory.has_focus(id) && !memory.had_focus_last_frame(id)) {
+            select_number(ui.ctx(), id);
+        }
+    }
+    ui.add(value)
+}
+
+fn select_number(ctx: &Context, id: Id) {
+    let mut state = TextEdit::load_state(ctx, id).unwrap_or_default();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(0),
+            egui::text::CCursor::new(usize::MAX),
+        )));
+    state.store(ctx, id);
+}
+
 pub(in crate::app) fn initial_focus(ui: &Ui, response: &Response) {
     if response.enabled() && take_initial_focus(ui) {
         response.request_focus();
-        let mut state = TextEdit::load_state(ui.ctx(), response.id).unwrap_or_default();
-        state
-            .cursor
-            .set_char_range(Some(egui::text::CCursorRange::two(
-                egui::text::CCursor::new(0),
-                egui::text::CCursor::new(usize::MAX),
-            )));
-        state.store(ui.ctx(), response.id);
+        select_number(ui.ctx(), response.id);
         ui.ctx().request_repaint();
     }
 }
@@ -190,7 +207,93 @@ pub(in crate::app) fn default_button(ui: &mut Ui, label: &str, enabled: bool) ->
 }
 
 impl PaintApp {
+    pub(in crate::app) fn modal_raw_input(&mut self, ctx: &Context, input: &mut RawInput) {
+        let key = Id::new("paint10-modal-pending-input");
+        if self.dialog.is_none() && self.pending.is_none() {
+            ctx.data_mut(|data| data.remove::<Vec<Event>>(key));
+            return;
+        }
+        if keytips::popup_open(ctx) {
+            return;
+        }
+        if input.events.iter().any(|event| {
+            matches!(event, Event::Key { key: Key::Escape, pressed: true, modifiers, .. }
+                if modifiers.is_none())
+        }) {
+            ctx.data_mut(|data| data.remove::<Vec<Event>>(key));
+            return;
+        }
+        let mut events = ctx
+            .data_mut(|data| data.remove_temp::<Vec<Event>>(key))
+            .unwrap_or_default();
+        events.append(&mut input.events);
+        let tab = events.iter().position(|event| {
+            matches!(event, Event::Key { key: Key::Tab, pressed: true, modifiers, .. }
+                if !modifiers.ctrl && !modifiers.command && !modifiers.alt)
+        });
+        let clicked_typing = events.iter().enumerate().find_map(|(index, event)| {
+            if matches!(
+                event,
+                Event::PointerButton {
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    ..
+                }
+            ) && events[index + 1..]
+                .iter()
+                .any(|event| matches!(event, Event::Text(_) | Event::Paste(_)))
+            {
+                Some(index + 1)
+            } else {
+                None
+            }
+        });
+        let typing_before_click = events.iter().enumerate().find_map(|(index, event)| {
+            if matches!(
+                event,
+                Event::PointerButton {
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    ..
+                }
+            ) && events[..index]
+                .iter()
+                .any(|event| matches!(event, Event::Text(_) | Event::Paste(_)))
+            {
+                Some(index)
+            } else {
+                None
+            }
+        });
+        let boundary = [
+            tab.map(|index| if index == 0 { 1 } else { index }),
+            clicked_typing,
+            typing_before_click,
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+        if let Some(boundary) = boundary {
+            // egui resolves Tab focus before widgets process text. Keep the
+            // preceding text in its field, then give Tab a separate pass before
+            // the following text, preserving the event order at any frame rate.
+            // A clicked DragValue also enters text mode on the following frame.
+            let remainder = events.split_off(boundary);
+            if !remainder.is_empty() {
+                ctx.data_mut(|data| data.insert_temp(key, remainder));
+                ctx.request_repaint();
+            }
+        }
+        input.events = events;
+    }
+
     pub(in crate::app) fn dialogs(&mut self, ctx: &Context) {
+        if ctx.data(|data| {
+            data.get_temp::<Vec<Event>>(Id::new("paint10-modal-pending-input"))
+                .is_some_and(|events| !events.is_empty())
+        }) {
+            ctx.request_repaint();
+        }
         let kind = if self.pending.is_some() {
             Some("Unsaved changes")
         } else {
@@ -344,7 +447,8 @@ impl PaintApp {
             .spacing(vec2(16.0, 10.0))
             .show(ui, |ui| {
                 ui.label("Horizontal:");
-                let horizontal = ui.add(
+                let horizontal = numeric_input(
+                    ui,
                     DragValue::new(&mut self.resize_w)
                         .range(1..=16384)
                         .speed(1.0),
@@ -361,13 +465,13 @@ impl PaintApp {
                 }
                 ui.end_row();
                 ui.label("Vertical:");
-                if ui
-                    .add(
-                        DragValue::new(&mut self.resize_h)
-                            .range(1..=16384)
-                            .speed(1.0),
-                    )
-                    .changed()
+                if numeric_input(
+                    ui,
+                    DragValue::new(&mut self.resize_h)
+                        .range(1..=16384)
+                        .speed(1.0),
+                )
+                .changed()
                     && self.aspect
                 {
                     self.resize_w = if self.percent {
@@ -391,7 +495,7 @@ impl PaintApp {
         ] {
             ui.horizontal(|ui| {
                 ui.label(label);
-                ui.add(DragValue::new(angle).range(-89.0..=89.0).suffix("°"));
+                numeric_input(ui, DragValue::new(angle).range(-89.0..=89.0).suffix("°"));
             });
         }
         ui.add_space(12.0);
@@ -433,7 +537,8 @@ impl PaintApp {
         });
         ui.horizontal(|ui| {
             ui.label("Angle:");
-            let angle = ui.add(
+            let angle = numeric_input(
+                ui,
                 DragValue::new(&mut self.angle)
                     .range(-180.0..=180.0)
                     .suffix("°"),
@@ -481,7 +586,7 @@ impl PaintApp {
         ui.horizontal(|ui| {
             for (i, label) in ["Red", "Green", "Blue"].into_iter().enumerate() {
                 ui.label(label);
-                let response = ui.add(DragValue::new(&mut rgb[i]));
+                let response = numeric_input(ui, DragValue::new(&mut rgb[i]));
                 if i == 0 {
                     initial_focus(ui, &response);
                 }
@@ -498,7 +603,7 @@ impl PaintApp {
                 (2, "Luminosity", 240),
             ] {
                 ui.label(label);
-                ui.add(DragValue::new(&mut state.hsl[index]).range(0..=maximum));
+                numeric_input(ui, DragValue::new(&mut state.hsl[index]).range(0..=maximum));
                 ui.end_row();
             }
         });
@@ -618,7 +723,8 @@ impl PaintApp {
             ui.label("Custom paper size (mm)");
             ui.horizontal(|ui| {
                 ui.label("Width");
-                ui.add(
+                numeric_input(
+                    ui,
                     DragValue::new(width_mm)
                         .range(0.0..=MAX_PAPER_MM)
                         .clamp_existing_to_range(false)
@@ -626,7 +732,8 @@ impl PaintApp {
                         .speed(0.5),
                 );
                 ui.label("Height");
-                ui.add(
+                numeric_input(
+                    ui,
                     DragValue::new(height_mm)
                         .range(0.0..=MAX_PAPER_MM)
                         .clamp_existing_to_range(false)
@@ -656,7 +763,7 @@ impl PaintApp {
             .enumerate()
             {
                 ui.label(label);
-                let response = ui.add(DragValue::new(value).range(0.0..=MAX_PAPER_MM));
+                let response = numeric_input(ui, DragValue::new(value).range(0.0..=MAX_PAPER_MM));
                 if i == 0 {
                     initial_focus(ui, &response);
                 }
@@ -668,16 +775,23 @@ impl PaintApp {
         ui.checkbox(&mut self.page.fit, "Fit to pages");
         if self.page.fit {
             ui.horizontal(|ui| {
-                ui.add(DragValue::new(&mut self.page.fit_across).range(1..=MAX_PAGES));
+                numeric_input(
+                    ui,
+                    DragValue::new(&mut self.page.fit_across).range(1..=MAX_PAGES),
+                );
                 ui.label("across by");
-                ui.add(DragValue::new(&mut self.page.fit_down).range(1..=MAX_PAGES));
+                numeric_input(
+                    ui,
+                    DragValue::new(&mut self.page.fit_down).range(1..=MAX_PAGES),
+                );
                 ui.label("down");
             });
         }
         if !self.page.fit {
             ui.horizontal(|ui| {
                 ui.label("Scale:");
-                ui.add(
+                numeric_input(
+                    ui,
                     DragValue::new(&mut self.page.scale)
                         .range(1.0..=500.0)
                         .suffix("%"),
@@ -774,8 +888,7 @@ impl PaintApp {
                 ui.horizontal(|ui| {
                     ui.label("Resolution:");
                     let mut dpi = self.capture_settings.resolution_dpi.unwrap_or(150);
-                    if ui
-                        .add(DragValue::new(&mut dpi).range(75..=600).suffix(" DPI"))
+                    if numeric_input(ui, DragValue::new(&mut dpi).range(75..=600).suffix(" DPI"))
                         .changed()
                     {
                         self.capture_settings.resolution_dpi = Some(dpi);
@@ -844,10 +957,16 @@ impl PaintApp {
         });
         ui.horizontal(|ui| {
             ui.label("Screen:");
-            let width = ui.add(DragValue::new(&mut self.wallpaper_size.0).range(1..=16384));
+            let width = numeric_input(
+                ui,
+                DragValue::new(&mut self.wallpaper_size.0).range(1..=16384),
+            );
             initial_focus(ui, &width);
             ui.label("×");
-            ui.add(DragValue::new(&mut self.wallpaper_size.1).range(1..=16384));
+            numeric_input(
+                ui,
+                DragValue::new(&mut self.wallpaper_size.1).range(1..=16384),
+            );
         });
         ui.horizontal(|ui| {
             if default_button(ui, "Apply…", self.job.is_none()) {
@@ -938,7 +1057,7 @@ mod tests {
                     .resizable(false)
                     .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
                     .show(ctx, |ui| {
-                        let field = ui.add(DragValue::new(value).range(1..=1000));
+                        let field = numeric_input(ui, DragValue::new(value).range(1..=1000));
                         initial_focus(ui, &field);
                         accepted |= default_button(ui, "OK", true);
                         canceled |= dialog_button(ui, "Cancel");
