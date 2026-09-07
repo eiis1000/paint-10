@@ -31,6 +31,11 @@ impl PaintApp {
                 Action::PasteFrom,
             ),
             (Modifiers::CTRL, Key::P, Action::Print),
+            (
+                Modifiers::CTRL | Modifiers::SHIFT,
+                Key::N,
+                Action::ClearPicture,
+            ),
             (Modifiers::NONE, Key::F12, Action::SaveAs),
         ];
         for (mods, key, action) in global {
@@ -59,7 +64,6 @@ impl PaintApp {
             (Modifiers::CTRL, Key::Y, Action::Redo),
             (Modifiers::CTRL | Modifiers::SHIFT, Key::Z, Action::Redo),
             (Modifiers::CTRL, Key::A, Action::SelectAll),
-            (Modifiers::CTRL | Modifiers::SHIFT, Key::N, Action::Clear),
             (Modifiers::CTRL | Modifiers::SHIFT, Key::I, Action::Invert),
         ] {
             if ctx.input_mut(|i| consume_shortcut(i, mods, key)) {
