@@ -212,6 +212,91 @@ mod tests {
     use super::*;
 
     #[test]
+    fn transparent_project_keeps_base_pixels_and_editable_objects() {
+        let mut image = RgbaImage::new(180, 100);
+        image.put_pixel(5, 5, image::Rgba([30, 80, 200, 127]));
+        let mut document = Document::from_image(image);
+        document.add_object(Object::new(
+            ObjectKind::Text {
+                text: "Caption".into(),
+                format: crate::text::TextFormat {
+                    width: 120,
+                    outline_width: 2,
+                    ..Default::default()
+                },
+            },
+            (15, 15),
+        ));
+        document.add_object(Object::new(
+            ObjectKind::Image(RgbaImage::from_pixel(
+                10,
+                10,
+                image::Rgba([200, 80, 30, 128]),
+            )),
+            (140, 70),
+        ));
+        let expected = document.composite();
+        assert_eq!(expected.get_pixel(179, 99)[3], 0);
+        assert_eq!(expected.get_pixel(5, 5).0, [30, 80, 200, 127]);
+        assert_eq!(expected.get_pixel(140, 70).0, [200, 80, 30, 128]);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("transparent.p10");
+        save(&document, &path).unwrap();
+        let loaded = load(&path).unwrap();
+        assert!(loaded.objects == document.objects);
+        assert_eq!(loaded.composite(), expected);
+    }
+
+    #[test]
+    fn outlined_aligned_rich_caption_survives_transforms_and_project_roundtrip() {
+        let mut format = crate::text::TextFormat {
+            alignment: crate::text::TextAlignment::Center,
+            outline_width: 4,
+            outline_color: [0, 0, 0, 255],
+            color: [255, 255, 255, 255],
+            size: 48.0,
+            bold: true,
+            width: 300,
+            ..Default::default()
+        };
+        format
+            .modify_style(0..4, |style| style.color = [255, 80, 80, 255])
+            .unwrap();
+        let mut object = Object::new(
+            ObjectKind::Text {
+                text: "MEME CAPTION".into(),
+                format,
+            },
+            (20, 30),
+        );
+        object.rotate_to(17.0).unwrap();
+        object.resize_rendered(350, 130).unwrap();
+        let mut document = Document::new(500, 250);
+        let index = document.add_object(object);
+        let original = document.composite();
+        document.begin();
+        let ObjectKind::Text { format, .. } = &mut document.objects[index].kind else {
+            panic!();
+        };
+        format.alignment = crate::text::TextAlignment::Right;
+        document.commit();
+        document.undo();
+        assert_eq!(document.composite(), original);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("caption.p10");
+        save(&document, &path).unwrap();
+        let loaded = load(&path).unwrap();
+        let before = document.objects[index].transform;
+        let after = loaded.objects[index].transform;
+        assert_eq!(
+            [after.xx, after.xy, after.yx, after.yy],
+            [before.xx, before.xy, before.yx, before.yy]
+        );
+        assert!(loaded.objects == document.objects);
+        assert_eq!(loaded.composite(), original);
+    }
+
+    #[test]
     fn transformed_text_roundtrips_and_old_projects_default_to_identity() {
         let mut object = Object::new(
             ObjectKind::Text {

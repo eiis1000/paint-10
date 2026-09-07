@@ -8,7 +8,53 @@ const MAX_SPANS: usize = 4096;
 const MAX_FONT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_FORMAT_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_TEXT_WIDTH: u32 = 16384;
+pub const MAX_TEXT_OUTLINE: u32 = 32;
 pub const FONT_POINT_RANGE: std::ops::RangeInclusive<f32> = 6.0..=200.0;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TextAlignment {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+/// Logical text geometry in image pixels, relative to the text content inset.
+#[derive(Clone, Debug)]
+pub struct EditorLayout {
+    pub width: f32,
+    pub height: f32,
+    pub rows: Vec<EditorRow>,
+    pub elided: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct EditorRow {
+    pub glyphs: Vec<EditorGlyph>,
+    pub left: f32,
+    pub top: f32,
+    pub width: f32,
+    pub height: f32,
+    pub baseline: f32,
+    pub ascent: f32,
+    pub ends_with_newline: bool,
+}
+
+/// One logical glyph for each original character, including invisible whitespace.
+#[derive(Clone, Debug)]
+pub struct EditorGlyph {
+    pub character: char,
+    pub character_index: usize,
+    pub x: f32,
+    pub advance: f32,
+    pub baseline: f32,
+    pub ascent: f32,
+    pub height: f32,
+}
+
+fn default_outline_color() -> Color {
+    BLACK
+}
 
 pub fn points_to_pixels(points: f32) -> f32 {
     points * 96.0 / 72.0
@@ -89,6 +135,12 @@ pub struct TextFormat {
     #[serde(default)]
     pub minimum_height: u32,
     #[serde(default)]
+    pub alignment: TextAlignment,
+    #[serde(default)]
+    pub outline_width: u32,
+    #[serde(default = "default_outline_color")]
+    pub outline_color: Color,
+    #[serde(default)]
     pub spans: Vec<TextSpan>,
 }
 
@@ -107,6 +159,9 @@ impl Default for TextFormat {
             background: None,
             width: 280,
             minimum_height: 0,
+            alignment: TextAlignment::Left,
+            outline_width: 0,
+            outline_color: BLACK,
             spans: vec![],
         }
     }
@@ -133,6 +188,20 @@ impl TextStyle {
 }
 
 impl TextFormat {
+    /// Insets shared by the editor and raster layout, including stroke antialiasing.
+    pub fn text_padding(&self) -> (u32, u32) {
+        let outline = self.outline_width.min(MAX_TEXT_OUTLINE);
+        let inset = if outline == 0 { 0 } else { outline + 1 };
+        (inset + 1, inset)
+    }
+
+    pub fn content_width(&self) -> u32 {
+        self.width
+            .clamp(10, MAX_TEXT_WIDTH)
+            .saturating_sub(self.text_padding().0 * 2)
+            .max(1)
+    }
+
     pub fn default_style_ref(&self) -> TextStyleRef<'_> {
         TextStyleRef {
             font_name: &self.font_name,
@@ -406,6 +475,11 @@ impl TextFormat {
         {
             return Err("Invalid text-box dimensions.".into());
         }
+        if self.outline_width > MAX_TEXT_OUTLINE || self.text_padding().0 * 2 >= self.width {
+            return Err(
+                "The text outline must be 0–32 pixels wide and fit inside the text box.".into(),
+            );
+        }
         validate_style(self.default_style_ref())?;
         if self.spans.len() > MAX_SPANS || self.memory_bytes() > MAX_FORMAT_BYTES {
             return Err("The text formatting exceeds the project limit.".into());
@@ -442,6 +516,71 @@ impl TextFormat {
         (layout.width, layout.height)
     }
 
+    /// Reuse the raster layout for editor hit testing and selection. Explicit
+    /// newlines belong to the preceding row; CRLF's CR is a zero-width glyph.
+    pub fn editor_layout(&self, text: &str) -> EditorLayout {
+        let layout = self.layout(text);
+        let characters: Vec<_> = text.chars().take(MAX_TEXT_CHARS).collect();
+        let (padding_x, padding_y) = self.text_padding();
+        let mut rows = Vec::with_capacity(layout.lines.len());
+        for line in &layout.lines {
+            let mut glyphs = Vec::with_capacity(line.source_range.len());
+            let mut rendered = line.glyphs.iter().peekable();
+            let mut cursor_x = line.left;
+            for character_index in line.source_range.clone() {
+                let character = characters[character_index];
+                let mut x = cursor_x;
+                let mut end = cursor_x;
+                let mut style = None;
+                while rendered
+                    .peek()
+                    .is_some_and(|glyph| glyph.source_index == character_index)
+                {
+                    let glyph = rendered.next().unwrap();
+                    if style.is_none() {
+                        x = glyph.x;
+                        style = Some(&layout.styles[glyph.style]);
+                    }
+                    end = glyph.x + glyph.advance;
+                }
+                let source_style;
+                let style = match style {
+                    Some(style) => style,
+                    None => {
+                        source_style = RenderStyle::new(self.style_ref_at(character_index));
+                        &source_style
+                    }
+                };
+                glyphs.push(EditorGlyph {
+                    character,
+                    character_index,
+                    x: x - padding_x as f32,
+                    advance: (end - x).max(0.0),
+                    baseline: line.baseline - padding_y as f32,
+                    ascent: style.ascent,
+                    height: style.ascent + style.descent + style.gap,
+                });
+                cursor_x = end;
+            }
+            rows.push(EditorRow {
+                glyphs,
+                left: line.left - padding_x as f32,
+                top: line.top - padding_y as f32,
+                width: (cursor_x - line.left).max(0.0),
+                height: line.height,
+                baseline: line.baseline - padding_y as f32,
+                ascent: line.baseline - line.top,
+                ends_with_newline: line.ends_with_newline,
+            });
+        }
+        EditorLayout {
+            width: self.content_width() as f32,
+            height: (layout.height as f32 - 2.0 * padding_y as f32).max(0.0),
+            rows,
+            elided: layout.elided,
+        }
+    }
+
     fn layout(&self, text: &str) -> TextLayout<'_> {
         let mut styles = vec![RenderStyle::new(self.default_style_ref())];
         styles.extend(
@@ -452,8 +591,10 @@ impl TextFormat {
         );
         let mut chars = vec![];
         let mut span_index = 0;
+        let mut source_count = 0;
         let mut source = text.chars().take(MAX_TEXT_CHARS).enumerate().peekable();
         while let Some((index, character)) = source.next() {
+            source_count = index + 1;
             while span_index < self.spans.len() && self.spans[span_index].range.end <= index {
                 span_index += 1;
             }
@@ -474,16 +615,24 @@ impl TextFormat {
                 chars.extend((0..4).map(|_| StyledChar {
                     character: ' ',
                     style,
+                    source_index: index,
                 }));
             } else {
-                chars.push(StyledChar { character, style });
+                chars.push(StyledChar {
+                    character,
+                    style,
+                    source_index: index,
+                });
             }
         }
         let width = self.width.clamp(10, MAX_TEXT_WIDTH);
+        let (padding_x, padding_y) = self.text_padding();
+        let content_width = self.content_width() as f32;
         let max_height = (MAX_PIXELS / width as u64).min(16384) as u32;
         let mut lines = vec![];
-        let mut top = 0.0;
+        let mut top = padding_y as f32;
         let mut start = 0;
+        let mut source_start = 0;
         while start <= chars.len() && top + 4.0 < max_height as f32 {
             let paragraph_end = chars[start..]
                 .iter()
@@ -491,12 +640,18 @@ impl TextFormat {
                 .map_or(chars.len(), |offset| start + offset);
             let blank_style = chars.get(start).map_or(0, |c| c.style);
             if start == paragraph_end {
-                let line = layout_line(&[], &styles, blank_style, top);
+                let mut line = layout_line(&[], &styles, blank_style, top);
+                let source_end = chars
+                    .get(paragraph_end)
+                    .map_or(source_count, |c| c.source_index);
+                line.source_range = source_start..source_end;
+                line.ends_with_newline = paragraph_end < chars.len();
+                source_start = source_end + usize::from(line.ends_with_newline);
                 top += line.height;
                 lines.push(line);
             } else {
                 while start < paragraph_end && top + 4.0 < max_height as f32 {
-                    let end = wrap_end(&chars, start, paragraph_end, &styles, width as f32 - 2.0);
+                    let end = wrap_end(&chars, start, paragraph_end, &styles, content_width);
                     let mut visible_end = end;
                     if end < paragraph_end {
                         while visible_end > start
@@ -505,15 +660,20 @@ impl TextFormat {
                             visible_end -= 1;
                         }
                     }
-                    let line = layout_line(&chars[start..visible_end], &styles, blank_style, top);
+                    let mut line =
+                        layout_line(&chars[start..visible_end], &styles, blank_style, top);
                     top += line.height;
-                    lines.push(line);
                     start = end;
                     if start < paragraph_end {
                         while start < paragraph_end && chars[start].character.is_whitespace() {
                             start += 1;
                         }
                     }
+                    let source_end = chars.get(start).map_or(source_count, |c| c.source_index);
+                    line.source_range = source_start..source_end;
+                    line.ends_with_newline = start == paragraph_end && paragraph_end < chars.len();
+                    source_start = source_end + usize::from(line.ends_with_newline);
+                    lines.push(line);
                 }
             }
             if paragraph_end == chars.len() {
@@ -521,11 +681,24 @@ impl TextFormat {
             }
             start = paragraph_end + 1;
         }
+        let factor = match self.alignment {
+            TextAlignment::Left => 0.0,
+            TextAlignment::Center => 0.5,
+            TextAlignment::Right => 1.0,
+        };
+        for line in &mut lines {
+            let offset = padding_x as f32 - 1.0 + (content_width - line.width).max(0.0) * factor;
+            line.left += offset;
+            for glyph in &mut line.glyphs {
+                glyph.x += offset;
+            }
+        }
         TextLayout {
             styles,
             lines,
             width,
-            height: (top + 4.0)
+            elided: source_start < source_count || text.chars().count() > MAX_TEXT_CHARS,
+            height: (top + padding_y as f32 + 4.0)
                 .ceil()
                 .max(self.minimum_height as f32)
                 .max(1.0)
@@ -534,12 +707,39 @@ impl TextFormat {
     }
 
     pub fn render(&self, text: &str) -> RgbaImage {
-        let layout = self.layout(text);
-        let mut image = RgbaImage::from_pixel(
-            layout.width,
-            layout.height,
-            Rgba(self.background.unwrap_or([0, 0, 0, 0])),
+        let background = self.background.unwrap_or([0, 0, 0, 0]);
+        if self.outline_width == 0 {
+            return self.render_glyphs(text, background);
+        }
+        let foreground = self.render_glyphs(text, [0, 0, 0, 0]);
+        let mut image =
+            RgbaImage::from_pixel(foreground.width(), foreground.height(), Rgba(background));
+        paint_text_outline(
+            &mut image,
+            &foreground,
+            self.outline_width.min(MAX_TEXT_OUTLINE),
+            self.outline_color,
         );
+        crate::document::overlay(&mut image, &foreground, 0, 0);
+        image
+    }
+
+    /// The stroke underlay at the same positions as render, without text fill or background.
+    pub fn render_outline(&self, text: &str) -> RgbaImage {
+        let foreground = self.render_glyphs(text, [0, 0, 0, 0]);
+        let mut image = RgbaImage::new(foreground.width(), foreground.height());
+        paint_text_outline(
+            &mut image,
+            &foreground,
+            self.outline_width.min(MAX_TEXT_OUTLINE),
+            self.outline_color,
+        );
+        image
+    }
+
+    fn render_glyphs(&self, text: &str, background: Color) -> RgbaImage {
+        let layout = self.layout(text);
+        let mut image = RgbaImage::from_pixel(layout.width, layout.height, Rgba(background));
         for line in &layout.lines {
             for glyph in &line.glyphs {
                 let style = &layout.styles[glyph.style];
@@ -580,6 +780,84 @@ impl TextFormat {
             }
         }
         image
+    }
+}
+
+/// A separable squared-distance transform produces round outlines in linear time.
+fn paint_text_outline(output: &mut RgbaImage, foreground: &RgbaImage, radius: u32, color: Color) {
+    if radius == 0 || color[3] == 0 || !foreground.pixels().any(|pixel| pixel[3] > 0) {
+        return;
+    }
+    let width = foreground.width() as usize;
+    let height = foreground.height() as usize;
+    let reach = radius as i32 + 1;
+    let mut distance = vec![f32::INFINITY; width * height];
+    for y in 0..height {
+        let mut previous = -reach;
+        for x in 0..width {
+            if foreground.get_pixel(x as u32, y as u32)[3] > 0 {
+                previous = x as i32;
+            }
+            let delta = x as i32 - previous;
+            if delta < reach {
+                distance[y * width + x] = (delta * delta) as f32;
+            }
+        }
+        let mut next = width as i32 + reach;
+        for x in (0..width).rev() {
+            if foreground.get_pixel(x as u32, y as u32)[3] > 0 {
+                next = x as i32;
+            }
+            let delta = next - x as i32;
+            if delta < reach {
+                distance[y * width + x] = distance[y * width + x].min((delta * delta) as f32);
+            }
+        }
+    }
+    let mut sites = Vec::<usize>::with_capacity(height);
+    let mut starts = Vec::<f64>::with_capacity(height);
+    for x in 0..width {
+        sites.clear();
+        starts.clear();
+        for y in 0..height {
+            let value = f64::from(distance[y * width + x]);
+            if !value.is_finite() {
+                continue;
+            }
+            let mut start = f64::NEG_INFINITY;
+            while let Some(&previous) = sites.last() {
+                let previous_value = f64::from(distance[previous * width + x]);
+                start = (value + (y * y) as f64 - previous_value - (previous * previous) as f64)
+                    / (2.0 * (y - previous) as f64);
+                if start > *starts.last().unwrap() {
+                    break;
+                }
+                sites.pop();
+                starts.pop();
+            }
+            if sites.is_empty() {
+                start = f64::NEG_INFINITY;
+            }
+            sites.push(y);
+            starts.push(start);
+        }
+        if sites.is_empty() {
+            continue;
+        }
+        let mut site = 0;
+        for y in 0..height {
+            while site + 1 < sites.len() && starts[site + 1] <= y as f64 {
+                site += 1;
+            }
+            let delta = y as f32 - sites[site] as f32;
+            let distance = (distance[sites[site] * width + x] + delta * delta).sqrt();
+            let coverage = (reach as f32 - distance).clamp(0.0, 1.0);
+            if coverage > 0.0 {
+                let mut pixel = color;
+                pixel[3] = (f32::from(color[3]) * coverage).round() as u8;
+                blend(output, x as i32, y as i32, pixel);
+            }
+        }
     }
 }
 
@@ -679,6 +957,7 @@ impl<'a> RenderStyle<'a> {
 struct StyledChar {
     character: char,
     style: usize,
+    source_index: usize,
 }
 
 struct PositionedGlyph {
@@ -686,12 +965,18 @@ struct PositionedGlyph {
     style: usize,
     x: f32,
     advance: f32,
+    source_index: usize,
 }
 
 struct TextLine {
     glyphs: Vec<PositionedGlyph>,
     baseline: f32,
     height: f32,
+    width: f32,
+    left: f32,
+    top: f32,
+    source_range: Range<usize>,
+    ends_with_newline: bool,
 }
 
 struct TextLayout<'a> {
@@ -699,6 +984,7 @@ struct TextLayout<'a> {
     lines: Vec<TextLine>,
     width: u32,
     height: u32,
+    elided: bool,
 }
 
 fn advance(
@@ -712,7 +998,9 @@ fn advance(
     let kern = previous.map_or(0.0, |(previous, previous_style)| {
         let prior = &styles[previous_style];
         if prior.size == style.size
-            && (previous_style == character.style || prior.source.font == style.source.font)
+            && (previous_style == character.style
+                || (prior.source.font == style.source.font
+                    && prior.source.font_index == style.source.font_index))
         {
             scaled.kern(previous, id)
         } else {
@@ -784,6 +1072,7 @@ fn layout_line(
                 style: character.style,
                 x,
                 advance: step,
+                source_index: character.source_index,
             };
             x += step;
             previous = Some((id, character.style));
@@ -794,12 +1083,256 @@ fn layout_line(
         glyphs,
         baseline: top + ascent,
         height: ascent + descent + gap,
+        left: 1.0,
+        top,
+        source_range: 0..0,
+        ends_with_newline: false,
+        width: x - 1.0
+            + chars
+                .last()
+                .map_or(0.0, |character| styles[character.style].overhang()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editor_rows_preserve_original_character_indices_through_wrapping_and_whitespace() {
+        for text in [
+            "",
+            "Caption test",
+            "a\tword  another\tword\n",
+            "\r\n\nalpha\r\nbeta\r\n",
+            "   many    spaces   and a longwordwithoutbreaks   ",
+            "é猫\tUnicode\r\nβγ\n",
+            "\t\t\t",
+        ] {
+            for width in [30, 80, 280] {
+                for alignment in [
+                    TextAlignment::Left,
+                    TextAlignment::Center,
+                    TextAlignment::Right,
+                ] {
+                    let format = TextFormat {
+                        width,
+                        alignment,
+                        outline_width: 2,
+                        ..Default::default()
+                    };
+                    let layout = format.editor_layout(text);
+                    assert!(!layout.rows.is_empty());
+                    assert!(!layout.elided);
+                    let mut reconstructed = String::new();
+                    let mut index = 0;
+                    for row in &layout.rows {
+                        assert!(row.height > 0.0);
+                        for glyph in &row.glyphs {
+                            assert_eq!(glyph.character_index, index, "{text:?}, width {width}");
+                            reconstructed.push(glyph.character);
+                            index += 1;
+                        }
+                        if row.ends_with_newline {
+                            reconstructed.push('\n');
+                            index += 1;
+                        }
+                    }
+                    assert_eq!(reconstructed, text);
+                    assert_eq!(index, text.chars().count());
+                    assert!(!layout.rows.last().unwrap().ends_with_newline);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn editor_geometry_uses_the_exact_raster_positions_for_mixed_caption_styles() {
+        let mut format = TextFormat {
+            size: 32.0,
+            width: 240,
+            outline_width: 3,
+            alignment: TextAlignment::Center,
+            ..Default::default()
+        };
+        let text = "Caption test\nWrapped words";
+        format
+            .modify_style(8..12, |style| {
+                style.size = 54.0;
+                style.bold = true;
+            })
+            .unwrap();
+        format
+            .modify_style(2..7, |style| {
+                style.italic = true;
+                style.underline = true;
+            })
+            .unwrap();
+        let raster = format.layout(text);
+        let editor = format.editor_layout(text);
+        let (padding_x, padding_y) = format.text_padding();
+        assert_eq!(editor.rows.len(), raster.lines.len());
+        for (row, line) in editor.rows.iter().zip(&raster.lines) {
+            assert_eq!(row.top + padding_y as f32, line.top);
+            assert_eq!(row.baseline + padding_y as f32, line.baseline);
+            for raster_glyph in &line.glyphs {
+                let glyph = row
+                    .glyphs
+                    .iter()
+                    .find(|glyph| glyph.character_index == raster_glyph.source_index)
+                    .unwrap();
+                assert_eq!(glyph.x + padding_x as f32, raster_glyph.x);
+                assert!((glyph.advance - raster_glyph.advance).abs() < 0.001);
+                assert_eq!(glyph.baseline + padding_y as f32, line.baseline);
+                assert_eq!(glyph.ascent, raster.styles[raster_glyph.style].ascent);
+            }
+            let end = row
+                .glyphs
+                .last()
+                .map_or(row.left, |glyph| glyph.x + glyph.advance);
+            assert!((row.left + row.width - end).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn editor_tabs_aggregate_spaces_and_crlf_keeps_a_zero_width_carriage_return() {
+        let format = TextFormat::default();
+        let tab = format.editor_layout("a\tb\r\n");
+        let spaces = format.editor_layout("a    b\r\n");
+        assert_eq!(tab.rows[0].glyphs.len(), 4);
+        assert_eq!(tab.rows[0].glyphs[2].x, spaces.rows[0].glyphs[5].x);
+        assert_eq!(tab.rows[0].glyphs[3].character, '\r');
+        assert_eq!(tab.rows[0].glyphs[3].advance, 0.0);
+        assert!(tab.rows[0].ends_with_newline);
+        assert!(tab.rows[1].glyphs.is_empty());
+    }
+
+    #[test]
+    fn white_bold_glyph_coverage_never_corrupts_its_fill_color() {
+        let format = TextFormat {
+            width: 420,
+            size: 62.0,
+            bold: true,
+            color: [255, 255, 255, 255],
+            ..Default::default()
+        };
+        let raster = format.render("CAPTION");
+        assert!(raster.pixels().any(|pixel| (1..255).contains(&pixel[3])));
+        assert!(raster
+            .pixels()
+            .filter(|pixel| pixel[3] > 0)
+            .all(|pixel| pixel.0[..3] == [255, 255, 255]));
+    }
+
+    #[test]
+    fn alignment_moves_wrapped_rich_text_without_changing_its_styles() {
+        let mut format = TextFormat {
+            font: epaint_default_fonts::HACK_REGULAR.to_vec(),
+            size: 28.0,
+            width: 160,
+            ..Default::default()
+        };
+        format
+            .modify_style(2..4, |style| {
+                style.color = [255, 0, 0, 255];
+                style.bold = true;
+            })
+            .unwrap();
+        let text = "ABCD EFGH IJKL";
+        let left = format.layout(text);
+        assert!(left.lines.len() > 1);
+        for (alignment, factor) in [(TextAlignment::Center, 0.5), (TextAlignment::Right, 1.0)] {
+            let aligned = TextFormat {
+                alignment,
+                ..format.clone()
+            };
+            let layout = aligned.layout(text);
+            assert_eq!(layout.lines.len(), left.lines.len());
+            for (plain, moved) in left.lines.iter().zip(&layout.lines) {
+                let offset = (format.content_width() as f32 - plain.width) * factor;
+                assert!(offset > 0.0);
+                for (before, after) in plain.glyphs.iter().zip(&moved.glyphs) {
+                    assert_eq!(before.id, after.id);
+                    assert_eq!(before.style, after.style);
+                    assert!((after.x - before.x - offset).abs() < 0.001);
+                }
+            }
+            let image = aligned.render(text);
+            assert!(image
+                .pixels()
+                .any(|pixel| pixel[0] == 255 && pixel[1] == 0 && pixel[3] > 0));
+        }
+    }
+
+    #[test]
+    fn outlined_captions_preserve_rich_fill_and_fit_their_bounds() {
+        let mut format = TextFormat {
+            font: epaint_default_fonts::HACK_REGULAR.to_vec(),
+            size: 52.0,
+            width: 420,
+            color: [255, 255, 255, 255],
+            outline_width: 5,
+            bold: true,
+            ..Default::default()
+        };
+        format
+            .modify_style(0..4, |style| style.color = [255, 60, 60, 255])
+            .unwrap();
+        for alignment in [
+            TextAlignment::Left,
+            TextAlignment::Center,
+            TextAlignment::Right,
+        ] {
+            format.alignment = alignment;
+            let image = format.render("MEME\nCAPTION");
+            let outline = format.render_outline("MEME\nCAPTION");
+            assert_eq!(outline.dimensions(), image.dimensions());
+            assert!(image.pixels().any(|pixel| pixel.0 == [255, 60, 60, 255]));
+            assert!(image.pixels().any(|pixel| pixel.0 == [255, 255, 255, 255]));
+            assert!(image.pixels().any(|pixel| pixel.0 == BLACK));
+            assert!(outline
+                .pixels()
+                .all(|pixel| pixel[3] == 0 || pixel.0[..3] == BLACK[..3]));
+            assert!(image
+                .enumerate_pixels()
+                .filter(|(x, y, _)| *x == 0
+                    || *y == 0
+                    || *x + 1 == image.width()
+                    || *y + 1 == image.height())
+                .all(|(_, _, pixel)| pixel[3] == 0));
+            let foreground = format.render_glyphs("MEME\nCAPTION", [0, 0, 0, 0]);
+            assert!(outline
+                .pixels()
+                .zip(foreground.pixels())
+                .any(|(stroke, fill)| stroke[3] > 0 && fill[3] == 0));
+            let mut composed = outline;
+            crate::document::overlay(&mut composed, &foreground, 0, 0);
+            assert_eq!(composed, image);
+        }
+    }
+
+    #[test]
+    fn round_outline_distance_and_opacity_are_bounded() {
+        let mut foreground = RgbaImage::new(11, 11);
+        foreground.put_pixel(5, 5, Rgba([255, 255, 255, 255]));
+        let mut outline = RgbaImage::new(11, 11);
+        paint_text_outline(&mut outline, &foreground, 2, [0, 0, 0, 128]);
+        assert_eq!(outline.get_pixel(3, 5)[3], 128);
+        assert!((1..128).contains(&outline.get_pixel(3, 3)[3]));
+        assert_eq!(outline.get_pixel(2, 5)[3], 0);
+        assert_eq!(outline.get_pixel(2, 2)[3], 0);
+        let invalid = TextFormat {
+            outline_width: MAX_TEXT_OUTLINE + 1,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+        let too_narrow = TextFormat {
+            width: 10,
+            outline_width: 10,
+            ..Default::default()
+        };
+        assert!(too_narrow.validate().is_err());
+    }
 
     #[test]
     fn minimum_text_box_height_preserves_background_and_is_bounded() {
@@ -1000,10 +1533,16 @@ mod tests {
         value.as_object_mut().unwrap().remove("spans");
         value.as_object_mut().unwrap().remove("minimum_height");
         value.as_object_mut().unwrap().remove("font_index");
+        value.as_object_mut().unwrap().remove("alignment");
+        value.as_object_mut().unwrap().remove("outline_width");
+        value.as_object_mut().unwrap().remove("outline_color");
         let mut format: TextFormat = serde_json::from_value(value).unwrap();
         assert!(format.spans.is_empty());
         assert_eq!(format.minimum_height, 0);
         assert_eq!(format.font_index, 0);
+        assert_eq!(format.alignment, TextAlignment::Left);
+        assert_eq!(format.outline_width, 0);
+        assert_eq!(format.outline_color, BLACK);
         let mut old_style = serde_json::to_value(format.default_style()).unwrap();
         old_style.as_object_mut().unwrap().remove("font_index");
         let old_style: TextStyle = serde_json::from_value(old_style).unwrap();
