@@ -65,6 +65,15 @@ impl PaintApp {
         if self.text_edit.is_some() {
             return;
         }
+        if self.shape_draft.is_some()
+            && self.gesture.is_none()
+            && ctx
+                .memory(|memory| memory.focused().is_none() || memory.has_focus(Id::new("canvas")))
+            && ctx.input_mut(|input| consume_shortcut(input, Modifiers::NONE, Key::Enter))
+        {
+            self.commit_shape();
+            return;
+        }
         for (mods, key, action) in [
             (Modifiers::CTRL, Key::Z, Action::Undo),
             (Modifiers::CTRL, Key::Y, Action::Redo),
@@ -179,6 +188,200 @@ fn shortcut_modifiers_match(pressed: Modifiers, expected: Modifiers) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shape_frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) -> FullOutput {
+        let mut input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 850.0))),
+            time: Some(ctx.cumulative_pass_nr() as f64 / 30.0),
+            events,
+            ..Default::default()
+        };
+        eframe::App::raw_input_hook(app, ctx, &mut input);
+        ctx.run(input, |ctx| {
+            if !app.ribbon_keyboard(ctx) {
+                app.shortcut(ctx);
+            }
+            app.titlebar(ctx);
+            app.ribbon(ctx);
+            app.quick_access_below(ctx);
+            app.status(ctx);
+            app.canvas(ctx);
+            app.keyboard_menu(ctx);
+            app.dialogs(ctx);
+        })
+    }
+
+    fn enter(modifiers: Modifiers) -> Event {
+        Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn enter_applies_a_drawn_shape_before_subsequent_color_changes() {
+        let context = Context::default();
+        context.enable_accesskit();
+        let mut app = PaintApp::new_with_context(&context, false);
+        app.doc = Document::new(240, 180);
+        app.colors = [[210, 40, 60, 255], WHITE];
+        let mut output = shape_frame(&mut app, &context, vec![]);
+        for _ in 0..2 {
+            output = shape_frame(&mut app, &context, vec![]);
+        }
+        let bounds = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some(Tool::Rectangle.name()))
+            .unwrap()
+            .1
+            .bounds()
+            .unwrap();
+        let tool_position = pos2(
+            ((bounds.x0 + bounds.x1) / 2.0) as f32,
+            ((bounds.y0 + bounds.y1) / 2.0) as f32,
+        );
+        shape_frame(
+            &mut app,
+            &context,
+            vec![
+                Event::PointerMoved(tool_position),
+                Event::PointerButton {
+                    pos: tool_position,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+                Event::PointerButton {
+                    pos: tool_position,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+        assert_eq!(app.tool, Tool::Rectangle);
+        let start = app.canvas_rect.min + vec2(20.5, 20.5) * app.zoom;
+        let end = app.canvas_rect.min + vec2(100.5, 80.5) * app.zoom;
+        shape_frame(
+            &mut app,
+            &context,
+            vec![
+                Event::PointerMoved(start),
+                Event::PointerButton {
+                    pos: start,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+                Event::PointerMoved(end),
+                Event::PointerButton {
+                    pos: end,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+        assert!(app.shape_draft.is_some());
+        assert!(app.gesture.is_none());
+        let drawn = app.doc.composite();
+        assert!(drawn.pixels().any(|pixel| pixel.0 == app.colors[0]));
+        shape_frame(&mut app, &context, vec![enter(Modifiers::NONE)]);
+        assert!(app.shape_draft.is_none());
+        app.colors[0] = [30, 100, 220, 255];
+        for _ in 0..2 {
+            shape_frame(&mut app, &context, vec![]);
+        }
+        assert!(app.rendered == drawn);
+        app.doc.undo();
+        assert!(app.doc.composite().pixels().all(|pixel| pixel.0 == WHITE));
+        assert!(!app.doc.can_undo());
+    }
+
+    #[test]
+    fn shape_enter_leaves_modified_keys_and_focused_controls_available() {
+        for (modifiers, focus) in [
+            (Modifiers::SHIFT, None),
+            (Modifiers::CTRL, None),
+            (Modifiers::NONE, Some(Id::new("ribbon-control"))),
+        ] {
+            let context = Context::default();
+            let mut app = PaintApp::new_with_context(&context, false);
+            app.doc.begin();
+            app.start_shape_draft(
+                ShapeGeometry::Primitive {
+                    tool: Tool::Rectangle,
+                    start: (20, 20),
+                    end: (60, 60),
+                },
+                0,
+            );
+            let _ = context.run(
+                RawInput {
+                    events: vec![enter(modifiers)],
+                    ..Default::default()
+                },
+                |context| {
+                    if let Some(focus) = focus {
+                        context.memory_mut(|memory| memory.request_focus(focus));
+                    }
+                    app.shortcut(context);
+                    assert!(context.input(|input| input.key_pressed(Key::Enter)));
+                },
+            );
+            assert!(app.shape_draft.is_some());
+        }
+    }
+
+    #[test]
+    fn shape_enter_does_not_bypass_modal_popup_or_active_drag_ownership() {
+        for mode in ["dialog", "pending", "popup", "drag"] {
+            let context = Context::default();
+            let mut app = PaintApp::new_with_context(&context, false);
+            app.doc.begin();
+            app.start_shape_draft(
+                ShapeGeometry::Primitive {
+                    tool: Tool::Rectangle,
+                    start: (20, 20),
+                    end: (60, 60),
+                },
+                0,
+            );
+            match mode {
+                "dialog" => app.dialog = Some(Dialog::Properties),
+                "pending" => app.pending = Some(Action::New),
+                "drag" => {
+                    app.gesture = Some(Gesture::MoveShape {
+                        start: (20, 20),
+                        original: app.shape_draft.clone().unwrap(),
+                    });
+                }
+                _ => {}
+            }
+            let _ = context.run(
+                RawInput {
+                    events: vec![enter(Modifiers::NONE)],
+                    ..Default::default()
+                },
+                |context| {
+                    if mode == "popup" {
+                        context.memory_mut(|memory| memory.open_popup(Id::new("shape-popup")));
+                    }
+                    app.shortcut(context);
+                    assert!(context.input(|input| input.key_pressed(Key::Enter)));
+                },
+            );
+            assert!(app.shape_draft.is_some(), "{mode}");
+        }
+    }
 
     #[test]
     fn native_command_and_physical_control_keep_exact_shortcut_variants() {

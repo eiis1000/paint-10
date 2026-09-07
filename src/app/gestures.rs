@@ -8,6 +8,48 @@ struct CanvasPointer {
 }
 
 impl PaintApp {
+    /// Complete a pointer interaction before a subsequent toolbar or keyboard
+    /// action is resolved. egui visits the ribbon before the canvas, regardless
+    /// of the order in which the operating system delivered their input events.
+    pub(in crate::app) fn canvas_raw_input(&self, ctx: &Context, input: &mut RawInput) {
+        let pending = Id::new("paint10_canvas_deferred_input");
+        let mut events = ctx
+            .data_mut(|data| data.remove_temp::<Vec<(Event, f64)>>(pending))
+            .unwrap_or_default();
+        let time = input
+            .time
+            .unwrap_or_else(|| ctx.input(|state| state.time) + input.predicted_dt as f64);
+        events.extend(
+            std::mem::take(&mut input.events)
+                .into_iter()
+                .map(|event| (event, time)),
+        );
+        let boundary = if self.dialog.is_some() || self.pending.is_some() {
+            events.len()
+        } else {
+            events
+                .iter()
+                .position(|(event, _)| is_drawing_button_release(event))
+                .map_or(events.len(), |index| index + 1)
+        };
+        let deferred = events.split_off(boundary);
+        if let Some((event, time)) = events.last() {
+            // A slow repaint must not turn two clicks received together into
+            // separate single clicks. Advance time to the last processed event.
+            input.time = Some(*time);
+            if !deferred.is_empty() {
+                if let Event::PointerButton { modifiers, .. } = event {
+                    input.modifiers = *modifiers;
+                }
+            }
+        }
+        input.events = events.into_iter().map(|(event, _)| event).collect();
+        if !deferred.is_empty() {
+            ctx.data_mut(|data| data.insert_temp(pending, deferred));
+            ctx.request_repaint();
+        }
+    }
+
     pub(in crate::app) fn text_geometry_gesture(&self) -> bool {
         matches!(
             self.gesture,
@@ -895,29 +937,37 @@ mod tests {
     use super::*;
 
     fn pointer_app_frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) -> FullOutput {
-        ctx.run(
-            RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 850.0))),
-                time: Some(ctx.cumulative_pass_nr() as f64 / 30.0),
-                events,
-                ..Default::default()
-            },
-            |ctx| {
-                if !app.ribbon_keyboard(ctx) {
-                    app.shortcut(ctx);
-                }
-                app.titlebar(ctx);
-                app.ribbon(ctx);
-                app.quick_access_below(ctx);
-                app.status(ctx);
-                app.canvas(ctx);
-                app.keyboard_menu(ctx);
-                app.dialogs(ctx);
-                if app.refresh {
-                    ctx.request_repaint();
-                }
-            },
-        )
+        pointer_app_frame_at(app, ctx, events, ctx.cumulative_pass_nr() as f64 / 30.0)
+    }
+
+    fn pointer_app_frame_at(
+        app: &mut PaintApp,
+        ctx: &Context,
+        events: Vec<Event>,
+        time: f64,
+    ) -> FullOutput {
+        let mut input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 850.0))),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        eframe::App::raw_input_hook(app, ctx, &mut input);
+        ctx.run(input, |ctx| {
+            if !app.ribbon_keyboard(ctx) {
+                app.shortcut(ctx);
+            }
+            app.titlebar(ctx);
+            app.ribbon(ctx);
+            app.quick_access_below(ctx);
+            app.status(ctx);
+            app.canvas(ctx);
+            app.keyboard_menu(ctx);
+            app.dialogs(ctx);
+            if app.refresh {
+                ctx.request_repaint();
+            }
+        })
     }
 
     fn coalesced_click(position: Pos2, button: PointerButton) -> Vec<Event> {
@@ -1156,6 +1206,145 @@ mod tests {
                     .pixels()
                     .all(|pixel| pixel.0 == background));
             }
+        }
+    }
+
+    #[test]
+    fn a_ribbon_tool_click_after_release_cannot_change_the_preceding_drag() {
+        for button in [PointerButton::Primary, PointerButton::Secondary] {
+            for newer_canvas_click in [false, true] {
+                let context = Context::default();
+                context.enable_accesskit();
+                let mut app = PaintApp::new_with_context(&context, false);
+                app.doc = Document::new(240, 180);
+                app.zoom = 2.0;
+                app.set_tool(Tool::Oval);
+                app.colors = [[38, 73, 82, 255], [160, 120, 90, 255]];
+                app.outline = PaintStyle::None;
+                app.fill = PaintStyle::Solid;
+                let mut output = pointer_app_frame(&mut app, &context, vec![]);
+                for _ in 0..2 {
+                    output = pointer_app_frame(&mut app, &context, vec![]);
+                }
+                let brush_bounds = output
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .find(|(_, node)| node.label() == Some("Brushes"))
+                    .unwrap()
+                    .1
+                    .bounds()
+                    .unwrap();
+                let brush_position = pos2(
+                    ((brush_bounds.x0 + brush_bounds.x1) / 2.0) as f32,
+                    ((brush_bounds.y0 + brush_bounds.y1) / 2.0) as f32,
+                );
+                let point = |x: f32, y: f32| app.canvas_rect.min + vec2(x, y) * app.zoom;
+                let start = point(20.5, 20.5);
+                let middle = point(70.5, 55.5);
+                let end = point(180.5, 140.5);
+                let next_stroke = point(210.5, 160.5);
+                let mut press = coalesced_click(start, button);
+                press.pop();
+                press.push(Event::PointerMoved(middle));
+                pointer_app_frame(&mut app, &context, press);
+                assert!(app.gesture.is_some());
+                let mut release_and_switch = vec![
+                    Event::PointerMoved(end),
+                    Event::PointerButton {
+                        pos: end,
+                        button,
+                        pressed: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                ];
+                release_and_switch.extend(coalesced_click(brush_position, PointerButton::Primary));
+                pointer_app_frame(&mut app, &context, release_and_switch);
+                if newer_canvas_click {
+                    pointer_app_frame(
+                        &mut app,
+                        &context,
+                        coalesced_click(next_stroke, PointerButton::Primary),
+                    );
+                }
+                for _ in 0..3 {
+                    pointer_app_frame(&mut app, &context, vec![]);
+                }
+                let mut expected = RgbaImage::from_pixel(240, 180, Rgba(WHITE));
+                let slot = usize::from(button == PointerButton::Secondary);
+                d::styled_shape(
+                    &mut expected,
+                    Tool::Oval,
+                    (20, 20),
+                    (180, 140),
+                    app.tool_sizes[3],
+                    Some((app.colors[slot], PaintStyle::None)),
+                    Some((app.colors[1 - slot], PaintStyle::Solid)),
+                );
+                if newer_canvas_click {
+                    let mut with_next_stroke = expected.clone();
+                    d::stamp(
+                        &mut with_next_stroke,
+                        (210, 160),
+                        app.tool_sizes[0],
+                        app.colors[0],
+                        app.brush,
+                    );
+                    assert!(app.rendered == with_next_stroke);
+                    app.doc.undo();
+                    assert!(app.doc.composite() == expected);
+                } else {
+                    assert!(
+                        app.rendered == expected,
+                        "{button:?}: full oval and no brush trail"
+                    );
+                }
+                assert_eq!(app.tool, Tool::Brush);
+                assert!(app.gesture.is_none());
+                assert!(app.shape_draft.is_none());
+                app.doc.undo();
+                assert!(app.doc.composite().pixels().all(|pixel| pixel.0 == WHITE));
+                assert!(!app.doc.can_undo());
+            }
+        }
+    }
+
+    #[test]
+    fn batched_double_click_reopens_text_even_when_repaints_are_slow() {
+        for frame_delay in [0.03, 0.7] {
+            let context = Context::default();
+            let mut app = PaintApp::new_with_context(&context, false);
+            app.doc = Document::new(400, 200);
+            let index = app.doc.add_object(Object::new(
+                ObjectKind::Text {
+                    text: "Hello world".into(),
+                    format: Default::default(),
+                },
+                (20, 20),
+            ));
+            app.doc.mark_saved();
+            app.set_tool(Tool::Select);
+            for frame in 0..3 {
+                pointer_app_frame_at(&mut app, &context, vec![], frame as f64 * frame_delay);
+            }
+            let position = app.canvas_rect.min + vec2(45.5, 30.5) * app.zoom;
+            let mut events = coalesced_click(position, PointerButton::Primary);
+            events.extend(coalesced_click(position, PointerButton::Primary));
+            pointer_app_frame_at(&mut app, &context, events, 3.0 * frame_delay);
+            for frame in 4..7 {
+                pointer_app_frame_at(&mut app, &context, vec![], frame as f64 * frame_delay);
+            }
+            assert!(
+                app.text_edit.is_some(),
+                "double-click should reopen text with {frame_delay}s frames"
+            );
+            let state = app.text_edit.as_ref().unwrap();
+            assert_eq!(state.index, Some(index));
+            assert_eq!(state.text, "Hello world");
+            assert!(!app.doc.dirty());
         }
     }
 
