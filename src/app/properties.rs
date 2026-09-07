@@ -174,7 +174,7 @@ mod tests {
         }
     }
 
-    fn app_frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) {
+    fn app_frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) -> FullOutput {
         let time = ctx.input(|input| input.time) + 0.045;
         let mut input = RawInput {
             time: Some(time),
@@ -183,7 +183,7 @@ mod tests {
             ..Default::default()
         };
         eframe::App::raw_input_hook(app, ctx, &mut input);
-        let _ = ctx.run(input, |ctx| {
+        ctx.run(input, |ctx| {
             if !app.ribbon_keyboard(ctx) {
                 app.shortcut(ctx);
             }
@@ -195,7 +195,76 @@ mod tests {
             app.thumbnail(ctx);
             app.keyboard_menu(ctx);
             app.dialogs(ctx);
-        });
+        })
+    }
+
+    #[test]
+    fn closing_properties_preserves_the_following_zoom_reset_click() {
+        for sequence in 0..4 {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            app.zoom = 8.0;
+            let output = app_frame(&mut app, &ctx, Vec::new());
+            let reset = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == "800%" => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .expect("visible zoom reset button");
+            app_frame(&mut app, &ctx, vec![key(Key::E, Modifiers::CTRL)]);
+            for _ in 0..3 {
+                app_frame(&mut app, &ctx, Vec::new());
+            }
+            app_frame(&mut app, &ctx, vec![Event::Text("1920".into())]);
+            app_frame(&mut app, &ctx, vec![key(Key::Tab, Modifiers::NONE)]);
+            let click = vec![
+                Event::PointerMoved(reset),
+                Event::PointerButton {
+                    pos: reset,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+                Event::PointerButton {
+                    pos: reset,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                },
+            ];
+            let mut closing = Vec::new();
+            if sequence == 1 || sequence == 3 {
+                // The last number and Enter leave the click in the modal queue.
+                closing.push(Event::Text("1080".into()));
+            } else {
+                app_frame(&mut app, &ctx, vec![Event::Text("1080".into())]);
+            }
+            closing.push(key(Key::Enter, Modifiers::NONE));
+            if sequence == 2 {
+                app_frame(&mut app, &ctx, closing);
+                app_frame(&mut app, &ctx, click);
+            } else {
+                closing.extend(click);
+                if sequence == 3 {
+                    closing.push(key(Key::PageDown, Modifiers::CTRL));
+                }
+                app_frame(&mut app, &ctx, closing);
+            }
+            for _ in 0..4 {
+                app_frame(&mut app, &ctx, Vec::new());
+            }
+            assert!(app.dialog.is_none());
+            assert_eq!(app.doc.image.dimensions(), (1920, 1080));
+            if sequence != 3 {
+                assert_eq!(app.zoom, 1.0, "close/click sequence {sequence}");
+                app_frame(&mut app, &ctx, vec![key(Key::PageDown, Modifiers::CTRL)]);
+            }
+            assert_eq!(app.zoom, 0.5);
+        }
     }
 
     #[test]
@@ -302,7 +371,14 @@ mod tests {
             &ctx,
             vec![key(Key::E, Modifiers::CTRL), Event::Text("96".into())],
         );
-        app_frame(&mut app, &ctx, vec![key(Key::Escape, Modifiers::NONE)]);
+        app_frame(
+            &mut app,
+            &ctx,
+            vec![
+                key(Key::G, Modifiers::CTRL),
+                key(Key::Escape, Modifiers::NONE),
+            ],
+        );
         for _ in 0..4 {
             app_frame(&mut app, &ctx, Vec::new());
         }
@@ -310,6 +386,7 @@ mod tests {
         assert_eq!(app.doc.image.dimensions(), (900, 600));
         assert!(!app.doc.dirty());
         assert!(app.text_edit.is_none());
+        assert!(!app.grid);
     }
 
     #[test]
