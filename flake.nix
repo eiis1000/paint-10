@@ -45,6 +45,36 @@
           && !(nixpkgs.lib.hasPrefix "result-" name)
           && nixpkgs.lib.cleanSourceFilter path type;
       };
+      mkPaint =
+        pkgs:
+        pkgs.rustPlatform.buildRustPackage {
+          pname = "paint-10";
+          version = "0.1.0";
+          src = source;
+          cargoLock.lockFile = ./Cargo.lock;
+          nativeBuildInputs = [
+            pkgs.wrapGAppsHook3
+            pkgs.pkg-config
+          ];
+          buildInputs = [
+            pkgs.gtk3
+            pkgs.gsettings-desktop-schemas
+          ];
+          postInstall = ''
+            install -Dm644 assets/paint-10.desktop "$out/share/applications/paint-10.desktop"
+            install -Dm644 assets/paint-10.svg "$out/share/icons/hicolor/scalable/apps/paint-10.svg"
+          '';
+          preFixup = ''
+            gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath (desktopLibs pkgs)})
+            gappsWrapperArgs+=(--prefix PATH : ${pkgs.lib.makeBinPath (captureTools pkgs)})
+          '';
+          meta = {
+            description = "A native Rust drawing application with the Windows 10 Paint workflow";
+            license = pkgs.lib.licenses.mit;
+            platforms = systems;
+            mainProgram = "paint-10";
+          };
+        };
     in
     {
       devShells = eachSystem (
@@ -92,37 +122,12 @@
         let
           pkgs = import nixpkgs { inherit system; };
         in
-        {
-          default = pkgs.rustPlatform.buildRustPackage {
-            pname = "paint-10";
-            version = "0.1.0";
-            src = source;
-            cargoLock.lockFile = ./Cargo.lock;
-            nativeBuildInputs = [
-              pkgs.wrapGAppsHook3
-              pkgs.pkg-config
-            ];
-            buildInputs = [
-              pkgs.gtk3
-              pkgs.gsettings-desktop-schemas
-            ];
-            postInstall = ''
-              install -Dm644 assets/paint-10.desktop "$out/share/applications/paint-10.desktop"
-              install -Dm644 assets/paint-10.svg "$out/share/icons/hicolor/scalable/apps/paint-10.svg"
-            '';
-            preFixup = ''
-              gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath (desktopLibs pkgs)})
-              gappsWrapperArgs+=(--prefix PATH : ${pkgs.lib.makeBinPath (captureTools pkgs)})
-            '';
-            meta = {
-              description = "A native Rust drawing application with the Windows 10 Paint workflow";
-              license = pkgs.lib.licenses.mit;
-              platforms = systems;
-              mainProgram = "paint-10";
-            };
-          };
+        rec {
+          paint-10 = mkPaint pkgs;
+          default = paint-10;
         }
       );
+      overlays.default = final: _prev: { paint-10 = mkPaint final; };
       checks = eachSystem (
         system:
         let

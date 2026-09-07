@@ -68,10 +68,28 @@ impl Default for QuickAccess {
 }
 
 fn settings_path() -> Option<PathBuf> {
-    let directory = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+    let directory = settings_directory(std::env::consts::OS, |name| std::env::var_os(name))?;
     Some(directory.join("paint-10/preferences.json"))
+}
+
+fn settings_directory(
+    platform: &str,
+    variable: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    let absolute = |name: &str| {
+        variable(name)
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+    };
+    if let Some(directory) = absolute("XDG_CONFIG_HOME") {
+        return Some(directory);
+    }
+    match platform {
+        "windows" => absolute("APPDATA")
+            .or_else(|| absolute("USERPROFILE").map(|home| home.join("AppData/Roaming"))),
+        "macos" => absolute("HOME").map(|home| home.join("Library/Application Support")),
+        _ => absolute("HOME").map(|home| home.join(".config")),
+    }
 }
 
 fn read_preferences() -> Preferences {
@@ -140,4 +158,48 @@ pub fn save_quick_access(quick_access: &QuickAccess) -> Result<(), String> {
     let mut preferences = read_preferences();
     preferences.quick_access = quick_access.clone();
     write_preferences(&preferences)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn platform_preferences_use_native_directories_and_absolute_xdg_overrides() {
+        let directory = tempfile::tempdir().unwrap();
+        let home = directory.path().join("user");
+        let roaming = directory.path().join("roaming");
+        let override_path = directory.path().join("portable-config");
+        for (platform, expected) in [
+            ("linux", home.join(".config")),
+            ("macos", home.join("Library/Application Support")),
+            ("windows", roaming.clone()),
+        ] {
+            let variables = |name: &str| match name {
+                "HOME" | "USERPROFILE" => Some(home.clone().into_os_string()),
+                "APPDATA" => Some(roaming.clone().into_os_string()),
+                "XDG_CONFIG_HOME" => Some("relative/ignored".into()),
+                _ => None,
+            };
+            assert_eq!(settings_directory(platform, variables), Some(expected));
+            assert_eq!(
+                settings_directory(platform, |name| {
+                    if name == "XDG_CONFIG_HOME" {
+                        Some(override_path.clone().into_os_string())
+                    } else {
+                        variables(name)
+                    }
+                }),
+                Some(override_path.clone())
+            );
+        }
+        assert_eq!(
+            settings_directory("windows", |name| {
+                (name == "USERPROFILE").then(|| home.clone().into_os_string())
+            }),
+            Some(home.join("AppData/Roaming"))
+        );
+        assert!(settings_directory("linux", |_| None).is_none());
+        assert!(settings_directory("windows", |_| Some("relative".into())).is_none());
+    }
 }

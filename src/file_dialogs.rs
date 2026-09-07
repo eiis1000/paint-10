@@ -1,7 +1,12 @@
 //! Save dialogs report both the destination and the chosen file format.
 //!
-//! GTK runs on the main thread of a small helper mode in this executable. That
-//! keeps its thread ownership independent of rfd's private GTK thread for Open.
+//! Each platform's save flow runs on the main thread of a helper process. Linux
+//! uses GTK's format selector. Windows and macOS choose the format in a small
+//! eframe window before opening the native rfd destination dialog, since rfd
+//! does not return the selected file filter (and BMP depths share an extension).
+
+#[cfg(any(not(target_os = "linux"), test))]
+mod format_picker;
 
 use crate::raster_io::RasterFormat;
 use serde::{Deserialize, Serialize};
@@ -24,6 +29,7 @@ pub struct SaveChoice {
 struct SaveRequest {
     initial_path: Option<PathBuf>,
     initial_format: RasterFormat,
+    title: String,
 }
 
 /// This can be called from eframe's UI thread, regardless of prior rfd use.
@@ -31,75 +37,71 @@ pub fn save_dialog(
     initial_path: Option<&Path>,
     initial_format: RasterFormat,
 ) -> Result<Option<SaveChoice>, String> {
+    save_dialog_with_title(initial_path, initial_format, "Save As — Paint 10")
+}
+
+pub fn save_dialog_with_title(
+    initial_path: Option<&Path>,
+    initial_format: RasterFormat,
+    title: &str,
+) -> Result<Option<SaveChoice>, String> {
+    let request = SaveRequest {
+        initial_path: initial_path.map(Path::to_path_buf),
+        initial_format,
+        title: title.to_owned(),
+    };
+    let bytes = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > MAX_REQUEST_BYTES {
+        return Err("The destination path is too long.".into());
+    }
+    let executable = helper_executable()?;
+    let mut child = Command::new(executable)
+        .arg(HELPER_ARGUMENT)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Could not open Save As: {error}"))?;
+    let write_result = child
+        .stdin
+        .take()
+        .ok_or("Save As input pipe is unavailable.".to_string())
+        .and_then(|mut stdin| {
+            stdin
+                .write_all(&bytes)
+                .map_err(|error| format!("Could not initialize Save As: {error}"))
+        });
+    if let Err(error) = write_result {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr)
+            .chars()
+            .take(1200)
+            .collect::<String>();
+        return Err(format!("Save As could not open: {}", detail.trim()));
+    }
+    if output.stdout.len() as u64 > MAX_REQUEST_BYTES {
+        return Err("Save As returned an invalid response.".into());
+    }
+    serde_json::from_slice::<Result<Option<SaveChoice>, String>>(&output.stdout)
+        .map_err(|error| format!("Could not read the Save As result: {error}"))?
+}
+
+fn helper_executable() -> Result<PathBuf, String> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     #[cfg(target_os = "linux")]
-    {
-        let request = SaveRequest {
-            initial_path: initial_path.map(Path::to_path_buf),
-            initial_format,
-        };
-        let bytes = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
-        if bytes.len() as u64 > MAX_REQUEST_BYTES {
-            return Err("The destination path is too long.".into());
-        }
-        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-        let mut child = Command::new(executable)
-            .arg(HELPER_ARGUMENT)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("Could not open Save As: {error}"))?;
-        let write_result = child
-            .stdin
-            .take()
-            .ok_or("Save As input pipe is unavailable.".to_string())
-            .and_then(|mut stdin| {
-                stdin
-                    .write_all(&bytes)
-                    .map_err(|error| format!("Could not initialize Save As: {error}"))
-            });
-        if let Err(error) = write_result {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(error);
-        }
-        let output = child
-            .wait_with_output()
-            .map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            let detail = String::from_utf8_lossy(&output.stderr)
-                .chars()
-                .take(1200)
-                .collect::<String>();
-            return Err(format!("Save As could not open: {}", detail.trim()));
-        }
-        if output.stdout.len() as u64 > MAX_REQUEST_BYTES {
-            return Err("Save As returned an invalid response.".into());
-        }
-        serde_json::from_slice::<Result<Option<SaveChoice>, String>>(&output.stdout)
-            .map_err(|error| format!("Could not read the Save As result: {error}"))?
+    if !executable.exists() {
+        // Cargo and package upgrades can replace the binary while Paint is
+        // running. The proc link still opens this process's executable inode.
+        return Ok(PathBuf::from("/proc/self/exe"));
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let mut dialog = rfd::FileDialog::new()
-            .set_title("Save As — Paint 10")
-            .add_filter(initial_format.label(), initial_format.extensions());
-        if let Some(path) = initial_path {
-            if let Some(parent) = path.parent() {
-                dialog = dialog.set_directory(parent);
-            }
-            dialog = dialog.set_file_name(suggested_filename(
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("Untitled"),
-                initial_format,
-            ));
-        }
-        Ok(dialog.save_file().map(|path| SaveChoice {
-            format: RasterFormat::from_path(&path).unwrap_or(initial_format),
-            path,
-        }))
-    }
+    Ok(executable)
 }
 
 /// Call before starting eframe. Some(status) means the helper request was handled.
@@ -168,7 +170,7 @@ fn native_save_dialog(request: SaveRequest) -> Result<Option<SaveChoice>, String
     use gtk::prelude::*;
     gtk::init().map_err(|error| format!("Could not initialize the file dialog: {error}"))?;
     let dialog = gtk::FileChooserDialog::with_buttons(
-        Some("Save As — Paint 10"),
+        Some(&request.title),
         None::<&gtk::Window>,
         gtk::FileChooserAction::Save,
         &[
@@ -275,8 +277,27 @@ fn native_save_dialog(request: SaveRequest) -> Result<Option<SaveChoice>, String
 }
 
 #[cfg(not(target_os = "linux"))]
-fn native_save_dialog(_: SaveRequest) -> Result<Option<SaveChoice>, String> {
-    Err("The GTK save helper is only used on Linux.".into())
+fn native_save_dialog(request: SaveRequest) -> Result<Option<SaveChoice>, String> {
+    let Some(format) = format_picker::choose(&request.title, request.initial_format)? else {
+        return Ok(None);
+    };
+    let mut dialog = rfd::FileDialog::new()
+        .set_title(&request.title)
+        .add_filter(format.label(), format.extensions());
+    if let Some(path) = request.initial_path.as_deref() {
+        if let Some(parent) = path.parent() {
+            dialog = dialog.set_directory(parent);
+        }
+        dialog = dialog.set_file_name(suggested_filename(
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("Untitled"),
+            format,
+        ));
+    } else {
+        dialog = dialog.set_file_name(suggested_filename("Untitled", format));
+    }
+    Ok(dialog.save_file().map(|path| resolve_choice(path, format)))
 }
 
 #[cfg(test)]
@@ -312,5 +333,57 @@ mod tests {
         assert_eq!(choice.format, RasterFormat::BmpMono);
         let choice = resolve_choice(PathBuf::from("editable.p10"), RasterFormat::Png);
         assert_eq!(choice.format, RasterFormat::Project);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn helper_reexecutes_after_its_running_executable_is_deleted() {
+        const TEST: &str =
+            "file_dialogs::tests::helper_reexecutes_after_its_running_executable_is_deleted";
+        const FIXTURE: &str = "PAINT_10_TEST_DELETED_EXECUTABLE";
+        const PROBE: &str = "PAINT_10_TEST_HELPER_PROBE";
+        const NAME: &str = "paint10-deleted-helper-fixture";
+        if std::env::var_os(PROBE).is_some() {
+            assert_eq!(
+                helper_executable().unwrap(),
+                PathBuf::from("/proc/self/exe")
+            );
+            return;
+        }
+        if let Some(path) = std::env::var_os(FIXTURE).map(PathBuf::from) {
+            assert_eq!(path.file_name(), Some(std::ffi::OsStr::new(NAME)));
+            assert_eq!(std::env::current_exe().unwrap(), path);
+            std::fs::remove_file(&path).unwrap();
+            assert!(!path.exists());
+            let output = Command::new(helper_executable().unwrap())
+                .args(["--exact", TEST])
+                .env_remove(FIXTURE)
+                .env(PROBE, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let executable = std::env::current_exe().unwrap();
+        assert_eq!(helper_executable().unwrap(), executable);
+        let directory = tempfile::tempdir().unwrap();
+        let copy = directory.path().join(NAME);
+        std::fs::copy(executable, &copy).unwrap();
+        let output = Command::new(&copy)
+            .args(["--exact", TEST])
+            .env(FIXTURE, &copy)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!copy.exists());
     }
 }

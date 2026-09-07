@@ -102,3 +102,48 @@ This starts Paint 10 on a private Xvfb display with its own D-Bus session, GTK s
 ## Source layout
 
 `src/lib.rs` exposes the document model, raster tools, text rendering, project format, image codecs, metadata and printing. The binary owns `src/app/`, whose modules separate gestures, selections, text editing, ribbon controls, dialogs, keyboard commands and file operations. `src/icons/` contains vector artwork without a dependency on symbol fonts. The small vendored egui-winit patch preserves image paste and Paint's modified clipboard shortcuts; its rationale and upstream licenses are included alongside the source.
+
+## Windows, macOS, and portable exports
+
+The Rust application targets Linux, Windows, and macOS. Linux has been built and exercised locally; the Windows and macOS native builds are covered by the checked-in [build workflow](.github/workflows/build.yml), which must run on those systems before their results can be claimed. With a Rust toolchain and the platform's C/C++ build tools installed:
+
+```sh
+cargo build --locked --release
+cargo test --locked --all-targets
+```
+
+The executable is `target/release/paint-10` on Linux/macOS and `target/release/paint-10.exe` on Windows. Windows requires the Visual Studio C++ build tools; macOS requires Xcode Command Line Tools. On Linux outside Nix, install GTK 3 development files, `pkg-config`, and X11/Wayland/OpenGL development libraries. The workflow lists the Ubuntu packages used for its Linux build.
+
+Linux Save As uses GTK's native format selector. Windows and macOS first show all eleven formats, including each BMP color depth, then open the native destination dialog. This keeps BMP depth explicit even though the variants share `.bmp`. Preferences use `%APPDATA%` on Windows, `~/Library/Application Support` on macOS, and `~/.config` on Linux; an absolute `XDG_CONFIG_HOME` overrides those locations.
+
+File → **Save a copy…** writes another file while preserving the current filename and saved revision. **Save selection as…** exports only the selected pixels or object. Both offer the existing raster and project formats. PNG, TIFF, WebP, and icons preserve RGBA pixels; GIF supports a transparent palette entry; JPEG and BMP composite transparency over white. Opening transparent images retains their alpha. Saving a `.p10` copy retains the document's editable objects.
+
+Scanner/camera capture, wallpaper, and email attachment integration currently use Linux services. On Windows/macOS, those hardware/desktop integrations are unavailable; Print offers a printable PDF to save and print using a PDF application. Drawing, editing, image/project files, page layout, and PDF generation use the shared Rust implementation.
+
+## Use from a NixOS flake
+
+The flake exports `packages.<system>.paint-10` and an identical `default`, for `x86_64-linux` and `aarch64-linux`. Add this checkout or its repository as a flake input, then include the package in a NixOS module:
+
+```nix
+{
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.paint10.url = "path:/path/to/paint";
+  # For a remote checkout, replace the path input with its actual Git URL.
+
+  outputs = inputs@{ nixpkgs, ... }: {
+    nixosConfigurations.my-machine = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        ./configuration.nix
+        ({ pkgs, ... }: {
+          environment.systemPackages = [
+            inputs.paint10.packages.${pkgs.system}.paint-10
+          ];
+        })
+      ];
+    };
+  };
+}
+```
+
+Alternatively, add `inputs.paint10.overlays.default` to `nixpkgs.overlays` and install `pkgs.paint-10`. The overlay builds against the consuming package set. The package includes runtime wrappers, a desktop entry, and the application icon; installing it does not activate any scanner, camera, or desktop operation. Use `nix build .#paint-10` to build the named package locally.
