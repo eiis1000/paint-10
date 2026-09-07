@@ -240,6 +240,9 @@ pub fn encode(image: &RgbaImage, format: RasterFormat) -> Result<Vec<u8>, String
     if let Some(depth) = format.bmp_depth() {
         return encode_bmp(image, depth);
     }
+    if format == RasterFormat::Tiff {
+        return encode_tiff(image).map_err(|error| error.to_string());
+    }
     if format == RasterFormat::Icon && (image.width() > 256 || image.height() > 256) {
         return Err("Windows icons must be no larger than 256 × 256 pixels.".into());
     }
@@ -255,6 +258,22 @@ pub fn encode(image: &RgbaImage, format: RasterFormat) -> Result<Vec<u8>, String
     raster
         .write_to(&mut bytes, image_format)
         .map_err(|error| error.to_string())?;
+    Ok(bytes.into_inner())
+}
+
+fn encode_tiff(image: &RgbaImage) -> tiff::TiffResult<Vec<u8>> {
+    let mut bytes = Cursor::new(Vec::new());
+    {
+        let mut encoder = tiff::encoder::TiffEncoder::new(&mut bytes)?;
+        let mut picture =
+            encoder.new_image::<tiff::encoder::colortype::RGBA8>(image.width(), image.height())?;
+        // tiff 0.9's RGBA color type does not describe its fourth channel.
+        // Our RGB values are unpremultiplied, so TIFF requires straight alpha.
+        picture
+            .encoder()
+            .write_tag(tiff::tags::Tag::ExtraSamples, &[2_u16][..])?;
+        picture.write_data(image.as_raw())?;
+    }
     Ok(bytes.into_inner())
 }
 
@@ -552,6 +571,40 @@ mod tests {
             assert!(
                 (actual.y - resolution.y).abs() < 0.1,
                 "{format:?}: {actual:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tiff_identifies_straight_alpha_and_keeps_it_when_dpi_changes() {
+        let image = RgbaImage::from_fn(16, 16, |x, y| {
+            Rgba([x as u8 * 17, y as u8 * 17, 91, (x + y * 16) as u8])
+        });
+        let resolution = Resolution {
+            x: 300.125,
+            y: 150.5,
+        };
+        for bytes in [
+            encode(&image, RasterFormat::Tiff).unwrap(),
+            encode_with_resolution(&image, RasterFormat::Tiff, resolution).unwrap(),
+        ] {
+            let mut decoder = tiff::decoder::Decoder::new(Cursor::new(&bytes)).unwrap();
+            assert_eq!(
+                decoder
+                    .get_tag_u32_vec(tiff::tags::Tag::ExtraSamples)
+                    .unwrap(),
+                [2]
+            );
+            assert_eq!(decode_bytes(&bytes).unwrap(), image);
+            let updated = metadata::write_resolution(bytes, ImageFormat::Tiff, resolution).unwrap();
+            assert_eq!(metadata::read_resolution(&updated), Some(resolution));
+            assert_eq!(decode_bytes(&updated).unwrap(), image);
+            let mut decoder = tiff::decoder::Decoder::new(Cursor::new(updated)).unwrap();
+            assert_eq!(
+                decoder
+                    .get_tag_u32_vec(tiff::tags::Tag::ExtraSamples)
+                    .unwrap(),
+                [2]
             );
         }
     }
