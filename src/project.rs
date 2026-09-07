@@ -6,6 +6,10 @@ use std::{
     path::Path,
 };
 
+const MAX_PROJECT_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_OBJECT_BYTES: usize = 128 * 1024 * 1024;
+const MAX_OBJECTS: usize = 1000;
+
 #[derive(Serialize, Deserialize)]
 struct Project {
     version: u32,
@@ -20,6 +24,17 @@ struct Project {
 }
 
 pub fn save(doc: &Document, path: &Path) -> Result<(), String> {
+    doc.resolution.validate()?;
+    if !valid_size(doc.image.width(), doc.image.height()) {
+        return Err("The project canvas exceeds the allocation limit.".into());
+    }
+    let mut object_bytes = 0usize;
+    for object in &doc.objects {
+        object_bytes += validate_object(object)?;
+    }
+    if doc.objects.len() > MAX_OBJECTS || object_bytes > MAX_OBJECT_BYTES {
+        return Err("Project objects exceed the 128 MB or 1,000 object limit. Export a picture or reduce the number of editable objects.".into());
+    }
     let data = Project {
         version: 1,
         mono: doc.mono,
@@ -29,9 +44,33 @@ pub fn save(doc: &Document, path: &Path) -> Result<(), String> {
     };
     let mut out = vec![];
     out.extend(b"PAINT10\0");
-    let mut encoder = flate2::write::ZlibEncoder::new(out, flate2::Compression::default());
+    let mut encoder = BoundedWriter {
+        inner: flate2::write::ZlibEncoder::new(out, flate2::Compression::default()),
+        remaining: MAX_PROJECT_BYTES,
+    };
     serde_json::to_writer(&mut encoder, &data).map_err(|e| e.to_string())?;
-    atomic_write(path, &encoder.finish().map_err(|e| e.to_string())?)
+    atomic_write(path, &encoder.inner.finish().map_err(|e| e.to_string())?)
+}
+
+/// Keep save and load limits symmetric without allocating the JSON in memory.
+struct BoundedWriter<W> {
+    inner: W,
+    remaining: u64,
+}
+
+impl<W: Write> Write for BoundedWriter<W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() as u64 > self.remaining {
+            return Err(std::io::Error::other("Project exceeds the 256 MB limit."));
+        }
+        let written = self.inner.write(bytes)?;
+        self.remaining -= written as u64;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 pub fn load(path: &Path) -> Result<Document, String> {
@@ -43,10 +82,10 @@ pub fn load(path: &Path) -> Result<Document, String> {
     }
     let mut bytes = vec![];
     flate2::read::ZlibDecoder::new(file)
-        .take(256 * 1024 * 1024 + 1)
+        .take(MAX_PROJECT_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
-    if bytes.len() > 256 * 1024 * 1024 {
+    if bytes.len() as u64 > MAX_PROJECT_BYTES {
         return Err("Project exceeds the 256 MB limit.".into());
     }
     let data: Project =
@@ -111,7 +150,7 @@ fn deserialize_objects<'de, D: serde::Deserializer<'de>>(
             let mut bytes = 0;
             while let Some(object) = sequence.next_element::<Object>()? {
                 bytes += validate_object(&object).map_err(serde::de::Error::custom)?;
-                if objects.len() >= 1000 || bytes > 128 * 1024 * 1024 {
+                if objects.len() >= MAX_OBJECTS || bytes > MAX_OBJECT_BYTES {
                     return Err(serde::de::Error::custom(
                         "Project objects exceed the 128 MB or 1,000 object limit.",
                     ));
@@ -170,6 +209,35 @@ pub mod pixels {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_saves_preserve_the_existing_project() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("drawing.p10");
+        let mut document = Document::new(2, 2);
+        save(&document, &path).unwrap();
+        let saved = std::fs::read(&path).unwrap();
+        document.objects =
+            vec![Object::new(ObjectKind::Image(RgbaImage::new(1, 1)), (0, 0)); MAX_OBJECTS + 1];
+        assert!(save(&document, &path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), saved);
+        document.objects.truncate(1);
+        document.objects[0].scale = f32::NAN;
+        assert!(save(&document, &path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), saved);
+        assert!(load(&path).is_ok());
+    }
+
+    #[test]
+    fn serialization_stops_at_the_loaders_size_limit() {
+        let mut writer = BoundedWriter {
+            inner: Vec::new(),
+            remaining: 3,
+        };
+        writer.write_all(b"abc").unwrap();
+        assert!(writer.write_all(b"d").is_err());
+        assert_eq!(writer.inner, b"abc");
+    }
     use crate::document::{ObjectKind, BLACK};
     #[test]
     fn editable_objects_roundtrip() {
@@ -224,6 +292,21 @@ mod tests {
 
     #[test]
     fn invalid_object_data_fails_closed_before_rendering() {
+        fn write_malformed_fixture(doc: &Document, path: &Path) {
+            let fixture = Project {
+                version: 1,
+                mono: doc.mono,
+                resolution: doc.resolution,
+                image: doc.image.clone(),
+                objects: doc.objects.clone(),
+            };
+            let mut encoder = flate2::write::ZlibEncoder::new(
+                b"PAINT10\0".to_vec(),
+                flate2::Compression::default(),
+            );
+            serde_json::to_writer(&mut encoder, &fixture).unwrap();
+            std::fs::write(path, encoder.finish().unwrap()).unwrap();
+        }
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("invalid.p10");
         let bad_formats = [
@@ -252,7 +335,8 @@ mod tests {
                 angle: 0.,
                 color_key: None,
             });
-            save(&doc, &path).unwrap();
+            assert!(save(&doc, &path).is_err());
+            write_malformed_fixture(&doc, &path);
             assert!(load(&path).is_err());
         }
         let mut doc = Document::new(8, 8);
@@ -263,7 +347,8 @@ mod tests {
             angle: 0.,
             color_key: None,
         });
-        save(&doc, &path).unwrap();
+        assert!(save(&doc, &path).is_err());
+        write_malformed_fixture(&doc, &path);
         assert!(load(&path).is_err());
     }
 }
