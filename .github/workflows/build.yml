@@ -38,6 +38,8 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
+      - name: Test native clipboard shortcut patch
+        run: cargo test --locked -p egui-winit --lib paint10_clipboard_tests
       - run: cargo build --locked --release
       - uses: actions/upload-artifact@v4
         with:

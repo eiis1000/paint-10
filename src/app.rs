@@ -2,16 +2,21 @@ mod canvas;
 mod chrome;
 mod commands;
 mod dialogs;
+mod file_menu;
 mod files;
 mod gestures;
 mod jobs;
 mod keyboard;
+mod keytips;
 mod properties;
 mod ribbon;
+mod ribbon_controls;
+mod ribbon_layout;
 mod selection;
 mod shapes;
 mod shortcuts;
 mod text_editing;
+mod text_preview;
 mod thumbnail;
 mod transforms;
 
@@ -30,6 +35,8 @@ use std::{borrow::Cow, path::PathBuf};
 
 const RIBBON: Color32 = Color32::from_rgb(245, 246, 247);
 const BLUE: Color32 = Color32::from_rgb(25, 121, 202);
+const MIN_ZOOM: f32 = 0.125;
+const MAX_ZOOM: f32 = 32.0;
 
 #[derive(Clone, Copy)]
 enum Action {
@@ -135,7 +142,13 @@ enum Gesture {
     ResizeShape {
         bounds: Region,
         original: ShapeDraft,
+        start: Point,
         handle: usize,
+    },
+    LineEndpoint {
+        start: Point,
+        original: ShapeDraft,
+        endpoint: usize,
     },
 }
 
@@ -147,6 +160,7 @@ pub struct PaintApp {
     tool: Tool,
     brush: Brush,
     size: u32,
+    tool_sizes: [u32; 4],
     colors: [Color; 2],
     active_color: usize,
     custom_colors: Vec<Color>,
@@ -189,6 +203,7 @@ pub struct PaintApp {
     resize_h: u32,
     percent: bool,
     aspect: bool,
+    pixel_resize: bool,
     skew_x: f32,
     skew_y: f32,
     angle: f32,
@@ -196,10 +211,8 @@ pub struct PaintApp {
     unit: u8,
     prop_mono: bool,
     canvas_rect: Rect,
+    canvas_alpha: bool,
     fullscreen: bool,
-    ribbon_keys: Option<keyboard::RibbonKeys>,
-    alt_was_down: bool,
-    alt_used: bool,
     keyboard_context_menu: bool,
     preview: bool,
     page: crate::printing::PageSettings,
@@ -264,6 +277,7 @@ impl PaintApp {
             tool: Tool::Brush,
             brush: Brush::Round,
             size: 3,
+            tool_sizes: [3, 1, 8, 3],
             colors: [BLACK, WHITE],
             active_color: 0,
             custom_colors: if load_environment {
@@ -322,6 +336,7 @@ impl PaintApp {
             resize_h: 600,
             percent: false,
             aspect: true,
+            pixel_resize: false,
             skew_x: 0.,
             skew_y: 0.,
             angle: 0.,
@@ -329,10 +344,8 @@ impl PaintApp {
             unit: 0,
             prop_mono: false,
             canvas_rect: Rect::NOTHING,
+            canvas_alpha: false,
             fullscreen: false,
-            ribbon_keys: None,
-            alt_was_down: false,
-            alt_used: false,
             keyboard_context_menu: false,
             preview: false,
             page: Default::default(),

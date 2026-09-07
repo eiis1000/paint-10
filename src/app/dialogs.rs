@@ -72,7 +72,7 @@ fn prepare_modal(ctx: &Context, kind: &str) -> bool {
     let previous = ctx
         .data(|data| data.get_temp::<ModalKeys>(modal_key()))
         .unwrap_or_default();
-    let popup = ctx.memory(|memory| memory.any_popup_open());
+    let popup = keytips::popup_open(ctx);
     let focused_button = ctx
         .memory(|memory| memory.focused())
         .is_some_and(|id| previous.buttons.contains(&id));
@@ -381,6 +381,8 @@ impl PaintApp {
                 ui.end_row();
             });
         ui.checkbox(&mut self.aspect, "Maintain aspect ratio");
+        ui.checkbox(&mut self.pixel_resize, "Keep hard pixel edges (pixel art)")
+            .on_hover_text("Use nearest-neighbor scaling to preserve the exact palette. Leave off for smoother photographs.");
         ui.separator();
         ui.strong("Skew (Degrees)");
         for (label, angle) in [

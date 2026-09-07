@@ -1,3 +1,5 @@
+use super::ribbon_controls::{self as controls, Scope};
+use super::ribbon_layout::Group;
 use super::*;
 
 pub(in crate::app) const PALETTE: [[u8; 3]; 20] = [
@@ -60,9 +62,11 @@ fn ribbon_focus(ui: &Ui, response: &Response) {
     }
 }
 
-fn ribbon_menu_button<R>(
+pub(super) fn ribbon_menu_button<R>(
     ui: &mut Ui,
     label: &str,
+    keys: &str,
+    popup_scope: &'static str,
     icon: Option<Icon>,
     contents: impl FnOnce(&mut Ui) -> R,
 ) -> InnerResponse<Option<R>> {
@@ -73,7 +77,16 @@ fn ribbon_menu_button<R>(
     );
     let icon_width = if icon.is_some() { 20.0 } else { 0.0 };
     let size = vec2((galley.size().x + icon_width + 24.0).max(22.0), 22.0);
-    let menu = egui::menu::menu_custom_button(ui, Button::new("").min_size(size), contents);
+    let group = controls::current(ui).map_or("Menu", |scope| scope.group);
+    let menu = egui::menu::menu_custom_button(ui, Button::new("").min_size(size), |ui| {
+        controls::scope(ui, Scope::new(popup_scope, group), contents)
+    });
+    controls::register(
+        ui,
+        &menu.response,
+        keys,
+        keytips::Kind::Menu { scope: popup_scope },
+    );
     let rect = menu.response.rect;
     if let Some(icon) = icon {
         icons::draw(
@@ -127,9 +140,21 @@ impl PaintApp {
                         ui.visuals_mut().widgets.inactive.bg_fill = BLUE;
                         ui.visuals_mut().widgets.inactive.weak_bg_fill = BLUE;
                         ui.visuals_mut().override_text_color = Some(Color32::WHITE);
-                        ui.menu_button("  File  ", |ui| {
-                            self.file_menu(ui, ctx);
-                        });
+                        let file =
+                            egui::menu::menu_custom_button(ui, Button::new("  File  "), |ui| {
+                                self.file_menu(ui, ctx);
+                            });
+                        keytips::register(
+                            ui,
+                            &file.response,
+                            "tabs",
+                            "Tabs",
+                            "F",
+                            keytips::Kind::Menu { scope: "file" },
+                        );
+                        if file.response.clicked() {
+                            ribbon_layout::close_groups(ctx);
+                        }
                     });
                     for (index, label) in [(0, "   Home   "), (1, "   View   "), (2, "   Text   ")]
                     {
@@ -141,7 +166,20 @@ impl PaintApp {
                             1 => self.view_tab && !self.text_tab,
                             _ => self.text_tab,
                         };
-                        let response = ui.selectable_label(selected, label);
+                        let response = controls::selectable(ui, selected, label);
+                        let (keys, scope) = match index {
+                            0 => ("H", "home"),
+                            1 => ("V", "view"),
+                            _ => ("T", "text"),
+                        };
+                        keytips::register(
+                            ui,
+                            &response,
+                            "tabs",
+                            "Tabs",
+                            keys,
+                            keytips::Kind::Tab { scope },
+                        );
                         response.widget_info(|| {
                             WidgetInfo::selected(
                                 WidgetType::SelectableLabel,
@@ -151,6 +189,7 @@ impl PaintApp {
                             )
                         });
                         if response.clicked() {
+                            ribbon_layout::close_groups(ctx);
                             self.view_tab = index == 1;
                             self.text_tab = index == 2;
                             revealed = self.collapsed;
@@ -222,7 +261,7 @@ impl PaintApp {
                 .response
                 .rect
         };
-        if self.collapsed && !tab_activated && !ctx.memory(|memory| memory.any_popup_open()) {
+        if self.collapsed && !tab_activated && !keytips::popup_open(ctx) {
             let outside = ctx.input(|input| {
                 input.pointer.any_pressed()
                     && input
@@ -241,29 +280,15 @@ impl PaintApp {
     }
 
     fn ribbon_contents(&mut self, ui: &mut Ui, ctx: &Context) {
-        ScrollArea::horizontal()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                let origin = ui.cursor().min;
-                let text = self.text_tab && self.text_edit.is_some();
-                ui.allocate_space(vec2(
-                    if text {
-                        1000.0
-                    } else if self.view_tab {
-                        650.0
-                    } else {
-                        1110.0
-                    },
-                    112.0,
-                ));
-                if text {
-                    self.text_ribbon(ui, origin, ctx);
-                } else if self.view_tab {
-                    self.view_ribbon(ui, origin, ctx);
-                } else {
-                    self.home_ribbon(ui, origin, ctx);
-                }
-            });
+        let origin = ui.cursor().min;
+        ui.allocate_space(vec2(ui.available_width(), 112.0));
+        if self.text_tab && self.text_edit.is_some() {
+            self.text_ribbon(ui, origin, ctx);
+        } else if self.view_tab {
+            self.view_ribbon(ui, origin, ctx);
+        } else {
+            self.home_ribbon(ui, origin, ctx);
+        }
     }
 
     pub(in crate::app) fn group(ui: &Ui, origin: Pos2, x: f32, w: f32, label: &str) {
@@ -320,6 +345,7 @@ impl PaintApp {
             Color32::from_gray(30),
         );
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
+        controls::named(ui, &response, label);
         ribbon_focus(ui, &response);
         if response.clicked() {
             self.action(act, ui.ctx());
@@ -327,13 +353,76 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn home_ribbon(&mut self, ui: &mut Ui, o: Pos2, ctx: &Context) {
-        self.clipboard_group(ui, o, ctx);
-        self.image_group(ui, o, ctx);
-        self.tools_group(ui, o);
-        self.brushes_group(ui, o);
-        self.shapes_group(ui, o);
-        self.size_group(ui, o);
-        self.colors_group(ui, o);
+        let groups = [
+            Group {
+                label: "Clipboard",
+                width: 120.0,
+                icon: Icon::Paste,
+                keys: "ZC",
+                popup: "home_clipboard",
+            },
+            Group {
+                label: "Image",
+                width: 161.0,
+                icon: Icon::Resize,
+                keys: "ZI",
+                popup: "home_image",
+            },
+            Group {
+                label: "Tools",
+                width: 92.0,
+                icon: Icon::Tool(Tool::Pencil),
+                keys: "ZT",
+                popup: "home_tools",
+            },
+            Group {
+                label: "Brushes",
+                width: 71.0,
+                icon: Icon::Brush(self.brush),
+                keys: "ZB",
+                popup: "home_brushes",
+            },
+            Group {
+                label: "Shapes",
+                width: 252.0,
+                icon: Icon::Tool(Tool::Rectangle),
+                keys: "ZH",
+                popup: "home_shapes",
+            },
+            Group {
+                label: "Size",
+                width: 65.0,
+                icon: Icon::Outline,
+                keys: "ZZ",
+                popup: "home_size",
+            },
+            Group {
+                label: "Colors",
+                width: 347.0,
+                icon: Icon::Colors,
+                keys: "ZK",
+                popup: "home_colors",
+            },
+        ];
+        let widths =
+            ribbon_layout::widths(&groups, ui.max_rect().right() - o.x, &[6, 4, 1, 0, 2, 3]);
+        let mut x = o.x;
+        for (index, (group, width)) in groups.into_iter().zip(widths).enumerate() {
+            ribbon_layout::show(ui, pos2(x, o.y), width, "home", group, |ui, origin| {
+                let legacy_x = [0.0, 120.0, 281.0, 373.0, 444.0, 696.0, 761.0][index];
+                let origin = origin - vec2(legacy_x, 0.0);
+                match index {
+                    0 => self.clipboard_group(ui, origin, ctx),
+                    1 => self.image_group(ui, origin, ctx),
+                    2 => self.tools_group(ui, origin),
+                    3 => self.brushes_group(ui, origin),
+                    4 => self.shapes_group(ui, origin),
+                    5 => self.size_group(ui, origin),
+                    _ => self.colors_group(ui, origin),
+                }
+            });
+            x += width;
+        }
     }
 
     fn clipboard_group(&mut self, ui: &mut Ui, o: Pos2, ctx: &Context) {
@@ -342,7 +431,7 @@ impl PaintApp {
             |state| !state.selection.is_empty(),
         );
         Self::group(ui, o, 0., 119., "Clipboard");
-        if icons::button(
+        if controls::button(
             ui,
             "paste",
             Rect::from_min_size(o + vec2(3., 4.), vec2(46., 63.)),
@@ -359,8 +448,8 @@ impl PaintApp {
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(12., 69.), vec2(32., 20.))),
             |ui| {
-                let menu = ribbon_menu_button(ui, "", None, |ui| {
-                    if ui.button("Paste from…").clicked() {
+                let menu = ribbon_menu_button(ui, "", "ZV", "paste", None, |ui| {
+                    if controls::command(ui, "Paste from…").clicked() {
                         ui.close_menu();
                         self.action(Action::PasteFrom, ctx);
                     }
@@ -391,7 +480,7 @@ impl PaintApp {
     fn image_group(&mut self, ui: &mut Ui, o: Pos2, ctx: &Context) {
         let has_selection = self.selected_region().is_some();
         Self::group(ui, o, 120., 160., "Image");
-        if icons::button(
+        if controls::button(
             ui,
             "select",
             Rect::from_min_size(o + vec2(125., 4.), vec2(55., 63.)),
@@ -407,37 +496,33 @@ impl PaintApp {
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(142., 68.), vec2(35., 20.))),
             |ui| {
-                let menu = ribbon_menu_button(ui, "", None, |ui| {
-                    if ui
-                        .selectable_label(!self.free_select, "Rectangular selection")
+                let menu = ribbon_menu_button(ui, "", "ZS", "select", None, |ui| {
+                    if controls::selectable(ui, !self.free_select, "Rectangular selection")
                         .clicked()
                     {
                         self.free_select = false;
                         self.set_tool(Tool::Select);
                         ui.close_menu();
                     }
-                    if ui
-                        .selectable_label(self.free_select, "Free-form selection")
-                        .clicked()
-                    {
+                    if controls::selectable(ui, self.free_select, "Free-form selection").clicked() {
                         self.free_select = true;
                         self.set_tool(Tool::Select);
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button("Select all      Ctrl+A").clicked() {
+                    if controls::command(ui, "Select all      Ctrl+A").clicked() {
                         self.action(Action::SelectAll, ctx);
                         ui.close_menu();
                     }
-                    if ui.button("Delete selection").clicked() {
+                    if controls::command(ui, "Delete selection").clicked() {
                         self.delete_selection();
                         ui.close_menu();
                     }
-                    if ui.button("Invert selection").clicked() {
+                    if controls::command(ui, "Invert selection").clicked() {
                         self.invert_selection();
                         ui.close_menu();
                     }
-                    ui.checkbox(&mut self.transparent, "Transparent selection");
+                    controls::checkbox(ui, &mut self.transparent, "Transparent selection");
                 });
                 menu.response.widget_info(|| {
                     WidgetInfo::labeled(WidgetType::Button, true, "Selection options")
@@ -464,26 +549,28 @@ impl PaintApp {
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(187., 61.), vec2(85., 25.))),
             |ui| {
-                let menu = ribbon_menu_button(ui, "Rotate", Some(Icon::Rotate), |ui| {
-                    for (label, act) in [
-                        ("Rotate right 90°", Action::Rotate(90.)),
-                        ("Rotate left 90°", Action::Rotate(270.)),
-                        ("Rotate 180°", Action::Rotate(180.)),
-                        ("Flip vertical", Action::Flip(false)),
-                        ("Flip horizontal", Action::Flip(true)),
-                    ] {
-                        if ui.button(label).clicked() {
-                            self.action(act, ctx);
+                let menu =
+                    ribbon_menu_button(ui, "Rotate", "RO", "rotate", Some(Icon::Rotate), |ui| {
+                        for (label, act) in [
+                            ("Rotate right 90°", Action::Rotate(90.)),
+                            ("Rotate left 90°", Action::Rotate(270.)),
+                            ("Rotate 180°", Action::Rotate(180.)),
+                            ("Flip vertical", Action::Flip(false)),
+                            ("Flip horizontal", Action::Flip(true)),
+                        ] {
+                            if controls::command(ui, label).clicked() {
+                                self.action(act, ctx);
+                                ui.close_menu();
+                            }
+                        }
+                        ui.separator();
+                        if controls::command(ui, "Custom angle…").clicked() {
+                            self.angle =
+                                self.object.map(|i| self.doc.objects[i].angle).unwrap_or(0.);
+                            self.dialog = Some(Dialog::Rotate);
                             ui.close_menu();
                         }
-                    }
-                    ui.separator();
-                    if ui.button("Custom angle…").clicked() {
-                        self.angle = self.object.map(|i| self.doc.objects[i].angle).unwrap_or(0.);
-                        self.dialog = Some(Dialog::Rotate);
-                        ui.close_menu();
-                    }
-                });
+                    });
                 menu.response.widget_info(|| {
                     WidgetInfo::labeled(WidgetType::Button, true, "Rotate and flip")
                 });
@@ -509,7 +596,7 @@ impl PaintApp {
                 o + vec2(286. + (i % 3) as f32 * 27., 9. + (i / 3) as f32 * 32.),
                 vec2(26., 29.),
             );
-            if icons::button(
+            if controls::button(
                 ui,
                 tool.name(),
                 r,
@@ -528,7 +615,7 @@ impl PaintApp {
 
     fn brushes_group(&mut self, ui: &mut Ui, o: Pos2) {
         Self::group(ui, o, 373., 70., " ");
-        if icons::button(
+        if controls::button(
             ui,
             "brush",
             Rect::from_min_size(o + vec2(379., 5.), vec2(59., 62.)),
@@ -544,7 +631,7 @@ impl PaintApp {
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(395., 69.), vec2(38., 20.))),
             |ui| {
-                let menu = ribbon_menu_button(ui, "", None, |ui| {
+                let menu = ribbon_menu_button(ui, "", "ZB", "brushes", None, |ui| {
                     for brush in Brush::ALL {
                         let choice = ui.add_sized(
                             vec2(262.0, 34.0),
@@ -576,6 +663,7 @@ impl PaintApp {
                                 brush.name(),
                             )
                         });
+                        controls::named(ui, &choice, brush.name());
                         if choice.clicked() {
                             self.brush = brush;
                             self.set_tool(Tool::Brush);
@@ -633,7 +721,7 @@ impl PaintApp {
                 1.0,
             ),
         ] {
-            let response = icons::button(
+            let response = controls::button(
                 ui,
                 name,
                 Rect::from_min_size(o + vec2(580.0, 9.0 + row as f32 * 25.0), vec2(17.0, 25.0)),
@@ -644,46 +732,53 @@ impl PaintApp {
             )
             .on_hover_text(name);
             response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, name));
+            controls::named(ui, &response, name);
             if response.clicked() {
                 offset = (offset + direction * 25.0).clamp(0.0, 25.0);
             }
         }
         ui.ctx()
             .data_mut(|data| data.insert_temp(offset_id, offset));
-        let more = icons::button(
-            ui,
-            "More shapes",
-            Rect::from_min_size(o + vec2(580.0, 59.0), vec2(17.0, 25.0)),
-            Icon::ChevronDown,
-            "",
-            false,
-            true,
-        )
-        .on_hover_text("More shapes");
-        more.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "More shapes"));
-        let popup = ui.id().with("all_shapes");
-        if more.clicked() {
-            ui.memory_mut(|memory| memory.toggle_popup(popup));
-        }
-        egui::popup::popup_below_widget(
-            ui,
-            popup,
-            &more,
-            egui::PopupCloseBehavior::CloseOnClickOutside,
+        ui.scope_builder(
+            UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(580.0, 59.0), vec2(17.0, 25.0))),
             |ui| {
-                let (rect, _) = ui.allocate_exact_size(vec2(154.0, 100.0), Sense::hover());
-                if self.shape_gallery_buttons(ui, rect.min, vec2(22.0, 25.0)).0 {
-                    ui.memory_mut(|memory| memory.close_popup());
-                }
+                let more = egui::menu::menu_custom_button(
+                    ui,
+                    Button::new("").min_size(vec2(17.0, 25.0)),
+                    |ui| {
+                        controls::scope(ui, Scope::new("shapes", "Shapes"), |ui| {
+                            let (rect, _) =
+                                ui.allocate_exact_size(vec2(154.0, 100.0), Sense::hover());
+                            if self.shape_gallery_buttons(ui, rect.min, vec2(22.0, 25.0)).0 {
+                                ui.close_menu();
+                            }
+                        });
+                    },
+                );
+                icons::draw(
+                    ui.painter(),
+                    more.response.rect.shrink(3.0),
+                    Icon::ChevronDown,
+                );
+                more.response
+                    .widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "More shapes"));
+                controls::register(
+                    ui,
+                    &more.response,
+                    "GM",
+                    keytips::Kind::Menu { scope: "shapes" },
+                );
+                more.response.on_hover_text("More shapes");
             },
         );
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(605., 11.), vec2(88., 76.))),
             |ui| {
-                let outline = ribbon_menu_button(ui, "Outline", Some(Icon::Outline), |ui| {
-                    for style in PaintStyle::ALL {
-                        if ui
-                            .selectable_label(
+                let outline =
+                    ribbon_menu_button(ui, "Outline", "O", "outline", Some(Icon::Outline), |ui| {
+                        for style in PaintStyle::ALL {
+                            if controls::selectable(
+                                ui,
                                 self.outline == style,
                                 if style == PaintStyle::None {
                                     "No outline"
@@ -692,29 +787,29 @@ impl PaintApp {
                                 },
                             )
                             .clicked()
-                        {
-                            self.outline = style;
-                            ui.close_menu();
+                            {
+                                self.outline = style;
+                                ui.close_menu();
+                            }
                         }
-                    }
-                });
+                    });
                 outline.response.widget_info(|| {
                     WidgetInfo::labeled(WidgetType::Button, true, "Shape outline style")
                 });
                 ribbon_focus(ui, &outline.response);
                 ui.add_space(7.);
-                let fill = ribbon_menu_button(ui, "Fill", Some(Icon::Fill), |ui| {
+                let fill = ribbon_menu_button(ui, "Fill", "L", "fill", Some(Icon::Fill), |ui| {
                     for style in PaintStyle::ALL {
-                        if ui
-                            .selectable_label(
-                                self.fill == style,
-                                if style == PaintStyle::None {
-                                    "No fill"
-                                } else {
-                                    style.name()
-                                },
-                            )
-                            .clicked()
+                        if controls::selectable(
+                            ui,
+                            self.fill == style,
+                            if style == PaintStyle::None {
+                                "No fill"
+                            } else {
+                                style.name()
+                            },
+                        )
+                        .clicked()
                         {
                             self.fill = style;
                             ui.close_menu();
@@ -745,10 +840,9 @@ impl PaintApp {
                     );
                 }
                 ui.add_space(46.);
-                let menu = ribbon_menu_button(ui, "Size", None, |ui| {
+                let menu = ribbon_menu_button(ui, "Size", "W", "size", None, |ui| {
                     for size in [1, 3, 5, 8, 12, 20, 32, 50] {
-                        if ui
-                            .selectable_label(self.size == size, format!("{size} px"))
+                        if controls::selectable(ui, self.size == size, &format!("{size} px"))
                             .clicked()
                         {
                             self.size = size;
@@ -781,7 +875,7 @@ impl PaintApp {
                 origin + vec2((index % 7) as f32 * cell.x, (index / 7) as f32 * cell.y),
                 cell,
             );
-            let response = icons::button(
+            let response = controls::button(
                 ui,
                 tool.name(),
                 rect,
@@ -828,10 +922,18 @@ impl PaintApp {
                     if i == 0 { 32. } else { 25. },
                 ),
             );
+            if self.colors[i][3] < 255 {
+                canvas::checkerboard(ui.painter(), swatch, 5.0);
+            }
             ui.painter().rect(
                 swatch,
                 0.,
-                Color32::from_rgb(self.colors[i][0], self.colors[i][1], self.colors[i][2]),
+                Color32::from_rgba_unmultiplied(
+                    self.colors[i][0],
+                    self.colors[i][1],
+                    self.colors[i][2],
+                    self.colors[i][3],
+                ),
                 Stroke::new(1.0_f32, Color32::from_gray(125)),
                 StrokeKind::Inside,
             );
@@ -860,6 +962,7 @@ impl PaintApp {
                     ),
                 )
             });
+            controls::register(ui, &response, &(i + 1).to_string(), keytips::Kind::Button);
             ribbon_focus(ui, &response);
             response.on_hover_text(if i == 0 {
                 "Foreground (left mouse button)"
@@ -895,8 +998,14 @@ impl PaintApp {
                 } else {
                     self.active_color
                 }] = [rgb[0], rgb[1], rgb[2], 255];
+                if controls::current(ui).is_some_and(|scope| scope.name.ends_with("_colors")) {
+                    ui.close_menu();
+                }
             }
-            let name = format!("Red {}, green {}, blue {}", rgb[0], rgb[1], rgb[2]);
+            let name = format!(
+                "{}, red {}, green {}, blue {}",
+                PALETTE_NAMES[i], rgb[0], rgb[1], rgb[2]
+            );
             response.widget_info(|| {
                 WidgetInfo::selected(
                     WidgetType::RadioButton,
@@ -905,6 +1014,12 @@ impl PaintApp {
                     &name,
                 )
             });
+            controls::register(
+                ui,
+                &response,
+                &controls::palette_key(i),
+                keytips::Kind::Button,
+            );
             ribbon_focus(ui, &response);
             response.on_hover_text(name);
         }
@@ -935,6 +1050,9 @@ impl PaintApp {
                     } else {
                         self.active_color
                     }] = c;
+                    if controls::current(ui).is_some_and(|scope| scope.name.ends_with("_colors")) {
+                        ui.close_menu();
+                    }
                 }
             }
             let name = c.map_or_else(
@@ -957,10 +1075,28 @@ impl PaintApp {
                     &name,
                 )
             });
+            controls::register(
+                ui,
+                &response,
+                &controls::palette_key(i + 20),
+                keytips::Kind::Button,
+            );
             ribbon_focus(ui, &response);
             response.on_hover_text(name);
         }
-        if icons::button(
+        ui.scope_builder(
+            UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(863.0, 77.0), vec2(196.0, 19.0))),
+            |ui| {
+                let mut transparent = self.colors[1][3] == 0;
+                let response = ui.checkbox(&mut transparent, "Transparent Color 2");
+                controls::register(ui, &response, "Q", keytips::Kind::Button);
+                response.clone().on_hover_text("Erase, clear, and extend the canvas with transparency. PNG, WebP, TIFF, and Paint 10 projects retain it.");
+                if response.changed() {
+                    self.colors[1][3] = if transparent { 0 } else { 255 };
+                }
+            },
+        );
+        if controls::button(
             ui,
             "edit_colors",
             Rect::from_min_size(o + vec2(1064., 4.), vec2(43., 80.)),
@@ -982,9 +1118,52 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn view_ribbon(&mut self, ui: &mut Ui, o: Pos2, ctx: &Context) {
+        let groups = [
+            Group {
+                label: "Zoom",
+                width: 229.0,
+                icon: Icon::Tool(Tool::Magnifier),
+                keys: "ZZ",
+                popup: "view_zoom",
+            },
+            Group {
+                label: "Show or hide",
+                width: 181.0,
+                icon: Icon::Tool(Tool::Rectangle),
+                keys: "ZS",
+                popup: "view_show",
+            },
+            Group {
+                label: "Display",
+                width: 228.0,
+                icon: Icon::Tool(Tool::Select),
+                keys: "ZD",
+                popup: "view_display",
+            },
+        ];
+        let widths = ribbon_layout::widths(&groups, ui.max_rect().right() - o.x, &[2, 1, 0]);
+        let mut x = o.x;
+        for (index, (group, width)) in groups.into_iter().zip(widths).enumerate() {
+            ribbon_layout::show(
+                ui,
+                pos2(x, o.y),
+                width,
+                "view",
+                group,
+                |ui, origin| match index {
+                    0 => self.zoom_group(ui, origin),
+                    1 => self.visibility_group(ui, origin - vec2(229.0, 0.0)),
+                    _ => self.display_group(ui, origin - vec2(410.0, 0.0), ctx),
+                },
+            );
+            x += width;
+        }
+    }
+
+    fn zoom_group(&mut self, ui: &mut Ui, o: Pos2) {
         Self::group(ui, o, 0., 228., "Zoom");
         for (i, label, factor) in [(0, "Zoom in", 2.), (1, "Zoom out", 0.5), (2, "100%", 0.)] {
-            if icons::button(
+            if controls::button(
                 ui,
                 label,
                 Rect::from_min_size(o + vec2(7. + i as f32 * 72., 6.), vec2(65., 77.)),
@@ -998,131 +1177,47 @@ impl PaintApp {
                 self.zoom = if factor == 0. {
                     1.
                 } else {
-                    (self.zoom * factor).clamp(0.125, 8.)
+                    (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM)
                 };
             }
         }
+    }
+
+    fn visibility_group(&mut self, ui: &mut Ui, o: Pos2) {
         Self::group(ui, o, 229., 180., "Show or hide");
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(242., 10.), vec2(155., 80.))),
             |ui| {
-                ui.checkbox(&mut self.rulers, "Rulers");
-                ui.checkbox(&mut self.grid, "Gridlines");
-                ui.checkbox(&mut self.status_bar, "Status bar");
-            },
-        );
-        Self::group(ui, o, 410., 227., "Display");
-        ui.scope_builder(
-            UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(424., 10.), vec2(200., 80.))),
-            |ui| {
-                if ui.button("Full screen     F11").clicked() {
-                    self.show_picture(ctx);
-                }
-                let mut thumbnail = Self::thumbnail_enabled(ctx);
-                if ui
-                    .add_enabled(self.zoom > 1.0, Checkbox::new(&mut thumbnail, "Thumbnail"))
-                    .changed()
-                {
-                    Self::set_thumbnail_enabled(ctx, thumbnail);
-                }
-                if ui.button("Fit to window").clicked() {
-                    let space = ctx.available_rect().size() - vec2(30., 40.);
-                    self.zoom = (space.x / self.doc.image.width() as f32)
-                        .min(space.y / self.doc.image.height() as f32)
-                        .clamp(0.125, 8.);
-                }
+                controls::checkbox(ui, &mut self.rulers, "Rulers");
+                controls::checkbox(ui, &mut self.grid, "Gridlines");
+                controls::checkbox(ui, &mut self.status_bar, "Status bar");
             },
         );
     }
 
-    fn file_menu(&mut self, ui: &mut Ui, ctx: &Context) {
-        ui.set_min_width(232.);
-        for (label, act) in [
-            ("New                         Ctrl+N", Action::New),
-            ("Open                        Ctrl+O", Action::Open),
-            ("Save                         Ctrl+S", Action::Save),
-            ("Save as…                      F12", Action::SaveAs),
-        ] {
-            if ui.button(label).clicked() {
-                ui.close_menu();
-                self.action(act, ctx);
-            }
-        }
-        ui.separator();
-        if ui.button("Print…                         Ctrl+P").clicked() {
-            self.action(Action::Print, ctx);
-            ui.close_menu();
-        }
-        if ui.button("Print preview").clicked() {
-            self.finish_editing();
-            self.print_preview = Some(crate::print_preview::PrintPreview::new(
-                self.doc.composite(),
-            ));
-            ui.close_menu();
-        }
-        if ui.button("Page setup…").clicked() {
-            self.finish_editing();
-            self.dialog = Some(Dialog::Print);
-            ui.close_menu();
-        }
-        if ui
-            .add_enabled(self.job.is_none(), Button::new("From scanner or camera…"))
-            .clicked()
-        {
-            self.dialog = Some(Dialog::Import);
-            self.start_job(ctx, || {
-                JobResult::Devices(crate::integration::enumerate_devices())
-            });
-            ui.close_menu();
-        }
-        if ui
-            .add_enabled(self.job.is_none(), Button::new("Send in email…"))
-            .clicked()
-        {
-            self.finish_editing();
-            let img = self.doc.composite();
-            self.start_job(ctx, move || {
-                JobResult::Status(
-                    crate::integration::compose_email(&img).map(|_| "Email draft opened".into()),
-                )
-            });
-            ui.close_menu();
-        }
-        if ui.button("Set as desktop background…").clicked() {
-            self.finish_editing();
-            if let Some(size) = ctx.input(|i| i.viewport().monitor_size) {
-                self.wallpaper_size = (size.x as u32, size.y as u32);
-            }
-            self.dialog = Some(Dialog::Wallpaper);
-            ui.close_menu();
-        }
-        if ui.button("Properties                    Ctrl+E").clicked() {
-            self.action(Action::Properties, ctx);
-            ui.close_menu();
-        }
-        if ui.button("About Paint 10").clicked() {
-            self.dialog = Some(Dialog::About);
-            ui.close_menu();
-        }
-        if !self.recent.is_empty() {
-            ui.separator();
-            ui.label("Recent pictures");
-            for path in self.recent.clone() {
-                if ui
-                    .button(path.file_name().unwrap_or_default().to_string_lossy())
-                    .clicked()
-                {
-                    self.pending_path = Some(path);
-                    self.action(Action::Open, ctx);
-                    ui.close_menu();
+    fn display_group(&mut self, ui: &mut Ui, o: Pos2, ctx: &Context) {
+        Self::group(ui, o, 410., 227., "Display");
+        ui.scope_builder(
+            UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(424., 10.), vec2(200., 80.))),
+            |ui| {
+                if controls::command(ui, "Full screen     F11").clicked() {
+                    self.show_picture(ctx);
                 }
-            }
-        }
-        ui.separator();
-        if ui.button("Exit").clicked() {
-            self.action(Action::Close, ctx);
-            ui.close_menu();
-        }
+                let mut thumbnail = Self::thumbnail_enabled(ctx);
+                let response =
+                    ui.add_enabled(self.zoom > 1.0, Checkbox::new(&mut thumbnail, "Thumbnail"));
+                controls::named(ui, &response, "Thumbnail");
+                if response.changed() {
+                    Self::set_thumbnail_enabled(ctx, thumbnail);
+                }
+                if controls::command(ui, "Fit to window").clicked() {
+                    let space = ctx.available_rect().size() - vec2(30., 40.);
+                    self.zoom = (space.x / self.doc.image.width() as f32)
+                        .min(space.y / self.doc.image.height() as f32)
+                        .clamp(MIN_ZOOM, MAX_ZOOM);
+                }
+            },
+        );
     }
 }
 
@@ -1133,7 +1228,7 @@ mod gallery_tests {
     fn frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) -> FullOutput {
         ctx.run(
             RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(500.0, 400.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 400.0))),
                 events,
                 time: Some(ctx.cumulative_pass_nr() as f64 / 10.0),
                 ..Default::default()
@@ -1156,7 +1251,7 @@ mod gallery_tests {
     }
 
     #[test]
-    fn narrow_ribbon_reveals_and_activates_shapes_through_keyboard_focus() {
+    fn expanded_gallery_scrolls_and_activates_shapes_through_keyboard_focus() {
         let ctx = Context::default();
         ctx.enable_accesskit();
         let mut app = PaintApp::new_with_context(&ctx, false);
@@ -1184,8 +1279,8 @@ mod gallery_tests {
             let (_, item) = node(&output, tool.name());
             let bounds = item.bounds().unwrap();
             assert!(
-                bounds.x0 >= 0.0 && bounds.x1 <= 500.0,
-                "{} is outside narrow ribbon: {bounds:?}",
+                bounds.x0 >= 0.0 && bounds.x1 <= 1200.0,
+                "{} is outside expanded ribbon: {bounds:?}",
                 tool.name()
             );
             assert!(
@@ -1230,7 +1325,7 @@ mod gallery_tests {
                 modifiers: Modifiers::NONE,
             }],
         );
-        assert!(ctx.memory(|memory| memory.any_popup_open()));
+        assert!(keytips::popup_open(&ctx));
         let (last_shape, _) = output
             .platform_output
             .accesskit_update
@@ -1265,6 +1360,6 @@ mod gallery_tests {
             }],
         );
         assert_eq!(app.tool, Tool::Lightning);
-        assert!(!ctx.memory(|memory| memory.any_popup_open()));
+        assert!(!keytips::popup_open(&ctx));
     }
 }

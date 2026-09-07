@@ -24,7 +24,7 @@ impl PaintApp {
         if !self.text_geometry_gesture() {
             return;
         }
-        if let Some(position) = ctx.input(|input| input.pointer.interact_pos()) {
+        if let Some(position) = gesture_pointer_position(ctx, None) {
             let raw = self.point(position, rect);
             self.continue_canvas_gesture(
                 ui,
@@ -50,13 +50,20 @@ impl PaintApp {
         let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) else {
             return;
         };
-        let raw = self.point(pos, rect);
+        let hover = self.point(pos, rect);
+        self.cursor = response.hovered().then_some((
+            hover.0.clamp(0, self.doc.image.width() as i32 - 1),
+            hover.1.clamp(0, self.doc.image.height() as i32 - 1),
+        ));
+        let press_pos = pointer_press_in(ui, ctx, rect, self.tool == Tool::Select);
+        let raw = self.point(
+            gesture_pointer_position(ctx, press_pos).unwrap_or(pos),
+            rect,
+        );
         let p = (
             raw.0.clamp(0, self.doc.image.width() as i32 - 1),
             raw.1.clamp(0, self.doc.image.height() as i32 - 1),
         );
-        self.cursor = if response.hovered() { Some(p) } else { None };
-        let press_pos = pointer_press_in(ui, ctx, rect, self.tool == Tool::Select);
         let pressed = press_pos.is_some();
         let released = ctx.input(|i| i.pointer.any_released());
         let shift = ctx.input(|i| i.modifiers.shift);
@@ -167,6 +174,7 @@ impl PaintApp {
                         Gesture::ResizeObject { .. }
                             | Gesture::CanvasSize { .. }
                             | Gesture::ResizeShape { .. }
+                            | Gesture::LineEndpoint { .. }
                     )
                 )
         }) {
@@ -208,9 +216,19 @@ impl PaintApp {
                 let mut after = before.clone();
                 d::flood_fill(&mut after, p, color);
                 self.doc.begin();
-                for (x, y, px) in after.enumerate_pixels() {
-                    if px != before.get_pixel(x, y) {
-                        self.doc.image.put_pixel(x, y, *px);
+                if color[3] < 255 {
+                    if after != before {
+                        // An alpha overlay cannot remove the objects beneath it.
+                        // Preserve the filled composite; undo restores editability.
+                        self.doc.image = after;
+                        self.doc.objects.clear();
+                        self.clear_selection();
+                    }
+                } else {
+                    for (x, y, px) in after.enumerate_pixels() {
+                        if px != before.get_pixel(x, y) {
+                            self.doc.image.put_pixel(x, y, *px);
+                        }
                     }
                 }
                 self.doc.commit();
@@ -370,9 +388,28 @@ impl PaintApp {
                 Gesture::ResizeShape {
                     bounds,
                     original,
+                    start,
                     handle,
                 } => {
-                    self.resize_shape(original, *bounds, *handle, raw, shift);
+                    self.resize_shape(
+                        original,
+                        *bounds,
+                        *handle,
+                        (raw.0 - start.0, raw.1 - start.1),
+                        shift,
+                    );
+                }
+                Gesture::LineEndpoint {
+                    start,
+                    original,
+                    endpoint,
+                } => {
+                    self.drag_line_endpoint(
+                        original,
+                        *endpoint,
+                        (raw.0 - start.0, raw.1 - start.1),
+                        shift,
+                    );
                 }
                 Gesture::ResizeObject {
                     index,
@@ -458,7 +495,7 @@ impl PaintApp {
                             let angle = (dy as f32).atan2(dx as f32);
                             let snap = (angle / std::f32::consts::FRAC_PI_4).round()
                                 * std::f32::consts::FRAC_PI_4;
-                            let len = ((dx * dx + dy * dy) as f32).sqrt();
+                            let len = (dx as f32).hypot(dy as f32);
                             end = (
                                 start.0 + (snap.cos() * len).round() as i32,
                                 start.1 + (snap.sin() * len).round() as i32,
@@ -488,7 +525,7 @@ impl PaintApp {
                         let angle = (delta.1 as f32).atan2(delta.0 as f32);
                         let snapped = (angle / std::f32::consts::FRAC_PI_4).round()
                             * std::f32::consts::FRAC_PI_4;
-                        let length = ((delta.0 * delta.0 + delta.1 * delta.1) as f32).sqrt();
+                        let length = (delta.0 as f32).hypot(delta.1 as f32);
                         end = (
                             start.0 + (snapped.cos() * length).round() as i32,
                             start.1 + (snapped.sin() * length).round() as i32,
@@ -518,7 +555,8 @@ impl PaintApp {
                                 i.events
                                     .iter()
                                     .position(|event| {
-                                        matches!(event, Event::PointerButton { pressed: true, .. })
+                                        matches!(event, Event::PointerButton { pos, pressed: true, .. }
+                                            if self.point(*pos, rect) == *start)
                                     })
                                     .map_or(0, |index| index + 1)
                             } else {
@@ -526,6 +564,7 @@ impl PaintApp {
                             };
                             i.events[first_event..]
                                 .iter()
+                                .take_while(|event| !is_drawing_button_release(event))
                                 .filter_map(|e| {
                                     if let Event::PointerMoved(pos) = e {
                                         Some(self.point(*pos, rect))
@@ -540,7 +579,9 @@ impl PaintApp {
                                 continue;
                             }
                             if self.tool == Tool::Eraser {
-                                if erase_target.is_some() {
+                                if erase_target.is_some()
+                                    || (c[3] < 255 && !self.doc.objects.is_empty())
+                                {
                                     let before = self.doc.composite();
                                     let mut after = before.clone();
                                     d::erase_line(
@@ -551,9 +592,20 @@ impl PaintApp {
                                         c,
                                         *erase_target,
                                     );
-                                    for (x, y, pixel) in after.enumerate_pixels() {
-                                        if pixel != before.get_pixel(x, y) {
-                                            self.doc.image.put_pixel(x, y, *pixel);
+                                    if c[3] < 255 {
+                                        if after != before {
+                                            // Transparent pixels in an overlay cannot erase
+                                            // objects underneath it. Keep the visible result;
+                                            // the existing undo transaction restores objects.
+                                            self.doc.image = after;
+                                            self.doc.objects.clear();
+                                            self.clear_selection();
+                                        }
+                                    } else {
+                                        for (x, y, pixel) in after.enumerate_pixels() {
+                                            if pixel != before.get_pixel(x, y) {
+                                                self.doc.image.put_pixel(x, y, *pixel);
+                                            }
                                         }
                                     }
                                 } else {
@@ -709,16 +761,9 @@ impl PaintApp {
                     if d::valid_size(w, h) {
                         self.clear_selection();
                         self.doc.restore_preview();
-                        self.doc.image = d::resize_canvas(
-                            &self.doc.image,
-                            w,
-                            h,
-                            if self.doc.objects.is_empty() {
-                                self.colors[1]
-                            } else {
-                                [0, 0, 0, 0]
-                            },
-                        );
+                        if let Err(error) = self.doc.resize_canvas(w, h, self.colors[1]) {
+                            self.message = error;
+                        }
                         self.refresh = true;
                     }
                     if released {
@@ -731,6 +776,40 @@ impl PaintApp {
             }
         }
     }
+}
+
+fn is_drawing_button_release(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::PointerButton {
+            button: PointerButton::Primary | PointerButton::Secondary,
+            pressed: false,
+            ..
+        }
+    )
+}
+
+/// A frame may contain hover motion after release. That motion updates the
+/// cursor, but must not change the endpoint of the completed canvas gesture.
+fn gesture_pointer_position(ctx: &Context, press: Option<Pos2>) -> Option<Pos2> {
+    ctx.input(|input| {
+        let start = press
+            .and_then(|press| {
+                input.events.iter().position(|event| {
+            matches!(event, Event::PointerButton { pos, pressed: true, .. } if *pos == press)
+        })
+            })
+            .unwrap_or(0);
+        input
+            .events
+            .iter()
+            .skip(start)
+            .find_map(|event| match event {
+                Event::PointerButton { pos, .. } if is_drawing_button_release(event) => Some(*pos),
+                _ => None,
+            })
+            .or_else(|| input.pointer.interact_pos())
+    })
 }
 
 /// Move the requested edges by the pointer delta, preserving off-canvas origins.
@@ -784,7 +863,7 @@ pub(in crate::app) fn pointer_press_in(
     rect: Rect,
     primary_only: bool,
 ) -> Option<Pos2> {
-    if ctx.memory(|memory| memory.any_popup_open()) {
+    if keytips::popup_open(ctx) {
         return None;
     }
     let events = ctx.input(|input| input.events.clone());
@@ -815,6 +894,271 @@ pub(in crate::app) fn pointer_press_in(
 mod tests {
     use super::*;
 
+    fn pointer_app_frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) -> FullOutput {
+        ctx.run(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 850.0))),
+                time: Some(ctx.cumulative_pass_nr() as f64 / 30.0),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                if !app.ribbon_keyboard(ctx) {
+                    app.shortcut(ctx);
+                }
+                app.titlebar(ctx);
+                app.ribbon(ctx);
+                app.quick_access_below(ctx);
+                app.status(ctx);
+                app.canvas(ctx);
+                app.keyboard_menu(ctx);
+                app.dialogs(ctx);
+                if app.refresh {
+                    ctx.request_repaint();
+                }
+            },
+        )
+    }
+
+    fn coalesced_click(position: Pos2, button: PointerButton) -> Vec<Event> {
+        vec![
+            Event::PointerMoved(position),
+            Event::PointerButton {
+                pos: position,
+                button,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            Event::PointerButton {
+                pos: position,
+                button,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+        ]
+    }
+
+    #[test]
+    fn coalesced_canvas_clicks_update_pixels_and_the_settled_texture() {
+        let blue = [63, 72, 204, 255];
+        let green = [30, 180, 80, 255];
+        for tool in [Tool::Pencil, Tool::Eraser, Tool::Fill, Tool::Picker] {
+            for button in [PointerButton::Primary, PointerButton::Secondary] {
+                let context = Context::default();
+                context.enable_accesskit();
+                let mut app = PaintApp::new_with_context(&context, false);
+                let mut source = RgbaImage::new(32, 24);
+                for y in 4..13 {
+                    for x in 4..13 {
+                        source.put_pixel(
+                            x,
+                            y,
+                            Rgba(if x == 4 || x == 12 || y == 4 || y == 12 {
+                                [237, 28, 36, 255]
+                            } else {
+                                blue
+                            }),
+                        );
+                    }
+                }
+                app.doc = Document::from_image(source.clone());
+                app.zoom = 32.0;
+                app.colors = [
+                    if tool == Tool::Eraser { blue } else { green },
+                    [255, 255, 255, 0],
+                ];
+                if tool == Tool::Pencil {
+                    app.colors[1] = [250, 120, 20, 255];
+                }
+                app.refresh = true;
+                let mut output = pointer_app_frame(&mut app, &context, vec![]);
+                for _ in 0..2 {
+                    output = pointer_app_frame(&mut app, &context, vec![]);
+                }
+                let bounds = output
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .find(|(_, node)| node.label() == Some(tool.name()))
+                    .unwrap()
+                    .1
+                    .bounds()
+                    .unwrap();
+                let tool_position = pos2(
+                    ((bounds.x0 + bounds.x1) / 2.0) as f32,
+                    ((bounds.y0 + bounds.y1) / 2.0) as f32,
+                );
+                pointer_app_frame(
+                    &mut app,
+                    &context,
+                    coalesced_click(tool_position, PointerButton::Primary),
+                );
+                assert_eq!(app.tool, tool);
+                let position = app.canvas_rect.min + vec2(8.5, 8.5) * app.zoom;
+                let expected = if tool == Tool::Picker {
+                    blue
+                } else if tool == Tool::Eraser || button == PointerButton::Secondary {
+                    app.colors[1]
+                } else {
+                    app.colors[0]
+                };
+                let clicked =
+                    pointer_app_frame(&mut app, &context, coalesced_click(position, button));
+                assert_eq!(
+                    app.doc.composite().get_pixel(8, 8).0,
+                    expected,
+                    "{tool:?} {button:?}: document"
+                );
+                assert!(app.gesture.is_none());
+                let uploaded = pointer_app_frame(&mut app, &context, vec![]);
+                pointer_app_frame(&mut app, &context, vec![]);
+                assert_eq!(
+                    app.rendered,
+                    app.doc.composite(),
+                    "{tool:?} {button:?}: rendered cache"
+                );
+                if tool == Tool::Picker {
+                    assert_eq!(
+                        app.colors[usize::from(button == PointerButton::Secondary)],
+                        blue
+                    );
+                    assert!(!app.doc.dirty());
+                } else {
+                    let texture = app.texture.as_ref().unwrap().id();
+                    let delta = &uploaded
+                        .textures_delta
+                        .set
+                        .iter()
+                        .chain(clicked.textures_delta.set.iter())
+                        .find(|(id, _)| *id == texture)
+                        .expect("settled frame must upload changed canvas pixels")
+                        .1;
+                    let egui::ImageData::Color(image) = &delta.image else {
+                        panic!("canvas texture must be RGBA")
+                    };
+                    assert_eq!(
+                        image.pixels[8 * 32 + 8],
+                        Color32::from_rgba_unmultiplied(
+                            expected[0],
+                            expected[1],
+                            expected[2],
+                            expected[3]
+                        )
+                    );
+                    app.doc.undo();
+                    assert_eq!(app.doc.composite(), source);
+                    assert!(!app.doc.can_undo());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn transparent_fill_changes_retained_objects_and_undo_restores_them() {
+        for opacity in [0, 96] {
+            let context = Context::default();
+            let mut app = PaintApp::new_with_context(&context, false);
+            app.doc = Document::from_image(RgbaImage::new(32, 24));
+            app.doc.add_object(Object::new(
+                ObjectKind::Image(RgbaImage::from_pixel(9, 9, Rgba([63, 72, 204, 255]))),
+                (4, 4),
+            ));
+            let original_objects = app.doc.objects.clone();
+            let original_pixels = app.doc.composite();
+            app.doc.mark_saved();
+            app.zoom = 32.0;
+            app.set_tool(Tool::Fill);
+            app.colors[1] = [255, 255, 255, opacity];
+            for _ in 0..3 {
+                pointer_app_frame(&mut app, &context, vec![]);
+            }
+            let position = app.canvas_rect.min + vec2(8.5, 8.5) * app.zoom;
+            pointer_app_frame(
+                &mut app,
+                &context,
+                coalesced_click(position, PointerButton::Secondary),
+            );
+            pointer_app_frame(&mut app, &context, vec![]);
+            assert_eq!(app.rendered.get_pixel(8, 8).0, app.colors[1]);
+            assert_eq!(app.rendered.get_pixel(0, 0)[3], 0);
+            assert!(app.doc.objects.is_empty());
+            app.doc.undo();
+            assert_eq!(app.doc.composite(), original_pixels);
+            assert!(app.doc.objects == original_objects);
+            assert!(!app.doc.dirty());
+            assert!(!app.doc.can_undo());
+
+            app.colors[1] = [0, 0, 0, 0];
+            app.refresh = true;
+            let outside = app.canvas_rect.min + vec2(1.5, 1.5) * app.zoom;
+            pointer_app_frame(
+                &mut app,
+                &context,
+                coalesced_click(outside, PointerButton::Secondary),
+            );
+            assert!(app.doc.objects == original_objects);
+            assert!(!app.doc.dirty());
+            assert!(!app.doc.can_undo());
+        }
+    }
+
+    #[test]
+    fn pointer_motion_after_release_never_extends_a_finished_stroke() {
+        for tool in [Tool::Pencil, Tool::Eraser] {
+            for coalesced in [false, true] {
+                let context = Context::default();
+                let mut app = PaintApp::new_with_context(&context, false);
+                let (background, painted) = if tool == Tool::Pencil {
+                    (WHITE, BLACK)
+                } else {
+                    (BLACK, WHITE)
+                };
+                app.doc = Document::from_image(RgbaImage::from_pixel(32, 24, Rgba(background)));
+                app.zoom = 32.0;
+                app.set_tool(tool);
+                app.size = 1;
+                app.colors = [BLACK, WHITE];
+                for _ in 0..3 {
+                    pointer_app_frame(&mut app, &context, vec![]);
+                }
+                let start = app.canvas_rect.min + vec2(8.5, 8.5) * app.zoom;
+                let hover = app.canvas_rect.min + vec2(12.5, 8.5) * app.zoom;
+                let mut events = coalesced_click(start, PointerButton::Primary);
+                if !coalesced {
+                    let release = events.pop().unwrap();
+                    pointer_app_frame(&mut app, &context, events);
+                    events = vec![release];
+                }
+                events.push(Event::PointerMoved(hover));
+                pointer_app_frame(&mut app, &context, events);
+                pointer_app_frame(&mut app, &context, vec![]);
+                assert!(app.gesture.is_none());
+                assert_eq!(app.rendered.get_pixel(8, 8).0, painted);
+                assert_eq!(
+                    app.rendered.get_pixel(12, 8).0,
+                    background,
+                    "{tool:?}, coalesced {coalesced}"
+                );
+                assert_eq!(
+                    app.rendered
+                        .pixels()
+                        .filter(|pixel| pixel.0 != background)
+                        .count(),
+                    1
+                );
+                app.doc.undo();
+                assert!(app
+                    .doc
+                    .composite()
+                    .pixels()
+                    .all(|pixel| pixel.0 == background));
+            }
+        }
+    }
+
     fn gesture_frame(app: &mut PaintApp, ctx: &Context, point: Point, released: bool) {
         let _ = ctx.run(RawInput::default(), |ctx| {
             CentralPanel::default().show(ctx, |ui| {
@@ -831,6 +1175,136 @@ mod tests {
                 );
             });
         });
+    }
+
+    #[test]
+    fn canvas_handle_growth_reveals_objects_and_undoes_in_one_step() {
+        let context = Context::default();
+        let mut app = PaintApp::new_with_context(&context, false);
+        app.doc = Document::from_image(RgbaImage::new(20, 20));
+        app.doc.add_object(Object::new(
+            ObjectKind::Image(RgbaImage::from_pixel(8, 8, Rgba([255, 0, 0, 255]))),
+            (18, 2),
+        ));
+        let objects = app.doc.objects.clone();
+        app.colors[1] = [20, 150, 70, 255];
+        app.doc.mark_saved();
+        app.doc.begin();
+        app.gesture = Some(Gesture::CanvasSize {
+            start: (20, 20),
+            original: (20, 20),
+            axis: 3,
+        });
+        gesture_frame(&mut app, &context, (30, 25), true);
+        let expanded = app.doc.composite();
+        assert_eq!(expanded.dimensions(), (30, 25));
+        assert_eq!(expanded.get_pixel(0, 0)[3], 0);
+        assert_eq!(expanded.get_pixel(25, 5).0, [255, 0, 0, 255]);
+        assert_eq!(expanded.get_pixel(29, 24).0, app.colors[1]);
+        app.doc.undo();
+        assert_eq!(app.doc.image.dimensions(), (20, 20));
+        assert!(app.doc.objects == objects);
+        assert!(!app.doc.dirty());
+        assert!(!app.doc.can_undo());
+    }
+
+    #[test]
+    fn insertion_growth_selects_the_picture_after_adding_background_below_objects() {
+        let context = Context::default();
+        let mut app = PaintApp::new_with_context(&context, false);
+        app.doc = Document::from_image(RgbaImage::new(20, 20));
+        app.doc.add_object(Object::new(
+            ObjectKind::Image(RgbaImage::from_pixel(8, 8, Rgba([255, 0, 0, 255]))),
+            (18, 2),
+        ));
+        app.colors[1] = [20, 150, 70, 255];
+        app.transparent = true;
+        let mut inserted = RgbaImage::new(30, 25);
+        inserted.put_pixel(27, 24, Rgba([30, 80, 200, 255]));
+        app.insert_image(inserted);
+        let selected = &app.doc.objects[app.object.unwrap()];
+        assert!(matches!(selected.kind, ObjectKind::Image(_)));
+        assert_eq!(selected.render().get_pixel(27, 24).0, [30, 80, 200, 255]);
+        let expanded = app.doc.composite();
+        assert_eq!(expanded.get_pixel(0, 0)[3], 0);
+        assert_eq!(expanded.get_pixel(25, 5).0, [255, 0, 0, 255]);
+        assert_eq!(expanded.get_pixel(29, 24).0, app.colors[1]);
+    }
+
+    #[test]
+    fn transparent_eraser_removes_visible_objects_and_undo_restores_editability() {
+        for target in [None, Some(BLACK)] {
+            for opacity in [0, 96] {
+                let context = Context::default();
+                let mut app = PaintApp::new_with_context(&context, false);
+                app.doc = Document::new(200, 100);
+                app.doc.add_object(Object::new(
+                    ObjectKind::Image(RgbaImage::from_pixel(30, 30, Rgba(BLACK))),
+                    (10, 10),
+                ));
+                app.doc.add_object(Object::new(
+                    ObjectKind::Text {
+                        text: "Editable".into(),
+                        format: crate::text::TextFormat {
+                            width: 90,
+                            ..Default::default()
+                        },
+                    },
+                    (90, 10),
+                ));
+                let original_objects = app.doc.objects.clone();
+                let original_image = app.doc.composite();
+                app.doc.mark_saved();
+                app.tool = Tool::Eraser;
+                app.colors[1] = [255, 255, 255, opacity];
+                app.size = 3;
+                app.doc.begin();
+                app.gesture = Some(Gesture::Paint {
+                    start: (20, 20),
+                    last: (20, 20),
+                    color: BLACK,
+                    erase_target: target,
+                    first: true,
+                });
+                gesture_frame(&mut app, &context, (25, 20), true);
+                assert_eq!(app.doc.composite().get_pixel(22, 20).0, app.colors[1]);
+                assert_eq!(app.doc.composite().get_pixel(15, 15).0, BLACK);
+                assert!(app.doc.objects.is_empty());
+                assert!(app.doc.dirty());
+                app.doc.undo();
+                assert!(app.doc.objects == original_objects);
+                assert_eq!(app.doc.composite(), original_image);
+                assert!(!app.doc.dirty());
+                assert!(!app.doc.can_undo());
+            }
+        }
+    }
+
+    #[test]
+    fn transparent_color_eraser_preserves_objects_when_the_target_does_not_match() {
+        let context = Context::default();
+        let mut app = PaintApp::new_with_context(&context, false);
+        app.doc = Document::new(200, 100);
+        app.doc.add_object(Object::new(
+            ObjectKind::Image(RgbaImage::from_pixel(30, 30, Rgba(BLACK))),
+            (10, 10),
+        ));
+        let original = app.doc.objects.clone();
+        app.doc.mark_saved();
+        app.tool = Tool::Eraser;
+        app.colors[1] = [0, 0, 0, 0];
+        app.doc.begin();
+        app.gesture = Some(Gesture::Paint {
+            start: (20, 20),
+            last: (20, 20),
+            color: BLACK,
+            erase_target: Some([255, 0, 0, 255]),
+            first: true,
+        });
+        gesture_frame(&mut app, &context, (25, 20), true);
+        assert!(app.doc.objects == original);
+        assert!(!app.doc.dirty());
+        assert!(!app.doc.can_undo());
     }
 
     #[test]
@@ -877,6 +1351,44 @@ mod tests {
         gesture_frame(&mut app, &ctx, (150, -20), true);
         assert!((40..150).all(|x| app.doc.image.get_pixel(x, 0).0 == WHITE));
         assert_eq!(app.doc.image.get_pixel(20, 20).0, BLACK);
+    }
+
+    #[test]
+    fn shift_stroke_handles_large_outside_pointer_coordinates() {
+        let context = Context::default();
+        let mut app = PaintApp::new_with_context(&context, false);
+        app.doc = Document::new(40, 40);
+        app.tool = Tool::Pencil;
+        app.size = 1;
+        app.doc.begin();
+        app.gesture = Some(Gesture::Paint {
+            start: (5, 5),
+            last: (5, 5),
+            color: BLACK,
+            erase_target: None,
+            first: true,
+        });
+        let _ = context.run(RawInput::default(), |context| {
+            CentralPanel::default().show(context, |ui| {
+                app.continue_canvas_gesture(
+                    ui,
+                    Rect::from_min_size(Pos2::ZERO, vec2(40.0, 40.0)),
+                    context,
+                    CanvasPointer {
+                        raw: (50_000, 50_000),
+                        clamped: (39, 39),
+                        shift: true,
+                        released: true,
+                    },
+                );
+            });
+        });
+        assert_eq!(app.doc.image.dimensions(), (40, 40));
+        assert_eq!(app.doc.image.get_pixel(5, 5).0, BLACK);
+        assert_eq!(app.doc.image.get_pixel(39, 39).0, BLACK);
+        assert_eq!(app.doc.image.get_pixel(39, 5).0, WHITE);
+        app.doc.undo();
+        assert!(app.doc.image.pixels().all(|pixel| pixel.0 == WHITE));
     }
 
     #[test]

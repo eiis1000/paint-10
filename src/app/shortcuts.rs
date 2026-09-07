@@ -7,7 +7,7 @@ impl PaintApp {
         }
         // Menus own Escape and arrow keys. Closing a menu must not discard the
         // shape or text currently being edited underneath it.
-        if ctx.memory(|memory| memory.any_popup_open()) {
+        if keytips::popup_open(ctx) {
             return;
         }
         let temporary_ribbon = Id::new("paint10-ribbon-revealed");
@@ -16,6 +16,12 @@ impl PaintApp {
         {
             ctx.data_mut(|data| data.insert_temp(temporary_ribbon, false));
             return;
+        }
+        for key in [Key::W, Key::Q] {
+            if ctx.input_mut(|input| consume_shortcut(input, Modifiers::MAC_CMD, key)) {
+                self.action(Action::Close, ctx);
+                return;
+            }
         }
         let global = [
             (Modifiers::CTRL, Key::N, Action::New),
@@ -106,10 +112,10 @@ impl PaintApp {
             self.rulers = !self.rulers;
         }
         if ctx.input_mut(|i| consume_shortcut(i, Modifiers::CTRL, Key::PageUp)) {
-            self.zoom = (self.zoom * 2.).min(8.);
+            self.zoom = (self.zoom * 2.0).min(MAX_ZOOM);
         }
         if ctx.input_mut(|i| consume_shortcut(i, Modifiers::CTRL, Key::PageDown)) {
-            self.zoom = (self.zoom / 2.).max(0.125);
+            self.zoom = (self.zoom / 2.0).max(MIN_ZOOM);
         }
         if ctx.input_mut(|i| {
             consume_shortcut(i, Modifiers::CTRL, Key::Plus)
@@ -149,16 +155,185 @@ pub(super) fn consume_shortcut(input: &mut InputState, modifiers: Modifiers, key
     let mut consumed = false;
     input.events.retain(|event| {
         let matched = matches!(event, Event::Key { key: pressed_key, modifiers: pressed_modifiers, pressed: true, .. }
-            if *pressed_key == key && pressed_modifiers.matches_exact(modifiers));
+            if *pressed_key == key && shortcut_modifiers_match(*pressed_modifiers, modifiers));
         consumed |= matched;
         !matched
     });
     consumed
 }
 
+fn shortcut_modifiers_match(pressed: Modifiers, expected: Modifiers) -> bool {
+    // egui's command flag is Command on macOS and Ctrl on Windows/Linux.
+    // Keep physical Ctrl working without treating Linux Super as Command.
+    pressed.matches_exact(expected)
+        || (expected.ctrl
+            && !expected.command
+            && !expected.mac_cmd
+            && pressed.matches_exact(Modifiers {
+                ctrl: false,
+                command: true,
+                ..expected
+            }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_command_and_physical_control_keep_exact_shortcut_variants() {
+        for pressed in [
+            Modifiers::CTRL,
+            Modifiers::CTRL | Modifiers::COMMAND,
+            Modifiers::MAC_CMD | Modifiers::COMMAND,
+        ] {
+            for key in [Key::S, Key::N, Key::B, Key::E] {
+                let mut input = InputState::default();
+                input.events.push(Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: pressed | Modifiers::SHIFT,
+                });
+                assert!(!consume_shortcut(&mut input, Modifiers::CTRL, key));
+                assert!(consume_shortcut(
+                    &mut input,
+                    Modifiers::CTRL | Modifiers::SHIFT,
+                    key
+                ));
+            }
+        }
+        // egui-winit does not set command/mac_cmd for Super on Linux.
+        assert!(!shortcut_modifiers_match(Modifiers::NONE, Modifiers::CTRL));
+        assert!(!shortcut_modifiers_match(
+            Modifiers::ALT | Modifiers::COMMAND,
+            Modifiers::CTRL
+        ));
+    }
+
+    #[test]
+    fn native_command_opens_properties_and_control_remains_available() {
+        for modifiers in [
+            Modifiers::CTRL,
+            Modifiers::CTRL | Modifiers::COMMAND,
+            Modifiers::MAC_CMD | Modifiers::COMMAND,
+            Modifiers::NONE,
+        ] {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            let _ = ctx.run(
+                RawInput {
+                    events: vec![Event::Key {
+                        key: Key::E,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    }],
+                    ..Default::default()
+                },
+                |ctx| {
+                    if !app.ribbon_keyboard(ctx) {
+                        app.shortcut(ctx);
+                    }
+                    app.canvas(ctx);
+                    app.dialogs(ctx);
+                },
+            );
+            assert_eq!(
+                matches!(app.dialog, Some(Dialog::Properties)),
+                modifiers != Modifiers::NONE
+            );
+        }
+    }
+
+    #[test]
+    fn native_command_close_keeps_the_unsaved_guard_and_control_w_resizes() {
+        for key in [Key::W, Key::Q] {
+            let ctx = Context::default();
+            ctx.set_os(egui::os::OperatingSystem::Mac);
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            app.doc.begin();
+            app.doc.image.put_pixel(0, 0, Rgba(BLACK));
+            app.doc.commit();
+            let _ = ctx.run(
+                RawInput {
+                    events: vec![Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::MAC_CMD | Modifiers::COMMAND,
+                    }],
+                    ..Default::default()
+                },
+                |ctx| {
+                    if !app.ribbon_keyboard(ctx) {
+                        app.shortcut(ctx);
+                    }
+                    app.canvas(ctx);
+                    app.dialogs(ctx);
+                },
+            );
+            assert!(matches!(app.pending, Some(Action::Close)));
+            assert!(app.doc.dirty());
+            assert!(!app.allow_close);
+        }
+        let ctx = Context::default();
+        ctx.set_os(egui::os::OperatingSystem::Mac);
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let _ = ctx.run(
+            RawInput {
+                events: vec![Event::Key {
+                    key: Key::W,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::CTRL,
+                }],
+                ..Default::default()
+            },
+            |ctx| app.shortcut(ctx),
+        );
+        assert!(matches!(app.dialog, Some(Dialog::Resize)));
+        assert!(app.pending.is_none());
+    }
+
+    #[test]
+    fn native_command_and_control_wheel_zoom_the_actual_canvas() {
+        for modifiers in [
+            Modifiers::CTRL,
+            Modifiers::CTRL | Modifiers::COMMAND,
+            Modifiers::MAC_CMD | Modifiers::COMMAND,
+            Modifiers::NONE,
+        ] {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            let initial = app.zoom;
+            let _ = ctx.run(
+                RawInput {
+                    modifiers,
+                    events: vec![Event::MouseWheel {
+                        unit: MouseWheelUnit::Point,
+                        delta: vec2(0.0, 12.0),
+                        modifiers,
+                    }],
+                    ..Default::default()
+                },
+                |ctx| app.canvas(ctx),
+            );
+            assert_eq!(
+                app.zoom,
+                initial
+                    * if modifiers == Modifiers::NONE {
+                        1.0
+                    } else {
+                        1.25
+                    }
+            );
+        }
+    }
 
     #[test]
     fn a_selection_moves_when_the_canvas_has_keyboard_focus() {

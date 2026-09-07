@@ -1,5 +1,15 @@
 use super::*;
 
+fn stroke_size_group(tool: Tool) -> Option<usize> {
+    match tool {
+        Tool::Brush => Some(0),
+        Tool::Pencil => Some(1),
+        Tool::Eraser => Some(2),
+        tool if Tool::SHAPES.contains(&tool) => Some(3),
+        _ => None,
+    }
+}
+
 impl PaintApp {
     /// Finish the current drawing operation before another command consumes
     /// the document, while retaining the committed shape's selection bounds.
@@ -20,6 +30,12 @@ impl PaintApp {
         self.finish_editing();
         if tool == Tool::Picker {
             self.previous_tool = self.tool;
+        }
+        if let Some(group) = stroke_size_group(self.tool) {
+            self.tool_sizes[group] = self.size;
+        }
+        if let Some(group) = stroke_size_group(tool) {
+            self.size = self.tool_sizes[group];
         }
         self.tool = tool;
         self.clear_selection();
@@ -265,7 +281,10 @@ impl PaintApp {
             if (width, height) == self.resize_dimensions() {
                 return Ok(());
             }
-            if let Some(index) = self.object {
+            if let Some(index) = self
+                .object
+                .filter(|&index| matches!(self.doc.objects[index].kind, ObjectKind::Text { .. }))
+            {
                 let mut resized = self.doc.objects[index].clone();
                 resized.resize_rendered(width, height)?;
                 self.doc.begin();
@@ -276,11 +295,13 @@ impl PaintApp {
             }
         }
         let background = self.colors[1];
+        let filter = if self.pixel_resize {
+            imageops::FilterType::Nearest
+        } else {
+            imageops::FilterType::CatmullRom
+        };
         self.transform(|image| {
-            plan.apply(
-                &imageops::resize(image, width, height, imageops::FilterType::CatmullRom),
-                background,
-            )
+            plan.apply(&imageops::resize(image, width, height, filter), background)
         });
         Ok(())
     }
@@ -381,6 +402,56 @@ impl PaintApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pixel_art_resize_preserves_palette_alpha_and_undo() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let original = RgbaImage::from_fn(4, 4, |x, y| {
+            Rgba(if x == y {
+                [230, 40, 70, 255]
+            } else {
+                [0, 0, 0, 0]
+            })
+        });
+        app.doc = Document::from_image(original.clone());
+        app.pixel_resize = true;
+        app.resize_picture(32, 32, 0.0, 0.0).unwrap();
+        assert_eq!(app.doc.image.dimensions(), (32, 32));
+        for (x, y, pixel) in app.doc.image.enumerate_pixels() {
+            assert_eq!(pixel, original.get_pixel(x / 8, y / 8));
+        }
+        app.doc.undo();
+        assert_eq!(app.doc.image, original);
+
+        let index = app
+            .doc
+            .add_object(Object::new(ObjectKind::Image(original.clone()), (-2, 0)));
+        app.select_object(index);
+        app.resize_picture(16, 16, 0.0, 0.0).unwrap();
+        let object = &app.doc.objects[index];
+        assert_eq!(object.pos, (-2, 0));
+        assert!(object.editable());
+        for (x, y, pixel) in object.render().enumerate_pixels() {
+            assert_eq!(pixel, original.get_pixel(x / 4, y / 4));
+        }
+    }
+
+    #[test]
+    fn pencil_defaults_to_one_pixel_and_remembers_its_own_size() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.size = 20;
+        app.set_tool(Tool::Pencil);
+        assert_eq!(app.size, 1);
+        app.size = 5;
+        app.set_tool(Tool::Eraser);
+        assert_eq!(app.size, 8);
+        app.set_tool(Tool::Brush);
+        assert_eq!(app.size, 20);
+        app.set_tool(Tool::Pencil);
+        assert_eq!(app.size, 5);
+    }
 
     #[test]
     fn unavailable_image_paste_keeps_uncommitted_text_open() {
