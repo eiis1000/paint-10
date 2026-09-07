@@ -126,11 +126,18 @@ pub fn button(
     }
     draw(&painter, icon_rect, icon);
     if !label.is_empty() {
-        painter.text(
-            pos2(rect.center().x, rect.bottom() - 10.0),
-            Align2::CENTER_CENTER,
-            label,
+        let text = painter.layout(
+            label.to_owned(),
             FontId::proportional(12.0),
+            Color32::from_gray(35),
+            (rect.width() - 4.0).max(1.0),
+        );
+        painter.galley(
+            pos2(
+                rect.center().x - text.size().x / 2.0,
+                rect.bottom() - 4.0 - text.size().y,
+            ),
+            text,
             Color32::from_gray(35),
         );
     }

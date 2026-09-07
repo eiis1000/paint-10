@@ -101,16 +101,14 @@ impl PaintApp {
             if default_button(ui, "OK", valid) {
                 self.doc.begin();
                 self.doc.mono = self.prop_mono;
-                self.doc.image = d::resize_canvas(
-                    &self.doc.image,
-                    self.resize_w,
-                    self.resize_h,
-                    if self.doc.objects.is_empty() {
-                        self.colors[1]
-                    } else {
-                        [0, 0, 0, 0]
-                    },
-                );
+                if let Err(error) =
+                    self.doc
+                        .resize_canvas(self.resize_w, self.resize_h, self.colors[1])
+                {
+                    self.doc.cancel();
+                    self.message = error;
+                    return;
+                }
                 self.doc.commit();
                 self.clear_selection();
                 self.refresh = true;

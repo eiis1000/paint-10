@@ -31,7 +31,7 @@ impl PaintApp {
 
     pub(in crate::app) fn selected_region(&self) -> Option<Region> {
         if let Some(shape) = &self.shape_draft {
-            return Some(shape.bounds(&self.doc.image));
+            return shape.bounds(&self.doc.image);
         }
         if let Some(obj) = self.object.and_then(|i| self.doc.objects.get(i)) {
             let (width, height) = obj.rendered_dimensions()?;
@@ -54,7 +54,9 @@ impl PaintApp {
 
     pub(in crate::app) fn selected_image(&self) -> Option<RgbaImage> {
         if let Some(shape) = &self.shape_draft {
-            return Some(shape.bounds(&self.doc.image).extract(&self.doc.composite()));
+            return shape
+                .bounds(&self.doc.image)
+                .map(|bounds| bounds.extract(&self.doc.composite()));
         }
         if let Some(obj) = self.object.and_then(|i| self.doc.objects.get(i)) {
             return Some(obj.render());
@@ -206,16 +208,14 @@ impl PaintApp {
         imageops::overlay(&mut opaque, &img, 0, 0);
         self.doc.begin();
         if img.width() > self.doc.image.width() || img.height() > self.doc.image.height() {
-            self.doc.image = d::resize_canvas(
-                &self.doc.image,
-                expanded_width,
-                expanded_height,
-                if self.doc.objects.is_empty() {
-                    WHITE
-                } else {
-                    [0, 0, 0, 0]
-                },
-            );
+            if let Err(error) =
+                self.doc
+                    .resize_canvas(expanded_width, expanded_height, self.colors[1])
+            {
+                self.doc.cancel();
+                self.message = error;
+                return;
+            }
         }
         let i = self.doc.add_object(Object {
             kind: ObjectKind::Image(opaque),

@@ -2,6 +2,29 @@ use super::*;
 
 const CANVAS_CENTER_REQUEST: &str = "paint10_canvas_center_request";
 
+pub(super) fn checkerboard(painter: &Painter, rect: Rect, cell: f32) {
+    let clip = rect.intersect(painter.clip_rect());
+    if !clip.is_positive() {
+        return;
+    }
+    painter.rect_filled(clip, 0.0, Color32::WHITE);
+    let x_start = ((clip.left() - rect.left()) / cell).floor() as i32;
+    let y_start = ((clip.top() - rect.top()) / cell).floor() as i32;
+    let x_end = ((clip.right() - rect.left()) / cell).ceil() as i32;
+    let y_end = ((clip.bottom() - rect.top()) / cell).ceil() as i32;
+    for y in y_start..y_end {
+        for x in x_start..x_end {
+            if (x + y) % 2 == 0 {
+                let tile = Rect::from_min_size(
+                    rect.min + vec2(x as f32, y as f32) * cell,
+                    Vec2::splat(cell),
+                );
+                painter.rect_filled(tile.intersect(clip), 0.0, Color32::from_gray(215));
+            }
+        }
+    }
+}
+
 impl PaintApp {
     pub(in crate::app) fn center_canvas_on(&self, point: Point, ctx: &Context) {
         ctx.data_mut(|data| data.insert_temp(Id::new(CANVAS_CENTER_REQUEST), point));
@@ -9,7 +32,7 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn magnify_at(&mut self, point: Point, zoom_out: bool, ctx: &Context) {
-        self.zoom = (self.zoom * if zoom_out { 0.5 } else { 2.0 }).clamp(0.125, 8.0);
+        self.zoom = (self.zoom * if zoom_out { 0.5 } else { 2.0 }).clamp(MIN_ZOOM, MAX_ZOOM);
         self.center_canvas_on(point, ctx);
     }
 
@@ -20,6 +43,7 @@ impl PaintApp {
         self.rendered = self
             .doc
             .composite_without(self.text_edit.as_ref().and_then(|s| s.index));
+        self.canvas_alpha = self.rendered.pixels().any(|pixel| pixel[3] != 255);
         let image = ColorImage::from_rgba_unmultiplied(
             [
                 self.rendered.width() as usize,
@@ -47,14 +71,15 @@ impl PaintApp {
             .frame(Frame::NONE.fill(Color32::from_rgb(199, 211, 227)))
             .show(ctx, |ui| {
                 let wheel = ctx.input(|i| {
-                    if i.modifiers.ctrl {
+                    if i.modifiers.ctrl || i.modifiers.command {
                         i.raw_scroll_delta.y
                     } else {
                         0.
                     }
                 });
                 if wheel != 0. {
-                    self.zoom = (self.zoom * if wheel > 0. { 1.25 } else { 0.8 }).clamp(0.125, 8.);
+                    self.zoom =
+                        (self.zoom * if wheel > 0. { 1.25 } else { 0.8 }).clamp(MIN_ZOOM, MAX_ZOOM);
                 }
                 let scroll = ScrollArea::both()
                     .auto_shrink([false, false])
@@ -81,6 +106,9 @@ impl PaintApp {
                             0.,
                             Color32::from_gray(142),
                         );
+                        if self.canvas_alpha {
+                            checkerboard(ui.painter(), rect, 12.0);
+                        }
                         ui.painter().image(
                             self.texture.as_ref().unwrap().id(),
                             rect,
@@ -130,19 +158,32 @@ impl PaintApp {
                                 vec2(r.w as f32, r.h as f32) * self.zoom,
                             );
                             dashed_rect(ui.painter(), sr);
-                            for (handle, pos) in [
-                                sr.left_top(),
-                                sr.right_top(),
-                                sr.left_bottom(),
-                                sr.right_bottom(),
-                                sr.center_top(),
-                                sr.center_bottom(),
-                                sr.left_center(),
-                                sr.right_center(),
-                            ]
-                            .into_iter()
-                            .enumerate()
-                            {
+                            let endpoints = self
+                                .shape_draft
+                                .as_ref()
+                                .and_then(ShapeDraft::line_endpoints);
+                            let handles = if let Some(points) = endpoints {
+                                points
+                                    .into_iter()
+                                    .map(|point| {
+                                        rect.min
+                                            + vec2(point.0 as f32 + 0.5, point.1 as f32 + 0.5)
+                                                * self.zoom
+                                    })
+                                    .collect::<Vec<_>>()
+                            } else {
+                                vec![
+                                    sr.left_top(),
+                                    sr.right_top(),
+                                    sr.left_bottom(),
+                                    sr.right_bottom(),
+                                    sr.center_top(),
+                                    sr.center_bottom(),
+                                    sr.left_center(),
+                                    sr.right_center(),
+                                ]
+                            };
+                            for (handle, pos) in handles.into_iter().enumerate() {
                                 ui.painter().rect(
                                     Rect::from_center_size(pos, vec2(5., 5.)),
                                     0.,
@@ -155,12 +196,18 @@ impl PaintApp {
                                     Id::new(("selection_handle", handle)),
                                     Sense::drag(),
                                 )
-                                .on_hover_cursor(match handle {
-                                    4 | 5 => CursorIcon::ResizeVertical,
-                                    6 | 7 => CursorIcon::ResizeHorizontal,
-                                    0 | 3 => CursorIcon::ResizeNwSe,
-                                    _ => CursorIcon::ResizeNeSw,
-                                });
+                                .on_hover_cursor(
+                                    if endpoints.is_some() {
+                                        CursorIcon::Crosshair
+                                    } else {
+                                        match handle {
+                                            4 | 5 => CursorIcon::ResizeVertical,
+                                            6 | 7 => CursorIcon::ResizeHorizontal,
+                                            0 | 3 => CursorIcon::ResizeNwSe,
+                                            _ => CursorIcon::ResizeNeSw,
+                                        }
+                                    },
+                                );
                                 let press = pointer_press_in(
                                     ui,
                                     ctx,
@@ -173,10 +220,19 @@ impl PaintApp {
                                         && self.pending.is_none()
                                 }) {
                                     if let Some(shape) = &self.shape_draft {
-                                        self.gesture = Some(Gesture::ResizeShape {
-                                            bounds: r,
-                                            original: shape.clone(),
-                                            handle,
+                                        self.gesture = Some(if endpoints.is_some() {
+                                            Gesture::LineEndpoint {
+                                                start: self.point(press, rect),
+                                                original: shape.clone(),
+                                                endpoint: handle,
+                                            }
+                                        } else {
+                                            Gesture::ResizeShape {
+                                                bounds: r,
+                                                original: shape.clone(),
+                                                start: self.point(press, rect),
+                                                handle,
+                                            }
                                         });
                                     } else {
                                         if self.object.is_some() {
@@ -230,6 +286,7 @@ impl PaintApp {
                                             Some(
                                                 Gesture::ResizeShape { .. }
                                                     | Gesture::ResizeObject { .. }
+                                                    | Gesture::LineEndpoint { .. }
                                             )
                                         )
                                 })
@@ -282,10 +339,7 @@ impl PaintApp {
         let Some(state) = &self.text_edit else {
             return;
         };
-        if self.dialog.is_some()
-            || self.pending.is_some()
-            || ctx.memory(|memory| memory.any_popup_open())
-        {
+        if self.dialog.is_some() || self.pending.is_some() || keytips::popup_open(ctx) {
             return;
         }
         let Some(editor) =

@@ -68,6 +68,14 @@ impl ShapeGeometry {
     }
 
     fn bounds(&self) -> (Point, Point) {
+        if let Self::Curve {
+            start,
+            end,
+            controls,
+        } = self
+        {
+            return d::cubic_bounds(*start, *end, *controls);
+        }
         let points = self.points();
         let first = points.first().copied().unwrap_or((0, 0));
         points.iter().fold((first, first), |(min, max), point| {
@@ -99,7 +107,52 @@ impl ShapeGeometry {
 }
 
 impl ShapeDraft {
-    pub(in crate::app) fn bounds(&self, image: &RgbaImage) -> Region {
+    pub(in crate::app) fn line_endpoints(&self) -> Option<[Point; 2]> {
+        match self.geometry {
+            ShapeGeometry::Primitive {
+                tool: Tool::Line,
+                start,
+                end,
+            } => Some([start, end]),
+            _ => None,
+        }
+    }
+
+    fn with_endpoint_delta(&self, endpoint: usize, delta: Point, constrained: bool) -> Self {
+        let mut draft = self.clone();
+        let ShapeGeometry::Primitive {
+            tool: Tool::Line,
+            start,
+            end,
+        } = &mut draft.geometry
+        else {
+            return draft;
+        };
+        let (moving, fixed) = if endpoint == 0 {
+            (start, *end)
+        } else {
+            (end, *start)
+        };
+        if delta == (0, 0) {
+            return draft;
+        }
+        let mut target = (moving.0 + delta.0, moving.1 + delta.1);
+        if constrained {
+            let dx = (target.0 - fixed.0) as f64;
+            let dy = (target.1 - fixed.1) as f64;
+            let angle =
+                (dy.atan2(dx) / std::f64::consts::FRAC_PI_4).round() * std::f64::consts::FRAC_PI_4;
+            let distance = dx.hypot(dy);
+            target = (
+                fixed.0 + (angle.cos() * distance).round() as i32,
+                fixed.1 + (angle.sin() * distance).round() as i32,
+            );
+        }
+        *moving = target;
+        draft
+    }
+
+    pub(in crate::app) fn bounds(&self, image: &RgbaImage) -> Option<Region> {
         let (min, max) = self.geometry.bounds();
         let width = if self.style.outline == PaintStyle::None {
             1
@@ -109,11 +162,16 @@ impl ShapeDraft {
         // Even brush widths place one more pixel before the path than after it.
         let before = width / 2;
         let after = (width - 1) / 2;
-        Region::between(
-            (min.0 - before, min.1 - before),
-            (max.0 + after, max.1 + after),
-            image,
-        )
+        let left = (i64::from(min.0) - i64::from(before)).max(0);
+        let top = (i64::from(min.1) - i64::from(before)).max(0);
+        let right = (i64::from(max.0) + i64::from(after) + 1).min(i64::from(image.width()));
+        let bottom = (i64::from(max.1) + i64::from(after) + 1).min(i64::from(image.height()));
+        (right > left && bottom > top).then(|| Region {
+            x: left as u32,
+            y: top as u32,
+            w: (right - left) as u32,
+            h: (bottom - top) as u32,
+        })
     }
 
     pub(in crate::app) fn translated(&self, delta: Point) -> Self {
@@ -125,6 +183,15 @@ impl ShapeDraft {
     }
 
     pub(in crate::app) fn resized(&self, original: Region, new_min: Point, new_max: Point) -> Self {
+        if new_min == (original.x as i32, original.y as i32)
+            && new_max
+                == (
+                    (original.x + original.w - 1) as i32,
+                    (original.y + original.h - 1) as i32,
+                )
+        {
+            return self.clone();
+        }
         let mut draft = self.clone();
         let (min, max) = self.geometry.bounds();
         // Apply handle movement to the path's edges, keeping outline thickness
@@ -195,7 +262,11 @@ impl PaintApp {
             style: self.shape_style(),
         });
         self.redraw_shape();
-        self.message = "Drag to move the shape; drag its handles to resize. Colors, Outline, Fill, and Size remain adjustable.".into();
+        self.message = if self.shape_draft.as_ref().and_then(ShapeDraft::line_endpoints).is_some() {
+            "Drag to move the line; drag either endpoint to change its length or angle. Hold Shift to snap to 45° increments."
+        } else {
+            "Drag to move the shape; drag its handles to resize. Colors, Outline, Fill, and Size remain adjustable."
+        }.into();
     }
 
     fn shape_style(&self) -> ShapeStyle {
@@ -231,14 +302,17 @@ impl PaintApp {
         let bounds = draft.bounds(&self.doc.image);
         self.doc.commit();
         self.refresh = true;
-        Some(bounds)
+        bounds
     }
 
     pub(in crate::app) fn begin_shape_gesture(&mut self, point: Point) -> bool {
         let Some(draft) = &self.shape_draft else {
             return false;
         };
-        if draft.bounds(&self.doc.image).contains(point) {
+        if draft
+            .bounds(&self.doc.image)
+            .is_some_and(|bounds| bounds.contains(point))
+        {
             self.gesture = Some(Gesture::MoveShape {
                 start: point,
                 original: draft.clone(),
@@ -255,25 +329,30 @@ impl PaintApp {
         original: &ShapeDraft,
         bounds: Region,
         handle: usize,
-        point: Point,
+        delta: Point,
         aspect: bool,
     ) {
+        if delta == (0, 0) {
+            self.shape_draft = Some(original.clone());
+            self.redraw_shape();
+            return;
+        }
         let mut min = (bounds.x as i32, bounds.y as i32);
         let mut max = (
             (bounds.x + bounds.w - 1) as i32,
             (bounds.y + bounds.h - 1) as i32,
         );
         if matches!(handle, 0 | 2 | 6) {
-            min.0 = point.0.min(max.0);
+            min.0 = (min.0 + delta.0).min(max.0);
         }
         if matches!(handle, 1 | 3 | 7) {
-            max.0 = point.0.max(min.0);
+            max.0 = (max.0 + delta.0).max(min.0);
         }
         if matches!(handle, 0 | 1 | 4) {
-            min.1 = point.1.min(max.1);
+            min.1 = (min.1 + delta.1).min(max.1);
         }
         if matches!(handle, 2 | 3 | 5) {
-            max.1 = point.1.max(min.1);
+            max.1 = (max.1 + delta.1).max(min.1);
         }
         if aspect {
             if matches!(handle, 4 | 5) {
@@ -298,11 +377,213 @@ impl PaintApp {
             self.redraw_shape();
         }
     }
+
+    pub(in crate::app) fn drag_line_endpoint(
+        &mut self,
+        original: &ShapeDraft,
+        endpoint: usize,
+        delta: Point,
+        constrained: bool,
+    ) {
+        let draft = original.with_endpoint_delta(endpoint, delta, constrained);
+        let (min, max) = draft.geometry.bounds();
+        if d::valid_size((max.0 - min.0 + 1) as u32, (max.1 - min.1 + 1) as u32) {
+            self.shape_draft = Some(draft);
+            self.redraw_shape();
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn canvas_frame(app: &mut PaintApp, context: &Context, events: Vec<Event>) {
+        let _ = context.run(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(700.0, 500.0))),
+                events,
+                ..Default::default()
+            },
+            |context| app.canvas(context),
+        );
+    }
+
+    fn pointer_button(position: Pos2, pressed: bool) -> Event {
+        Event::PointerButton {
+            pos: position,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn curve_bounds_follow_extrema_with_the_complete_stroke() {
+        let mut shape = rectangle();
+        shape.geometry = ShapeGeometry::Curve {
+            start: (40, 40),
+            end: (140, 40),
+            controls: [(40, 140), (140, 140)],
+        };
+        shape.style.size = 8;
+        let mut image = RgbaImage::new(200, 200);
+        shape.render(&mut image);
+        let bounds = shape.bounds(&image).unwrap();
+        assert_eq!(
+            bounds,
+            Region {
+                x: 36,
+                y: 36,
+                w: 108,
+                h: 83
+            }
+        );
+        assert!(image
+            .enumerate_pixels()
+            .filter(|(_, _, pixel)| pixel[3] > 0)
+            .all(|(x, y, _)| bounds.contains((x as i32, y as i32))));
+        let unchanged = shape.resized(bounds, (36, 36), (143, 118));
+        let mut after = RgbaImage::new(200, 200);
+        unchanged.render(&mut after);
+        assert_eq!(image, after);
+    }
+
+    #[test]
+    fn off_canvas_shape_does_not_copy_a_phantom_edge_pixel() {
+        let context = Context::default();
+        let mut app = PaintApp::new_with_context(&context, false);
+        app.doc = Document::new(100, 100);
+        let shape = rectangle();
+        app.shape_draft = Some(shape.translated((-60, 0)));
+        assert!(app.selected_region().is_none());
+        assert!(app.selected_image().is_none());
+        app.shape_draft = Some(shape.translated((100, 0)));
+        assert!(app.selected_region().is_none());
+        app.shape_draft = Some(shape.translated((0, -60)));
+        assert!(app.selected_region().is_none());
+        app.shape_draft = Some(shape.translated((0, 100)));
+        assert!(app.selected_region().is_none());
+        app.shape_draft = Some(shape.translated((-20, 0)));
+        assert_eq!(
+            app.selected_region(),
+            Some(Region {
+                x: 0,
+                y: 10,
+                w: 11,
+                h: 21
+            })
+        );
+        assert_eq!(app.selected_image().unwrap().dimensions(), (11, 21));
+    }
+
+    #[test]
+    fn line_endpoint_drag_changes_the_perpendicular_axis_and_snaps_with_shift() {
+        let mut shape = rectangle();
+        shape.geometry = ShapeGeometry::Primitive {
+            tool: Tool::Line,
+            start: (30, 60),
+            end: (130, 60),
+        };
+        shape.style.size = 8;
+        let moved = shape.with_endpoint_delta(1, (0, 60), false);
+        assert_eq!(moved.line_endpoints(), Some([(30, 60), (130, 120)]));
+        assert_eq!(moved.style.size, 8);
+        let snapped = shape.with_endpoint_delta(1, (-35, 60), true);
+        let [fixed, moved] = snapped.line_endpoints().unwrap();
+        assert_eq!(fixed, (30, 60));
+        assert_eq!(moved.0 - fixed.0, moved.1 - fixed.1);
+        shape.geometry = ShapeGeometry::Primitive {
+            tool: Tool::Line,
+            start: (60, 30),
+            end: (60, 130),
+        };
+        assert_eq!(
+            shape
+                .with_endpoint_delta(0, (50, 0), false)
+                .line_endpoints(),
+            Some([(110, 30), (60, 130)])
+        );
+    }
+
+    #[test]
+    fn line_handle_press_offset_is_a_no_op_and_drag_is_one_undo_step() {
+        let context = Context::default();
+        let mut app = PaintApp::new_with_context(&context, false);
+        app.doc = Document::new(240, 180);
+        app.doc.begin();
+        app.start_shape_draft(
+            ShapeGeometry::Primitive {
+                tool: Tool::Line,
+                start: (30, 50),
+                end: (130, 50),
+            },
+            0,
+        );
+        canvas_frame(&mut app, &context, vec![]);
+        let original = app.doc.image.clone();
+        let press = app.canvas_rect.min + vec2(133.5, 52.5);
+        canvas_frame(
+            &mut app,
+            &context,
+            vec![Event::PointerMoved(press), pointer_button(press, true)],
+        );
+        assert!(matches!(
+            app.gesture,
+            Some(Gesture::LineEndpoint { endpoint: 1, .. })
+        ));
+        canvas_frame(&mut app, &context, vec![pointer_button(press, false)]);
+        assert_eq!(app.doc.image, original);
+        canvas_frame(&mut app, &context, vec![pointer_button(press, true)]);
+        let end = press + vec2(0.0, 60.0);
+        canvas_frame(&mut app, &context, vec![Event::PointerMoved(end)]);
+        canvas_frame(&mut app, &context, vec![pointer_button(end, false)]);
+        assert_eq!(
+            app.shape_draft.as_ref().unwrap().line_endpoints(),
+            Some([(30, 50), (130, 110)])
+        );
+        assert_ne!(app.doc.image, original);
+        app.commit_shape();
+        app.doc.undo();
+        assert!(app.doc.image.pixels().all(|pixel| pixel.0 == WHITE));
+        assert!(!app.doc.can_undo());
+    }
+
+    #[test]
+    fn ordinary_shape_handle_press_offset_does_not_change_its_geometry() {
+        let context = Context::default();
+        let mut app = PaintApp::new_with_context(&context, false);
+        app.doc.begin();
+        app.start_shape_draft(
+            ShapeGeometry::Primitive {
+                tool: Tool::Heart,
+                start: (40, 40),
+                end: (180, 150),
+            },
+            0,
+        );
+        canvas_frame(&mut app, &context, vec![]);
+        let original = app.doc.image.clone();
+        let bounds = app
+            .shape_draft
+            .as_ref()
+            .unwrap()
+            .bounds(&app.doc.image)
+            .unwrap();
+        let press = app.canvas_rect.min
+            + vec2(
+                (bounds.x + bounds.w) as f32 + 3.0,
+                (bounds.y + bounds.h) as f32 - 2.0,
+            );
+        canvas_frame(
+            &mut app,
+            &context,
+            vec![Event::PointerMoved(press), pointer_button(press, true)],
+        );
+        assert!(matches!(app.gesture, Some(Gesture::ResizeShape { .. })));
+        canvas_frame(&mut app, &context, vec![pointer_button(press, false)]);
+        assert_eq!(app.doc.image, original);
+    }
 
     fn rectangle() -> ShapeDraft {
         ShapeDraft {
@@ -343,8 +624,8 @@ mod tests {
     fn resizing_keeps_opposite_corner_and_maps_geometry() {
         let image = RgbaImage::new(100, 100);
         let shape = rectangle();
-        let resized = shape.resized(shape.bounds(&image), (10, 10), (50, 40));
-        let bounds = resized.bounds(&image);
+        let resized = shape.resized(shape.bounds(&image).unwrap(), (10, 10), (50, 40));
+        let bounds = resized.bounds(&image).unwrap();
         assert_eq!((bounds.x, bounds.y, bounds.w, bounds.h), (10, 10, 41, 31));
     }
 
@@ -374,6 +655,16 @@ mod tests {
                 end: (140, 140),
                 controls: [(10, 180), (180, 10)],
             },
+            ShapeGeometry::Curve {
+                start: (30, 100),
+                end: (170, 100),
+                controls: [(30, -180), (170, 380)],
+            },
+            ShapeGeometry::Curve {
+                start: (60, 60),
+                end: (60, 60),
+                controls: [(60, 60), (60, 60)],
+            },
             ShapeGeometry::Polygon(vec![(30, 90), (100, 35), (155, 150)]),
         ]);
         for geometry in geometries {
@@ -384,7 +675,7 @@ mod tests {
                 shape.style.fill = PaintStyle::Solid;
                 let mut image = RgbaImage::new(200, 200);
                 shape.render(&mut image);
-                let region = shape.bounds(&image);
+                let region = shape.bounds(&image).unwrap();
                 let painted = image.pixels().filter(|pixel| pixel[3] > 0).count();
                 let copied = region.extract(&image);
                 assert!(painted > 0);
@@ -402,7 +693,7 @@ mod tests {
         let image = RgbaImage::new(100, 100);
         let mut shape = rectangle();
         shape.style.size = 8;
-        let original = shape.bounds(&image);
+        let original = shape.bounds(&image).unwrap();
         assert_eq!(
             original,
             Region {
@@ -414,7 +705,7 @@ mod tests {
         );
         let resized = shape.resized(original, (6, 6), (60, 50));
         assert_eq!(
-            resized.bounds(&image),
+            resized.bounds(&image).unwrap(),
             Region {
                 x: 6,
                 y: 6,
@@ -430,7 +721,7 @@ mod tests {
         let image = RgbaImage::new(100, 100);
         let mut shape = rectangle().translated((-10, -10));
         shape.style.size = 8;
-        let original = shape.bounds(&image);
+        let original = shape.bounds(&image).unwrap();
         let resized = shape.resized(
             original,
             (original.x as i32, original.y as i32),
@@ -451,10 +742,15 @@ mod tests {
         let context = Context::default();
         let mut app = PaintApp::new_with_context(&context, false);
         let shape = rectangle().translated((40, 40));
-        let original = shape.bounds(&app.doc.image);
+        let original = shape.bounds(&app.doc.image).unwrap();
         app.doc.begin();
-        app.resize_shape(&shape, original, 5, (60, 90), true);
-        let bounds = app.shape_draft.as_ref().unwrap().bounds(&app.doc.image);
+        app.resize_shape(&shape, original, 5, (0, 20), true);
+        let bounds = app
+            .shape_draft
+            .as_ref()
+            .unwrap()
+            .bounds(&app.doc.image)
+            .unwrap();
         assert_eq!(
             bounds,
             Region {

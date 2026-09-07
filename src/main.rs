@@ -15,7 +15,7 @@ fn main() -> eframe::Result {
             .with_title("Untitled - Paint 10")
             .with_app_id("paint-10")
             .with_inner_size([1180.0, 800.0])
-            .with_min_inner_size([760.0, 500.0])
+            .with_min_inner_size([500.0, 400.0])
             .with_decorations(false),
         ..Default::default()
     };

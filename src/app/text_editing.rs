@@ -1,7 +1,6 @@
 use super::*;
-use crate::text::{TextStyle as DocumentTextStyle, TextStyleRef};
+use crate::text::TextStyle as DocumentTextStyle;
 use egui::text::{CCursor, CCursorRange};
-use std::hash::{Hash, Hasher};
 
 #[derive(Default)]
 pub(in crate::app) struct TextHistory {
@@ -231,7 +230,7 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn text_shortcuts(&mut self, ctx: &Context) {
-        if ctx.memory(|memory| memory.any_popup_open()) {
+        if keytips::popup_open(ctx) {
             return;
         }
         if self.text_edit.is_some()
@@ -253,17 +252,26 @@ impl PaintApp {
             return;
         }
         let redo = ctx.input_mut(|input| {
-            input.consume_key(Modifiers::CTRL, Key::Y)
-                || input.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Z)
+            super::shortcuts::consume_shortcut(input, Modifiers::CTRL, Key::Y)
+                || super::shortcuts::consume_shortcut(
+                    input,
+                    Modifiers::CTRL | Modifiers::SHIFT,
+                    Key::Z,
+                )
         });
-        let undo = !redo && ctx.input_mut(|input| input.consume_key(Modifiers::CTRL, Key::Z));
+        let undo = !redo
+            && ctx.input_mut(|input| {
+                super::shortcuts::consume_shortcut(input, Modifiers::CTRL, Key::Z)
+            });
         if undo || redo {
             self.text_history_action(if redo { Action::Redo } else { Action::Undo }, ctx);
         }
         let mut state = self.text_edit.take().expect("active text editor");
         let time = ctx.input(|input| input.time);
         for key in [Key::B, Key::I, Key::U] {
-            if ctx.input_mut(|input| input.consume_key(Modifiers::CTRL, key)) {
+            if ctx
+                .input_mut(|input| super::shortcuts::consume_shortcut(input, Modifiers::CTRL, key))
+            {
                 let current = active_style(&state);
                 let result = change_style(&mut state, time, |style| match key {
                     Key::B => style.bold = !current.bold,
@@ -287,89 +295,151 @@ impl PaintApp {
         let mut style = original_style.clone();
         let mut done = false;
         let mut cancel = false;
-        Self::group(ui, origin, 0.0, 310.0, "Font");
-        Self::group(ui, origin, 311.0, 170.0, "Background");
-        ui.scope_builder(
-            UiBuilder::new().max_rect(Rect::from_min_size(
-                origin + vec2(12.0, 10.0),
-                vec2(286.0, 76.0),
-            )),
-            |ui| {
-                self.font_control(ui, &mut style);
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    let mut points = crate::text::pixels_to_points(style.size);
-                    let size = ui.add(
-                        DragValue::new(&mut points)
-                            .range(crate::text::FONT_POINT_RANGE)
-                            .update_while_editing(false)
-                            .suffix(" pt"),
-                    );
-                    text_control(ui, &size, "Font size", false);
-                    if size.changed() {
-                        style.size = crate::text::points_to_pixels(points);
-                    }
-                    for (label, glyph, selected) in [
-                        ("Bold", RichText::new("B").strong(), &mut style.bold),
-                        ("Italic", RichText::new("I").italics(), &mut style.italic),
-                        (
-                            "Underline",
-                            RichText::new("U").underline(),
-                            &mut style.underline,
-                        ),
-                        (
-                            "Strikeout",
-                            RichText::new("abc").strikethrough(),
-                            &mut style.strikeout,
-                        ),
-                    ] {
-                        let response = ui.toggle_value(selected, glyph);
-                        text_control(ui, &response, label, *selected);
-                    }
-                });
+        let groups = [
+            ribbon_layout::Group {
+                label: "Font",
+                width: 311.0,
+                icon: Icon::Tool(Tool::Text),
+                keys: "ZF",
+                popup: "text_font",
             },
-        );
-        ui.scope_builder(
-            UiBuilder::new().max_rect(Rect::from_min_size(
-                origin + vec2(323.0, 13.0),
-                vec2(148.0, 76.0),
-            )),
-            |ui| {
-                for (label, opaque) in [("Opaque", true), ("Transparent", false)] {
-                    let response =
-                        ui.selectable_label(state.format.background.is_some() == opaque, label);
-                    text_control(
-                        ui,
-                        &response,
-                        label,
-                        state.format.background.is_some() == opaque,
-                    );
-                    if response.clicked() && state.format.background.is_some() != opaque {
-                        let before = TextSnapshot::capture(&state);
-                        state.format.background = opaque.then_some(self.colors[1]);
-                        state
-                            .history
-                            .record(before, ctx.input(|input| input.time), false);
-                        state.focus = true;
+            ribbon_layout::Group {
+                label: "Background",
+                width: 171.0,
+                icon: Icon::Fill,
+                keys: "ZB",
+                popup: "text_background",
+            },
+            ribbon_layout::Group {
+                label: "Colors",
+                width: 347.0,
+                icon: Icon::Colors,
+                keys: "ZK",
+                popup: "text_colors",
+            },
+            ribbon_layout::Group {
+                label: "Caption",
+                width: 181.0,
+                icon: Icon::Tool(Tool::Text),
+                keys: "ZP",
+                popup: "text_caption",
+            },
+            ribbon_layout::Group {
+                label: "Finish",
+                width: 164.0,
+                icon: Icon::Tool(Tool::Text),
+                keys: "ZE",
+                popup: "text_finish",
+            },
+        ];
+        let widths =
+            ribbon_layout::widths(&groups, ui.max_rect().right() - origin.x, &[2, 1, 4, 3, 0]);
+        let mut x = origin.x;
+        for (index, (group, width)) in groups.into_iter().zip(widths).enumerate() {
+            ribbon_layout::show(ui, pos2(x, origin.y), width, "text", group, |ui, origin| {
+                let origin = origin - vec2([0.0, 311.0, 482.0, 0.0, 829.0][index], 0.0);
+                match index {
+                    0 => {
+                        Self::group(ui, origin, 0.0, 310.0, "Font");
+                        ui.scope_builder(
+                            UiBuilder::new().max_rect(Rect::from_min_size(
+                                origin + vec2(12.0, 10.0),
+                                vec2(286.0, 76.0),
+                            )),
+                            |ui| {
+                                self.font_control(ui, &mut style);
+                                ui.add_space(8.0);
+                                ui.horizontal(|ui| {
+                                    let mut points = crate::text::pixels_to_points(style.size);
+                                    let size = ui.add(
+                                        DragValue::new(&mut points)
+                                            .range(crate::text::FONT_POINT_RANGE)
+                                            .update_while_editing(false)
+                                            .suffix(" pt"),
+                                    );
+                                    text_control(ui, &size, "Font size", false);
+                                    if size.changed() {
+                                        style.size = crate::text::points_to_pixels(points);
+                                    }
+                                    for (label, glyph, selected) in [
+                                        ("Bold", RichText::new("B").strong(), &mut style.bold),
+                                        ("Italic", RichText::new("I").italics(), &mut style.italic),
+                                        (
+                                            "Underline",
+                                            RichText::new("U").underline(),
+                                            &mut style.underline,
+                                        ),
+                                        (
+                                            "Strikeout",
+                                            RichText::new("abc").strikethrough(),
+                                            &mut style.strikeout,
+                                        ),
+                                    ] {
+                                        let response = ui.toggle_value(selected, glyph);
+                                        text_control(ui, &response, label, *selected);
+                                    }
+                                });
+                            },
+                        );
+                    }
+                    1 => {
+                        Self::group(ui, origin, 311.0, 170.0, "Background");
+                        ui.scope_builder(
+                            UiBuilder::new().max_rect(Rect::from_min_size(
+                                origin + vec2(323.0, 13.0),
+                                vec2(148.0, 76.0),
+                            )),
+                            |ui| {
+                                for (label, opaque) in [("Opaque", true), ("Transparent", false)] {
+                                    let response = ui.selectable_label(
+                                        state.format.background.is_some() == opaque,
+                                        label,
+                                    );
+                                    text_control(
+                                        ui,
+                                        &response,
+                                        label,
+                                        state.format.background.is_some() == opaque,
+                                    );
+                                    if response.clicked()
+                                        && state.format.background.is_some() != opaque
+                                    {
+                                        let before = TextSnapshot::capture(&state);
+                                        state.format.background = opaque.then_some(self.colors[1]);
+                                        state.history.record(
+                                            before,
+                                            ctx.input(|input| input.time),
+                                            false,
+                                        );
+                                        state.focus = true;
+                                    }
+                                }
+                            },
+                        );
+                    }
+                    2 => self.colors_group_at(ui, origin, 482.0),
+                    3 => self.caption_group(ui, origin, &mut state),
+                    _ => {
+                        Self::group(ui, origin, 829.0, 163.0, "Finish");
+                        ui.scope_builder(
+                            UiBuilder::new().max_rect(Rect::from_min_size(
+                                origin + vec2(842.0, 12.0),
+                                vec2(146.0, 76.0),
+                            )),
+                            |ui| {
+                                ui.label("Select text to format it.");
+                                ui.label("Click outside to finish.");
+                                ui.horizontal(|ui| {
+                                    done = ribbon_controls::command(ui, "Done").clicked();
+                                    cancel = ribbon_controls::command(ui, "Cancel").clicked();
+                                });
+                            },
+                        );
                     }
                 }
-            },
-        );
-        self.colors_group_at(ui, origin, 482.0);
-        ui.scope_builder(
-            UiBuilder::new().max_rect(Rect::from_min_size(
-                origin + vec2(842.0, 12.0),
-                vec2(146.0, 76.0),
-            )),
-            |ui| {
-                ui.label("Select text to format it.");
-                ui.label("Click outside to finish.");
-                ui.horizontal(|ui| {
-                    done = ui.button("Done").clicked();
-                    cancel = ui.button("Cancel").clicked();
-                });
-            },
-        );
+            });
+            x += width;
+        }
         if original_style != style {
             if original_style.color != style.color {
                 self.colors[0] = style.color;
@@ -416,6 +486,77 @@ impl PaintApp {
         }
     }
 
+    fn caption_group(&mut self, ui: &mut Ui, origin: Pos2, state: &mut TextEditState) {
+        use crate::text::TextAlignment;
+
+        Self::group(ui, origin, 0.0, 180.0, "Caption");
+        let before = TextSnapshot::capture(state);
+        let original_format = state.format.clone();
+        let max_outline =
+            crate::text::MAX_TEXT_OUTLINE.min(state.format.width.saturating_sub(5) / 2);
+        ui.scope_builder(
+            UiBuilder::new().max_rect(Rect::from_min_size(
+                origin + vec2(8.0, 8.0),
+                vec2(165.0, 82.0),
+            )),
+            |ui| {
+                ui.horizontal(|ui| {
+                    for (label, value, keys) in [
+                        ("Left", TextAlignment::Left, "NL"),
+                        ("Center", TextAlignment::Center, "NC"),
+                        ("Right", TextAlignment::Right, "NR"),
+                    ] {
+                        let response =
+                            ui.selectable_value(&mut state.format.alignment, value, label);
+                        ribbon_controls::register(ui, &response, keys, keytips::Kind::Button);
+                    }
+                });
+                ui.add_space(5.0);
+                ui.horizontal(|ui| {
+                    let mut outlined = state.format.outline_width > 0;
+                    let response = ui.checkbox(&mut outlined, "Outline");
+                    ribbon_controls::register(ui, &response, "NO", keytips::Kind::Button);
+                    if response.changed() {
+                        state.format.outline_width = if outlined { 3.min(max_outline) } else { 0 };
+                    }
+                    let width = ui.add(
+                        DragValue::new(&mut state.format.outline_width)
+                            .range(0..=max_outline)
+                            .update_while_editing(false)
+                            .suffix(" px"),
+                    );
+                    ribbon_controls::register(ui, &width, "NW", keytips::Kind::NumericInput);
+                    width.on_hover_text("Text outline width");
+                });
+                ui.add_space(5.0);
+                ui.horizontal(|ui| {
+                    for (label, color, keys) in [
+                        ("Black", BLACK, "NB"),
+                        ("White", WHITE, "NH"),
+                        ("Color 1", self.colors[0], "NF"),
+                    ] {
+                        let response =
+                            ui.selectable_label(state.format.outline_color == color, label);
+                        ribbon_controls::register(ui, &response, keys, keytips::Kind::Button);
+                        response
+                            .clone()
+                            .on_hover_text(format!("Use {label} for the text outline"));
+                        if response.clicked() {
+                            state.format.outline_color = color;
+                            state.format.outline_width = state.format.outline_width.max(1);
+                        }
+                    }
+                });
+            },
+        );
+        if state.format != original_format {
+            state
+                .history
+                .record(before, ui.input(|input| input.time), false);
+            state.focus = true;
+        }
+    }
+
     fn font_control(&mut self, ui: &mut Ui, style: &mut DocumentTextStyle) {
         let input_id = Id::new("paint10_font_name");
         let draft_id = input_id.with("draft");
@@ -447,10 +588,8 @@ impl PaintApp {
                 } else {
                     String::new()
                 };
-                let list = ComboBox::from_id_salt("paint10_font_list")
-                    .width(20.0)
-                    .selected_text("")
-                    .show_ui(ui, |ui| {
+                let list = ribbon::ribbon_menu_button(ui, "", "FL", "fonts", None, |ui| {
+                    ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
                         ui.set_min_width(235.0);
                         let mut matches = 0;
                         for name in std::iter::once("Sans serif")
@@ -460,21 +599,34 @@ impl PaintApp {
                                 continue;
                             }
                             matches += 1;
-                            if ui.selectable_label(style.font_name == name, name).clicked() {
+                            let choice = ui.selectable_label(style.font_name == name, name);
+                            ribbon_controls::register(
+                                ui,
+                                &choice,
+                                &format!("{matches:03}"),
+                                keytips::Kind::Button,
+                            );
+                            if choice.clicked() {
                                 chosen = Some(name.to_owned());
+                                ui.close_menu();
                             }
                         }
                         if matches == 0 {
                             ui.label("No matching fonts");
                         }
                     });
+                });
                 text_control(ui, &list.response, "Font list", false);
+                ribbon_controls::register(
+                    ui,
+                    &list.response,
+                    "FL",
+                    keytips::Kind::Menu { scope: "fonts" },
+                );
                 response
             })
             .inner;
-        let committed = draft.changed
-            && response.lost_focus()
-            && !ui.ctx().memory(|memory| memory.any_popup_open());
+        let committed = draft.changed && response.lost_focus() && !keytips::popup_open(ui.ctx());
         if chosen.is_some() || committed {
             let query = chosen.as_deref().unwrap_or(&draft.value).trim();
             if !self.apply_font_name(query, style) {
@@ -540,7 +692,7 @@ impl PaintApp {
         }
         let position =
             self.canvas_rect.min + vec2(state.origin.0 as f32, state.origin.1 as f32) * self.zoom;
-        let popup_open = ctx.memory(|memory| memory.any_popup_open());
+        let popup_open = keytips::popup_open(ctx);
         let modal_open = self.dialog.is_some() || self.pending.is_some();
         let first = state.focus && !popup_open && !modal_open;
         let commit_requested = !popup_open
@@ -549,7 +701,6 @@ impl PaintApp {
                 super::shortcuts::consume_shortcut(input, Modifiers::CTRL, Key::Enter)
             });
         let insertion_style = active_style(&state);
-        register_text_fonts(ctx, &state.format, &insertion_style);
         let input_id = Id::new("text_input");
         if first {
             let mut editor = TextEdit::load_state(ctx, input_id).unwrap_or_default();
@@ -564,7 +715,8 @@ impl PaintApp {
         let original_text = state.text.clone();
         let original_format = state.format.clone();
         let zoom = self.zoom;
-        let mut layouter = |ui: &Ui, text: &str, width: f32| {
+        let (padding_x, padding_y) = state.format.text_padding();
+        let mut layouter = |ui: &Ui, text: &str, _width: f32| {
             let mut live_format = original_format.clone();
             if text != original_text {
                 let _ = live_format.update_spans_for_edit_with_style(
@@ -573,16 +725,10 @@ impl PaintApp {
                     insertion_style.clone(),
                 );
             }
-            let job = text_job(
-                ctx,
-                text,
-                &live_format,
-                insertion_style.as_ref(),
-                width,
-                zoom,
-                false,
-            );
-            ui.fonts(|fonts| fonts.layout_job(job))
+            if text.is_empty() {
+                live_format.set_default_style(&insertion_style);
+            }
+            text_preview::galley(ui, text, &live_format, zoom)
         };
         let output = Area::new(Id::new("inline_text"))
             .order(Order::Foreground)
@@ -590,26 +736,18 @@ impl PaintApp {
             .constrain(false)
             .show(ctx, |ui| {
                 ui.set_clip_rect(self.canvas_rect.intersect(ctx.screen_rect()));
-                if let Some(background) = state.format.background {
-                    ui.painter().rect_filled(
-                        Rect::from_min_size(
-                            position,
-                            vec2(
-                                state.format.width as f32 * zoom,
-                                state.format.dimensions(&state.text).1 as f32 * zoom,
-                            ),
-                        ),
-                        0.0,
-                        Color32::from_rgb(background[0], background[1], background[2]),
-                    );
-                }
+                // Reserve the image below the editor's selection and caret, then
+                // fill it with the final text from this frame (including typing).
+                let picture = ui.painter().add(egui::Shape::Noop);
+                ui.visuals_mut().selection.bg_fill =
+                    Color32::from_rgba_unmultiplied(40, 140, 235, 85);
                 let output = TextEdit::multiline(&mut state.text)
                     .id(input_id)
                     .layouter(&mut layouter)
                     .frame(false)
-                    .margin(0.0)
+                    .margin(vec2(padding_x as f32, padding_y as f32) * zoom)
                     .char_limit(16000)
-                    .desired_width(state.format.width as f32 * zoom)
+                    .desired_width(state.format.content_width() as f32 * zoom)
                     .desired_rows(2)
                     .min_size(vec2(
                         state.format.width as f32 * zoom,
@@ -619,29 +757,18 @@ impl PaintApp {
                 if first {
                     output.response.request_focus();
                 }
-                if state.format.bold
-                    || state.format.spans.iter().any(|span| span.style.bold)
-                    || insertion_style.bold
-                {
-                    let mut live_format = original_format.clone();
-                    let _ = live_format.update_spans_for_edit_with_style(
-                        &original_text,
-                        &state.text,
-                        insertion_style.clone(),
-                    );
-                    let job = text_job(
-                        ctx,
-                        &state.text,
-                        &live_format,
-                        insertion_style.as_ref(),
-                        output.response.rect.width(),
-                        zoom,
-                        true,
-                    );
-                    let bold = ui.fonts(|fonts| fonts.layout_job(job));
-                    ui.painter()
-                        .galley(output.galley_pos + vec2(zoom, 0.0), bold, Color32::WHITE);
-                }
+                let mut live_format = original_format.clone();
+                let new_cursor = output
+                    .cursor_range
+                    .map_or(state.selection.end, |range| range.primary.ccursor.index);
+                let _ = live_format.update_spans_for_edit_at(
+                    &original_text,
+                    &state.text,
+                    state.selection.clone(),
+                    new_cursor,
+                    insertion_style.clone(),
+                );
+                text_preview::paint(ui, picture, position, &state.text, &live_format, zoom);
                 dashed_rect(ui.painter(), output.response.rect.expand(3.0));
                 output
             })
@@ -708,6 +835,7 @@ impl PaintApp {
 }
 
 fn text_control(ui: &Ui, response: &Response, name: &'static str, selected: bool) {
+    ribbon_controls::named(ui, response, name);
     response.widget_info(|| match name {
         "Font" => WidgetInfo::labeled(WidgetType::TextEdit, response.enabled(), name),
         "Font list" => WidgetInfo::labeled(WidgetType::ComboBox, response.enabled(), name),
@@ -826,113 +954,6 @@ fn change_style(
     Ok(())
 }
 
-fn font_name(bytes: &[u8], index: u32) -> String {
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hash);
-    index.hash(&mut hash);
-    format!("paint-text-{:016x}", hash.finish())
-}
-
-fn register_text_fonts(
-    ctx: &Context,
-    format: &crate::text::TextFormat,
-    insertion: &DocumentTextStyle,
-) {
-    let mut sources = std::collections::BTreeMap::new();
-    for style in std::iter::once(format.default_style_ref())
-        .chain(format.spans.iter().map(|span| span.style.as_ref()))
-        .chain(std::iter::once(insertion.as_ref()))
-    {
-        let bytes = style.font_bytes();
-        sources
-            .entry(font_name(bytes, style.font_index))
-            .or_insert((bytes, style.font_index));
-    }
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    sources.keys().for_each(|key| key.hash(&mut hash));
-    let signature = hash.finish();
-    let cache_id = Id::new("paint-text-font-signature");
-    if ctx.data(|data| data.get_temp::<u64>(cache_id)) == Some(signature) {
-        return;
-    }
-    let mut fonts = FontDefinitions::default();
-    for (name, (bytes, index)) in sources {
-        let mut data = FontData::from_owned(bytes.to_vec());
-        data.index = index;
-        fonts
-            .font_data
-            .insert(name.clone(), std::sync::Arc::new(data));
-        fonts
-            .families
-            .insert(FontFamily::Name(name.clone().into()), vec![name]);
-    }
-    ctx.set_fonts(fonts);
-    ctx.data_mut(|data| data.insert_temp(cache_id, signature));
-    ctx.request_repaint();
-}
-
-fn text_job(
-    ctx: &Context,
-    text: &str,
-    format: &crate::text::TextFormat,
-    insertion: TextStyleRef<'_>,
-    width: f32,
-    zoom: f32,
-    bold_overlay: bool,
-) -> egui::text::LayoutJob {
-    let offsets: Vec<_> = text
-        .char_indices()
-        .map(|(offset, _)| offset)
-        .chain(std::iter::once(text.len()))
-        .collect();
-    let mut job = egui::text::LayoutJob::default();
-    job.wrap.max_width = width;
-    let runs = if text.is_empty() {
-        vec![(0..0, insertion)]
-    } else {
-        format.style_runs(0..offsets.len() - 1)
-    };
-    for (range, style) in runs {
-        let family = FontFamily::Name(font_name(style.font_bytes(), style.font_index).into());
-        let family = if ctx.fonts(|fonts| fonts.families().contains(&family)) {
-            family
-        } else {
-            FontFamily::Proportional
-        };
-        let color = if bold_overlay && !style.bold {
-            Color32::TRANSPARENT
-        } else {
-            Color32::from_rgba_unmultiplied(
-                style.color[0],
-                style.color[1],
-                style.color[2],
-                style.color[3],
-            )
-        };
-        job.append(
-            &text[offsets[range.start]..offsets[range.end]],
-            0.0,
-            egui::TextFormat {
-                font_id: FontId::new(style.size * zoom, family),
-                color,
-                italics: style.italic,
-                underline: if style.underline && !bold_overlay {
-                    Stroke::new(zoom.max(1.0), color)
-                } else {
-                    Stroke::NONE
-                },
-                strikethrough: if style.strikeout && !bold_overlay {
-                    Stroke::new(zoom.max(1.0), color)
-                } else {
-                    Stroke::NONE
-                },
-                ..Default::default()
-            },
-        );
-    }
-    job
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -980,6 +1001,77 @@ mod tests {
             app_frame(&mut app, ctx, Vec::new());
         }
         app
+    }
+
+    #[test]
+    fn native_command_formats_undoes_redoes_and_commits_selected_text() {
+        for modifiers in [
+            Modifiers::CTRL,
+            Modifiers::CTRL | Modifiers::COMMAND,
+            Modifiers::MAC_CMD | Modifiers::COMMAND,
+        ] {
+            let ctx = Context::default();
+            if modifiers == Modifiers::CTRL || modifiers.mac_cmd {
+                ctx.set_os(egui::os::OperatingSystem::Mac);
+            }
+            let mut app = editing_app(&ctx, "One two");
+            app.text_edit.as_mut().unwrap().selection = 0..3;
+            app.text_edit.as_mut().unwrap().focus = true;
+            app_frame(&mut app, &ctx, vec![]);
+            for keycode in [Key::B, Key::I, Key::U] {
+                app_frame(&mut app, &ctx, vec![key(keycode, modifiers)]);
+            }
+            let format = &app.text_edit.as_ref().unwrap().format;
+            assert!(
+                format.style_at(0).bold
+                    && format.style_at(0).italic
+                    && format.style_at(0).underline
+            );
+            assert!(
+                !format.style_at(4).bold
+                    && !format.style_at(4).italic
+                    && !format.style_at(4).underline
+            );
+            app_frame(&mut app, &ctx, vec![key(Key::Z, modifiers)]);
+            assert!(!app.text_edit.as_ref().unwrap().format.style_at(0).underline);
+            app_frame(
+                &mut app,
+                &ctx,
+                vec![key(Key::Z, modifiers | Modifiers::SHIFT)],
+            );
+            assert!(app.text_edit.as_ref().unwrap().format.style_at(0).underline);
+            app_frame(&mut app, &ctx, vec![key(Key::Enter, modifiers)]);
+            assert!(app.text_edit.is_none());
+            let ObjectKind::Text { text, format } = &app.doc.objects[app.object.unwrap()].kind
+            else {
+                panic!("expected editable text")
+            };
+            assert_eq!(text, "One two");
+            assert!(format.style_at(0).underline);
+        }
+    }
+
+    #[test]
+    fn native_command_and_normalized_control_a_select_all_in_mac_text_fields() {
+        for modifiers in [
+            Modifiers::MAC_CMD | Modifiers::COMMAND,
+            // egui-winit adds the logical command flag only to physical Ctrl+A.
+            Modifiers::CTRL | Modifiers::COMMAND,
+        ] {
+            let ctx = Context::default();
+            ctx.set_os(egui::os::OperatingSystem::Mac);
+            let mut app = editing_app(&ctx, "One two");
+            let state = app.text_edit.as_mut().unwrap();
+            state.selection = 3..3;
+            state.focus = true;
+            app_frame(&mut app, &ctx, Vec::new());
+            app_frame(
+                &mut app,
+                &ctx,
+                vec![key(Key::A, modifiers), Event::Text("Replacement".into())],
+            );
+            assert_eq!(app.text_edit.as_ref().unwrap().text, "Replacement");
+        }
     }
 
     fn click(app: &mut PaintApp, ctx: &Context, point: Pos2) -> FullOutput {
@@ -1104,6 +1196,7 @@ mod tests {
         for input in [
             key(Key::F10, Modifiers::NONE),
             key(Key::T, Modifiers::NONE),
+            key(Key::F, Modifiers::NONE),
             key(Key::F, Modifiers::NONE),
         ] {
             app_frame(&mut app, &ctx, vec![input]);

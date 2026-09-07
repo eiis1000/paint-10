@@ -786,7 +786,7 @@ impl State {
                 physical_key,
                 pressed,
                 repeat: false, // egui will fill this in for us!
-                modifiers: self.egui_input.modifiers,
+                modifiers: paint10_key_modifiers(self.egui_input.modifiers, active_key),
             });
         }
 
@@ -1044,19 +1044,37 @@ fn is_printable_char(chr: char) -> bool {
 
 fn is_cut_command(modifiers: egui::Modifiers, keycode: egui::Key) -> bool {
     keycode == egui::Key::Cut
-        || (modifiers.command && !modifiers.shift && !modifiers.alt && keycode == egui::Key::X)
+        || ((modifiers.ctrl || modifiers.command)
+            && !modifiers.shift
+            && !modifiers.alt
+            && keycode == egui::Key::X)
         || (modifiers.shift && !modifiers.ctrl && !modifiers.alt && keycode == egui::Key::Delete)
+}
+
+fn paint10_key_modifiers(mut modifiers: egui::Modifiers, keycode: egui::Key) -> egui::Modifiers {
+    if keycode == egui::Key::A && modifiers.ctrl && !modifiers.shift && !modifiers.alt {
+        // Preserve Paint's Ctrl+A selection in macOS text fields, where egui
+        // otherwise uses physical Control+A for the start of the current line.
+        modifiers.command = true;
+    }
+    modifiers
 }
 
 fn is_copy_command(modifiers: egui::Modifiers, keycode: egui::Key) -> bool {
     keycode == egui::Key::Copy
-        || (modifiers.command && !modifiers.shift && !modifiers.alt && keycode == egui::Key::C)
+        || ((modifiers.ctrl || modifiers.command)
+            && !modifiers.shift
+            && !modifiers.alt
+            && keycode == egui::Key::C)
         || (modifiers.ctrl && !modifiers.shift && !modifiers.alt && keycode == egui::Key::Insert)
 }
 
 fn is_paste_command(modifiers: egui::Modifiers, keycode: egui::Key) -> bool {
     keycode == egui::Key::Paste
-        || (modifiers.command && !modifiers.shift && !modifiers.alt && keycode == egui::Key::V)
+        || ((modifiers.ctrl || modifiers.command)
+            && !modifiers.shift
+            && !modifiers.alt
+            && keycode == egui::Key::V)
         || (modifiers.shift && !modifiers.ctrl && !modifiers.alt && keycode == egui::Key::Insert)
 }
 
@@ -1883,5 +1901,61 @@ pub fn short_window_event_description(event: &winit::event::WindowEvent) -> &'st
         WindowEvent::ThemeChanged { .. } => "WindowEvent::ThemeChanged",
         WindowEvent::Occluded { .. } => "WindowEvent::Occluded",
         WindowEvent::PanGesture { .. } => "WindowEvent::PanGesture",
+    }
+}
+
+#[cfg(test)]
+mod paint10_clipboard_tests {
+    use super::*;
+    use egui::{Key, Modifiers};
+
+    #[test]
+    fn command_and_control_clipboard_shortcuts_preserve_modified_app_commands() {
+        for modifiers in [
+            Modifiers::CTRL,
+            Modifiers::CTRL | Modifiers::COMMAND,
+            Modifiers::MAC_CMD | Modifiers::COMMAND,
+        ] {
+            for (key, command) in [
+                (Key::X, is_cut_command as fn(Modifiers, Key) -> bool),
+                (Key::C, is_copy_command),
+                (Key::V, is_paste_command),
+            ] {
+                assert!(command(modifiers, key));
+                assert!(!command(modifiers | Modifiers::SHIFT, key));
+                assert!(!command(modifiers | Modifiers::ALT, key));
+                assert!(!command(Modifiers::NONE, key));
+            }
+        }
+        assert!(is_copy_command(Modifiers::CTRL, Key::Insert));
+        assert!(is_paste_command(Modifiers::SHIFT, Key::Insert));
+        assert!(is_cut_command(Modifiers::SHIFT, Key::Delete));
+        assert!(is_copy_command(Modifiers::NONE, Key::Copy));
+        assert!(is_paste_command(Modifiers::NONE, Key::Paste));
+        assert!(is_cut_command(Modifiers::NONE, Key::Cut));
+    }
+
+    #[test]
+    fn control_a_selects_all_without_changing_other_control_navigation() {
+        let physical_control = Modifiers::CTRL;
+        assert_eq!(
+            paint10_key_modifiers(physical_control, Key::A),
+            Modifiers::CTRL | Modifiers::COMMAND
+        );
+        assert_eq!(physical_control, Modifiers::CTRL);
+        for key in [Key::E, Key::B, Key::ArrowLeft] {
+            assert_eq!(
+                paint10_key_modifiers(physical_control, key),
+                physical_control
+            );
+        }
+        for modifiers in [
+            Modifiers::NONE,
+            Modifiers::CTRL | Modifiers::SHIFT,
+            Modifiers::CTRL | Modifiers::ALT,
+            Modifiers::MAC_CMD | Modifiers::COMMAND,
+        ] {
+            assert_eq!(paint10_key_modifiers(modifiers, Key::A), modifiers);
+        }
     }
 }
