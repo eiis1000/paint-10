@@ -119,16 +119,23 @@ impl RasterFormat {
 
 /// Keep the bit depth of an existing BMP when using Save instead of Save As.
 pub fn detect_format(path: &Path) -> Option<RasterFormat> {
-    let fallback = RasterFormat::from_path(path);
     let mut header = Vec::new();
     std::fs::File::open(path)
         .ok()?
         .take(32)
         .read_to_end(&mut header)
         .ok()?;
+    detect_format_bytes(&header, path)
+}
+
+pub fn detect_format_bytes(header: &[u8], path: &Path) -> Option<RasterFormat> {
+    let fallback = RasterFormat::from_path(path);
+    if header.starts_with(b"PAINT10\0") {
+        return Some(RasterFormat::Project);
+    }
     let start = if header.starts_with(b"BM") {
         14
-    } else if dib_header_size(&header).is_some() {
+    } else if dib_header_size(header).is_some() {
         0
     } else {
         return fallback;
@@ -161,13 +168,17 @@ pub fn decode_with_resolution(path: &Path) -> Result<(RgbaImage, Resolution), St
         .take(MAX_FILE_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
+    decode_bytes_with_resolution(&bytes)
+}
+
+pub fn decode_bytes_with_resolution(bytes: &[u8]) -> Result<(RgbaImage, Resolution), String> {
     if bytes.len() as u64 > MAX_FILE_BYTES {
         return Err("Picture files must be no larger than 256 MiB.".into());
     }
-    let image = decode_bytes(&bytes)?;
-    let resolution = metadata::read_resolution(&bytes)
+    let image = decode_bytes(bytes)?;
+    let resolution = metadata::read_resolution(bytes)
         .or_else(|| {
-            if dib_header_size(&bytes)? < 40 || bytes.len() < 40 {
+            if dib_header_size(bytes)? < 40 || bytes.len() < 40 {
                 return None;
             }
             // DIB stores the same resolution fields without BMP's 14-byte file header.
@@ -180,7 +191,10 @@ pub fn decode_with_resolution(path: &Path) -> Result<(RgbaImage, Resolution), St
     Ok((image, resolution))
 }
 
-fn decode_bytes(bytes: &[u8]) -> Result<RgbaImage, String> {
+pub fn decode_bytes(bytes: &[u8]) -> Result<RgbaImage, String> {
+    if bytes.len() as u64 > MAX_FILE_BYTES {
+        return Err("Picture files must be no larger than 256 MiB.".into());
+    }
     if dib_header_size(bytes).is_some() {
         let mut decoder =
             image::codecs::bmp::BmpDecoder::new_without_file_header(Cursor::new(bytes))
@@ -405,6 +419,28 @@ fn encode_bmp(image: &RgbaImage, depth: u16) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_byte_imports_retain_bitmap_depth_resolution_and_pixels() {
+        let image = RgbaImage::from_pixel(9, 7, Rgba([0, 0, 0, 255]));
+        let resolution = Resolution { x: 300.0, y: 150.0 };
+        for format in [
+            RasterFormat::Png,
+            RasterFormat::Tiff,
+            RasterFormat::BmpMono,
+            RasterFormat::Bmp16,
+            RasterFormat::Bmp256,
+            RasterFormat::Bmp24,
+        ] {
+            let bytes = encode_with_resolution(&image, format, resolution).unwrap();
+            let path = Path::new(format.extensions()[0]).with_extension(format.extensions()[0]);
+            assert_eq!(detect_format_bytes(&bytes, &path), Some(format));
+            let (decoded, actual_resolution) = decode_bytes_with_resolution(&bytes).unwrap();
+            assert_eq!(decoded, image);
+            assert!((actual_resolution.x - resolution.x).abs() < 0.1);
+            assert!((actual_resolution.y - resolution.y).abs() < 0.1);
+        }
+    }
 
     #[test]
     fn bitmap_depths_padding_and_orientation_roundtrip() {
