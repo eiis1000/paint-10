@@ -15,6 +15,41 @@ fn modal_key() -> Id {
     Id::new("paint10-modal-keyboard")
 }
 
+fn pending_modal_input_key() -> Id {
+    Id::new("paint10-modal-pending-input")
+}
+
+fn defer_modal_keyboard(ctx: &Context, events: &mut Vec<Event>) {
+    let mut deferred = Vec::new();
+    events.retain(|event| {
+        let escape = matches!(event, Event::Key {
+            key: Key::Escape, pressed: true, modifiers, ..
+        } if modifiers.is_none());
+        let keyboard = matches!(
+            event,
+            Event::Key { .. }
+                | Event::Text(_)
+                | Event::Paste(_)
+                | Event::Copy
+                | Event::Cut
+                | Event::Ime(_)
+        );
+        if keyboard && !escape {
+            deferred.push(event.clone());
+            false
+        } else {
+            true
+        }
+    });
+    if !deferred.is_empty() {
+        ctx.data_mut(|data| {
+            data.get_temp_mut_or_default::<Vec<Event>>(pending_modal_input_key())
+                .extend(deferred);
+        });
+        ctx.request_repaint();
+    }
+}
+
 #[derive(Clone)]
 struct ColorDialogState {
     original: Color,
@@ -73,6 +108,15 @@ fn prepare_modal(ctx: &Context, kind: &str) -> bool {
         .data(|data| data.get_temp::<ModalKeys>(modal_key()))
         .unwrap_or_default();
     let popup = keytips::popup_open(ctx);
+    let initial = previous.initial || previous.kind != kind;
+    if initial && !popup {
+        // Opening a Window may need a disabled sizing pass, followed by a pass
+        // that assigns initial focus. Neither can consume text for that field.
+        // Keep input that arrived with the opening command until it is ready.
+        let mut events = ctx.input_mut(|input| std::mem::take(&mut input.events));
+        defer_modal_keyboard(ctx, &mut events);
+        ctx.input_mut(|input| input.events = events);
+    }
     let focused_button = ctx
         .memory(|memory| memory.focused())
         .is_some_and(|id| previous.buttons.contains(&id));
@@ -89,7 +133,7 @@ fn prepare_modal(ctx: &Context, kind: &str) -> bool {
         data.insert_temp(
             modal_key(),
             ModalKeys {
-                initial: previous.initial || previous.kind != kind,
+                initial,
                 kind: kind.into(),
                 enter_default,
                 buttons: Vec::new(),
@@ -157,6 +201,9 @@ fn register_button(ui: &Ui, response: &Response) {
 pub(in crate::app) fn dialog_button(ui: &mut Ui, label: &str) -> bool {
     let response = ui.button(label);
     register_button(ui, &response);
+    if response.enabled() && take_initial_focus(ui) {
+        response.request_focus();
+    }
     response.clicked()
 }
 
@@ -208,7 +255,7 @@ pub(in crate::app) fn default_button(ui: &mut Ui, label: &str, enabled: bool) ->
 
 impl PaintApp {
     pub(in crate::app) fn modal_raw_input(&mut self, ctx: &Context, input: &mut RawInput) {
-        let key = Id::new("paint10-modal-pending-input");
+        let key = pending_modal_input_key();
         if self.dialog.is_none() && self.pending.is_none() {
             ctx.data_mut(|data| data.remove::<Vec<Event>>(key));
             return;
@@ -227,6 +274,14 @@ impl PaintApp {
             .data_mut(|data| data.remove_temp::<Vec<Event>>(key))
             .unwrap_or_default();
         events.append(&mut input.events);
+        if ctx.data(|data| {
+            data.get_temp::<ModalKeys>(modal_key())
+                .is_none_or(|state| state.initial)
+        }) {
+            defer_modal_keyboard(ctx, &mut events);
+            input.events = events;
+            return;
+        }
         let tab = events.iter().position(|event| {
             matches!(event, Event::Key { key: Key::Tab, pressed: true, modifiers, .. }
                 if !modifiers.ctrl && !modifiers.command && !modifiers.alt)
@@ -289,7 +344,7 @@ impl PaintApp {
 
     pub(in crate::app) fn dialogs(&mut self, ctx: &Context) {
         if ctx.data(|data| {
-            data.get_temp::<Vec<Event>>(Id::new("paint10-modal-pending-input"))
+            data.get_temp::<Vec<Event>>(pending_modal_input_key())
                 .is_some_and(|events| !events.is_empty())
         }) {
             ctx.request_repaint();
