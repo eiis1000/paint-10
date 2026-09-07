@@ -257,7 +257,32 @@ impl PaintApp {
     pub(in crate::app) fn modal_raw_input(&mut self, ctx: &Context, input: &mut RawInput) {
         let key = pending_modal_input_key();
         if self.dialog.is_none() && self.pending.is_none() {
-            ctx.data_mut(|data| data.remove::<Vec<Event>>(key));
+            if let Some(mut events) = ctx.data_mut(|data| data.remove_temp::<Vec<Event>>(key)) {
+                // Successful dialog completion must preserve later input. Keep
+                // a queued click ahead of newer commands, just as the normal
+                // canvas input hook does for pointer release boundaries.
+                events.append(&mut input.events);
+                if let Some(release) = events.iter().position(|event| {
+                    matches!(
+                        event,
+                        Event::PointerButton {
+                            button: PointerButton::Primary | PointerButton::Secondary,
+                            pressed: false,
+                            ..
+                        }
+                    )
+                }) {
+                    let remainder = events.split_off(release + 1);
+                    if !remainder.is_empty() {
+                        if let Event::PointerButton { modifiers, .. } = events[release] {
+                            input.modifiers = modifiers;
+                        }
+                        ctx.data_mut(|data| data.insert_temp(key, remainder));
+                        ctx.request_repaint();
+                    }
+                }
+                input.events = events;
+            }
             return;
         }
         if keytips::popup_open(ctx) {
@@ -380,6 +405,7 @@ impl PaintApp {
                 self.pending_path = None;
                 self.dialog = None;
                 self.dialog_error = None;
+                ctx.data_mut(|data| data.remove::<Vec<Event>>(pending_modal_input_key()));
                 ctx.data_mut(|data| data.remove::<ModalKeys>(modal_key()));
                 ctx.data_mut(|data| data.remove::<ColorDialogState>(color_dialog_key()));
                 return;
