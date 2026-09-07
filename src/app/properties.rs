@@ -222,6 +222,113 @@ mod tests {
     }
 
     #[test]
+    fn properties_keeps_typing_during_opening_and_initial_focus() {
+        for first_input_frame in 0..=3 {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            app_frame(&mut app, &ctx, Vec::new());
+            let mut opening = vec![key(Key::E, Modifiers::CTRL)];
+            if first_input_frame == 0 {
+                opening.extend([Event::Text("9".into()), Event::Text("6".into())]);
+            }
+            app_frame(&mut app, &ctx, opening);
+            if first_input_frame > 0 {
+                for _ in 1..first_input_frame {
+                    app_frame(&mut app, &ctx, Vec::new());
+                }
+                app_frame(
+                    &mut app,
+                    &ctx,
+                    vec![Event::Text("9".into()), Event::Text("6".into())],
+                );
+            }
+            app_frame(&mut app, &ctx, vec![key(Key::Tab, Modifiers::NONE)]);
+            app_frame(&mut app, &ctx, Vec::new());
+            app_frame(&mut app, &ctx, vec![Event::Text("64".into())]);
+            app_frame(&mut app, &ctx, vec![key(Key::Enter, Modifiers::NONE)]);
+            for _ in 0..5 {
+                app_frame(&mut app, &ctx, Vec::new());
+            }
+            assert!(app.dialog.is_none());
+            assert_eq!(
+                app.doc.image.dimensions(),
+                (96, 64),
+                "first input in frame {first_input_frame} after opening"
+            );
+        }
+    }
+
+    #[test]
+    fn numeric_dialogs_keep_the_first_number_before_the_window_has_focus() {
+        for dialog in [
+            Dialog::Resize,
+            Dialog::Colors,
+            Dialog::Rotate,
+            Dialog::Print,
+        ] {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            app_frame(&mut app, &ctx, Vec::new());
+            if dialog == Dialog::Resize {
+                app.action(Action::Resize, &ctx);
+                app.aspect = false;
+            } else {
+                app.dialog = Some(dialog);
+            }
+            app_frame(&mut app, &ctx, vec![Event::Text("96".into())]);
+            for _ in 0..4 {
+                app_frame(&mut app, &ctx, Vec::new());
+            }
+            match dialog {
+                Dialog::Resize => assert_eq!(app.resize_w, 96),
+                Dialog::Colors => assert_eq!(app.colors[app.active_color], [96, 0, 0, 255]),
+                Dialog::Rotate => assert_eq!(app.angle, 96.0),
+                Dialog::Print => assert_eq!(app.page.margin_left_mm, 96.0),
+                _ => unreachable!(),
+            }
+            app_frame(&mut app, &ctx, vec![key(Key::Escape, Modifiers::NONE)]);
+            assert!(app.dialog.is_none());
+            assert!(!app.doc.dirty());
+        }
+    }
+
+    #[test]
+    fn escape_cancels_opening_before_early_typing_can_reach_the_canvas() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app_frame(&mut app, &ctx, Vec::new());
+        app_frame(
+            &mut app,
+            &ctx,
+            vec![key(Key::E, Modifiers::CTRL), Event::Text("96".into())],
+        );
+        app_frame(&mut app, &ctx, vec![key(Key::Escape, Modifiers::NONE)]);
+        for _ in 0..4 {
+            app_frame(&mut app, &ctx, Vec::new());
+        }
+        assert!(app.dialog.is_none());
+        assert_eq!(app.doc.image.dimensions(), (900, 600));
+        assert!(!app.doc.dirty());
+        assert!(app.text_edit.is_none());
+    }
+
+    #[test]
+    fn disabled_default_action_does_not_hold_dialog_keyboard_input_forever() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.dialog = Some(Dialog::Import);
+        assert!(app.devices.devices.is_empty());
+        for _ in 0..4 {
+            app_frame(&mut app, &ctx, Vec::new());
+        }
+        // Capture is unavailable without a device. Cancel remains an enabled
+        // initial focus target and accepts Enter without querying any hardware.
+        app_frame(&mut app, &ctx, vec![key(Key::Enter, Modifiers::NONE)]);
+        assert!(app.dialog.is_none());
+        assert!(app.job.is_none());
+    }
+
+    #[test]
     fn properties_preserves_digits_on_both_sides_of_a_batched_tab() {
         let ctx = Context::default();
         let mut app = PaintApp::new_with_context(&ctx, false);
