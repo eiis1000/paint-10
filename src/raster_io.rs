@@ -555,4 +555,86 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn lossless_exports_preserve_pixel_art_rgba() {
+        let image = RgbaImage::from_fn(16, 8, |x, y| {
+            Rgba([
+                x as u8 * 17,
+                y as u8 * 31,
+                91,
+                [0, 64, 128, 255][(x % 4) as usize],
+            ])
+        });
+        for format in [
+            RasterFormat::Png,
+            RasterFormat::Tiff,
+            RasterFormat::WebP,
+            RasterFormat::Icon,
+        ] {
+            let bytes = encode_with_resolution(&image, format, Resolution::default()).unwrap();
+            let decoded = decode_bytes(&bytes).unwrap();
+            assert_eq!(decoded, image, "{format:?} altered pixel colors or alpha");
+        }
+    }
+
+    #[test]
+    fn indexed_exports_preserve_exact_palette_colors_and_gif_transparency() {
+        for (format, count) in [
+            (RasterFormat::Bmp16, 16),
+            (RasterFormat::Bmp256, 256),
+            (RasterFormat::Gif, 256),
+        ] {
+            let image = RgbaImage::from_fn(count, 3, |x, y| {
+                let color = (x + y) % count;
+                Rgba([color as u8, (color * 31) as u8, (color * 73) as u8, 255])
+            });
+            let decoded = decode_bytes(&encode(&image, format).unwrap()).unwrap();
+            assert_eq!(
+                decoded, image,
+                "{format:?} changed an existing palette color"
+            );
+        }
+        let image = RgbaImage::from_fn(12, 5, |x, y| {
+            if (x + y) % 4 == 0 {
+                Rgba([0; 4])
+            } else {
+                Rgba([x as u8 * 20, y as u8 * 40, 80, 255])
+            }
+        });
+        let decoded = decode_bytes(&encode(&image, RasterFormat::Gif).unwrap()).unwrap();
+        assert_eq!(decoded, image);
+    }
+
+    #[test]
+    fn opaque_exports_composite_transparency_over_white() {
+        let image = RgbaImage::from_fn(32, 16, |x, _| {
+            if x < 16 {
+                Rgba([0, 0, 0, 0])
+            } else {
+                Rgba([0, 0, 0, 255])
+            }
+        });
+        for format in [
+            RasterFormat::BmpMono,
+            RasterFormat::Bmp16,
+            RasterFormat::Bmp256,
+            RasterFormat::Bmp24,
+            RasterFormat::Jpeg,
+        ] {
+            let decoded = decode_bytes(&encode(&image, format).unwrap()).unwrap();
+            assert_eq!(decoded.dimensions(), image.dimensions());
+            for channel in 0..3 {
+                assert!(
+                    decoded.get_pixel(4, 8)[channel] >= 252,
+                    "{format:?} lost the white matte"
+                );
+                assert!(
+                    decoded.get_pixel(24, 8)[channel] <= 3,
+                    "{format:?} altered opaque black"
+                );
+            }
+            assert!(decoded.pixels().all(|pixel| pixel[3] == 255));
+        }
+    }
 }

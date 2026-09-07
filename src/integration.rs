@@ -5,18 +5,24 @@
 //! SANE's `scanimage`, FFmpeg's V4L2 input, and the desktop portals. No command is
 //! interpreted by a shell, and the email portal only opens a compose window.
 
-use image::{imageops, ImageFormat, Rgba, RgbaImage};
+#[cfg(any(target_os = "linux", test))]
+use image::ImageFormat;
+use image::{imageops, Rgba, RgbaImage};
+#[cfg(any(target_os = "linux", test))]
+use std::io::Cursor;
+#[cfg(target_os = "linux")]
+use std::io::{Seek, SeekFrom};
+use std::sync::atomic::AtomicBool;
+#[cfg(any(target_os = "linux", all(test, unix)))]
 use std::{
-    io::{Cursor, Read, Seek, SeekFrom},
+    io::Read,
     process::{Command, Stdio},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::{atomic::Ordering, Arc},
     time::{Duration, Instant},
 };
 
 const MAX_PIXELS: u64 = 16_777_216;
+#[cfg(any(target_os = "linux", test))]
 const MAX_CAPTURE_BYTES: usize = 96 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,6 +127,7 @@ pub fn enumerate_devices() -> Result<DeviceList, String> {
     Err("Scanner and camera capture currently requires Linux. You can open a picture saved by your device's application.".into())
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn parse_scanners(text: &str) -> Vec<CaptureDevice> {
     text.lines()
         .filter_map(|line| {
@@ -139,6 +146,7 @@ fn parse_scanners(text: &str) -> Vec<CaptureDevice> {
         .collect()
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn is_video_node(name: &str) -> bool {
     name.strip_prefix("video")
         .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()))
@@ -253,6 +261,7 @@ fn check_size(width: u32, height: u32) -> Result<(), String> {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn decode_capture(bytes: &[u8]) -> Result<RgbaImage, String> {
     if bytes.len() > MAX_CAPTURE_BYTES {
         return Err("The captured picture is too large.".into());
@@ -275,6 +284,7 @@ fn decode_capture(bytes: &[u8]) -> Result<RgbaImage, String> {
 
 /// Read at most limit + 1 bytes, closing the pipe immediately on overflow.
 /// Separate readers keep stderr from blocking a producer with a full pipe.
+#[cfg(any(target_os = "linux", all(test, unix)))]
 fn limited_read(
     reader: impl Read,
     limit: usize,
@@ -293,6 +303,7 @@ fn limited_read(
     }
 }
 
+#[cfg(any(target_os = "linux", all(test, unix)))]
 fn run_tool(
     command: &mut Command,
     label: &str,

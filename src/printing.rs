@@ -401,12 +401,14 @@ pub fn print(img: &RgbaImage, settings: &PageSettings) -> Result<(), String> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn print(img: &RgbaImage, settings: &PageSettings) -> Result<(), String> {
+    let bytes = pdf(img, settings)?;
     let path = rfd::FileDialog::new()
+        .set_title("Save printable PDF — Paint 10")
         .add_filter("PDF document", &["pdf"])
         .set_file_name("Paint 10.pdf")
         .save_file()
         .ok_or("Print canceled")?;
-    std::fs::write(path, pdf(img, settings)?).map_err(|e| e.to_string())
+    crate::project::atomic_write(&path, &bytes)
 }
 
 #[cfg(test)]
