@@ -1,6 +1,6 @@
 # Paint 10
 
-Paint 10 is a native Rust desktop drawing application built around the Windows 10 Paint ribbon and workflow. Linux is the primary platform, with Wayland and X11 support. It uses egui/eframe for the interface and GTK for file dialogs.
+Paint 10 is a native Rust desktop drawing application built around the Windows 10 Paint ribbon and workflow. It targets Linux, Windows, and macOS using egui/eframe. Linux supports Wayland and X11 and uses GTK file dialogs.
 
 ## Run
 
@@ -31,7 +31,13 @@ Use the Home ribbon for brushes, shapes, fill, eraser, text, selections, colors,
 
 The title-bar dropdown customizes the Quick Access Toolbar and moves it below the ribbon. Its commands and placement persist. Alt+1, Alt+2, and subsequent numbers invoke the commands in their current order.
 
+At narrow widths, ribbon groups collapse into buttons that open their full controls. Alt or F10 displays keytips on the actual commands; type the displayed letters to activate them. Tab moves between groups, arrows navigate within a group, and Escape returns through open menus.
+
 Text and inserted images remain editable objects. Select an object to move or resize it; double-click a text object to edit its contents. While typing, drag the box border to move it or its handles to reflow the text. The text ribbon offers typed/searchable installed fonts, size, styles, the Paint palette, and an opaque or transparent background. Home clipboard commands act on selected characters while a text box is active. Rotation includes arbitrary angles as well as the familiar quarter turns and flips; object resizing and flips preserve editable text.
+
+For meme captions, the Text ribbon includes left/center/right alignment and adjustable text outlines. The editable preview uses the same text layout and pixels as the saved picture. A white bold caption with a black outline stays legible over a photograph.
+
+For pixel art, use the 1-pixel Pencil, enable Gridlines, and zoom up to 3200%. Pencil, brush, eraser, and shape widths are remembered separately. Resize's **Keep hard pixel edges (pixel art)** option uses nearest-neighbor scaling. **Transparent Color 2** lets you clear, erase, fill, or grow a transparent canvas; right-click with Fill to use Color 2. The checkerboard shows empty pixels. Fill and eraser operations that remove opacity from existing objects can merge their visible pixels into the raster; one Undo restores the pixels and editable objects.
 
 Save as a **Paint 10 project (`.p10`)** to retain editable text, image objects, and their transforms. Saving PNG, JPEG, BMP, GIF, or TIFF exports the visible raster picture; reopening those formats gives a flattened image. Undo history is kept for the current session and is not stored in project files. Destructive raster operations, including lifting a raster selection or transforming the whole canvas, can merge editable objects; undo can restore the previous state while it remains in history.
 
@@ -71,6 +77,8 @@ The canvas is limited to 16 megapixels and 16,384 pixels on either axis. Undo hi
 
 In a text box, Ctrl+B, Ctrl+I and Ctrl+U format the selection; Ctrl+Z/Ctrl+Y undo and redo text edits. Ctrl+Enter commits the box. Home, View and Text remain available while editing. Dialogs support Enter to accept and Escape to cancel.
 
+On macOS, Command works for the corresponding document and text shortcuts, including clipboard, formatting, undo/redo, and zoom; physical Ctrl remains available. Cmd+W and Cmd+Q close through the unsaved-change prompt. Use physical Ctrl+W for Paint's Resize and skew command.
+
 ## Devices and desktop integration
 
 Scanner import uses SANE's `scanimage`; camera capture uses FFmpeg's V4L2 input. The Nix environment supplies both. Device drivers, scanner configuration, and access permissions belong to your host system. Device discovery does not take a picture; capturing requires choosing a device and starting the operation.
@@ -89,6 +97,8 @@ nix flake check path:.
 
 The development shell supplies Rust, native libraries, GTK schemas, and the capture helpers without modifying your desktop settings. The packaged executable carries its runtime environment in a wrapper.
 
+Source commit `32ff8ec` passes **197 tests (84 library + 113 application)** in both the native and Nix release suites, plus two explicit tests of the vendored clipboard patch. Strict Clippy, formatting and x86_64-linux flake check pass. The verified package is `/nix/store/jrp82pfckf8kdqnw0y8klnfb2nzs648b-paint-10-0.1.0`; its build log is `tmp/nix-package-verified.log`. Windows/macOS native execution remains unverified locally.
+
 For manual testing on an isolated desktop:
 
 ```sh
@@ -97,7 +107,9 @@ nix develop path:.#test -c scripts/headless-desktop.sh
 
 This starts Paint 10 on a private Xvfb display with its own D-Bus session, GTK settings, and temporary user directories. The script prints the display number and log directory. The test shell includes mouse/keyboard control and screenshot tools. To run an existing binary instead, pass its command after the script name.
 
-[FEATURES.md](FEATURES.md) tracks implementation coverage; [TESTING.md](TESTING.md) records actual automated and manual verification. [PARITY_AUDIT.md](PARITY_AUDIT.md) records corrected failures and remaining differences, including narrow-window ribbon behavior, keyboard command presentation, brush rendering, and untested hardware integration. The aim is familiar Paint behavior with useful editing improvements. This project is an independent implementation and does not claim complete behavioral or visual equivalence with Microsoft Paint.
+[FEATURES.md](FEATURES.md) tracks implementation coverage; [TESTING.md](TESTING.md) records actual automated and manual verification. [PARITY_AUDIT.md](PARITY_AUDIT.md) records corrected failures and remaining differences, including brush rendering and untested hardware integration. The aim is familiar Paint behavior with useful editing improvements. This project is an independent implementation and does not claim complete behavioral or visual equivalence with Microsoft Paint.
+
+The ordinary GUI pixel exercise verified an exact RGBA PNG copy, an exact 2× nearest-neighbor resize preserving all three colors and transparency, and an exact 18×18 WebP selection export. Reopening the PNG retained transparency. The final 500px package replay also verified the palette keytips and wrapped Edit colors label. The five artwork acceptance exercises form a separate verification pass.
 
 ## Source layout
 
@@ -137,7 +149,7 @@ The flake exports `packages.<system>.paint-10` and an identical `default`, for `
         ./configuration.nix
         ({ pkgs, ... }: {
           environment.systemPackages = [
-            inputs.paint10.packages.${pkgs.system}.paint-10
+            inputs.paint10.packages.${pkgs.stdenv.hostPlatform.system}.paint-10
           ];
         })
       ];
