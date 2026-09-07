@@ -1,0 +1,34 @@
+[package]
+name = "paint-10"
+version = "0.1.0"
+edition = "2021"
+description = "A native Rust recreation of the Windows 10 Paint experience"
+license = "MIT"
+
+[dependencies]
+eframe = { version = "=0.31.1", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "accesskit"] }
+image = { version = "=0.25.6", default-features = false, features = ["png", "jpeg", "bmp", "gif", "ico", "tiff", "webp"] }
+ab_glyph = "0.2.32"
+epaint_default_fonts = "=0.31.1"
+arboard = "3.6.1"
+rfd = { version = "0.15.4", default-features = false, features = ["gtk3"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+flate2 = "1"
+tempfile = "3"
+fontdb = "0.23"
+color_quant = "1.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.11.1", default-features = false, features = ["async-std"] }
+pollster = "0.4"
+gtk = { version = "=0.18.2", features = ["v3_24"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[patch.crates-io]
+egui-winit = { path = "vendor/egui-winit" }

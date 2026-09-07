@@ -1,0 +1,269 @@
+use crate::document::{rotation_size, valid_size, Document, Object, ObjectKind};
+use image::RgbaImage;
+use serde::{Deserialize, Serialize};
+use std::{
+    io::{Read, Write},
+    path::Path,
+};
+
+#[derive(Serialize, Deserialize)]
+struct Project {
+    version: u32,
+    #[serde(default)]
+    mono: bool,
+    #[serde(default)]
+    resolution: crate::metadata::Resolution,
+    #[serde(with = "pixels")]
+    image: RgbaImage,
+    #[serde(deserialize_with = "deserialize_objects")]
+    objects: Vec<Object>,
+}
+
+pub fn save(doc: &Document, path: &Path) -> Result<(), String> {
+    let data = Project {
+        version: 1,
+        mono: doc.mono,
+        resolution: doc.resolution,
+        image: doc.image.clone(),
+        objects: doc.objects.clone(),
+    };
+    let mut out = vec![];
+    out.extend(b"PAINT10\0");
+    let mut encoder = flate2::write::ZlibEncoder::new(out, flate2::Compression::default());
+    serde_json::to_writer(&mut encoder, &data).map_err(|e| e.to_string())?;
+    atomic_write(path, &encoder.finish().map_err(|e| e.to_string())?)
+}
+
+pub fn load(path: &Path) -> Result<Document, String> {
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut magic = [0; 8];
+    file.read_exact(&mut magic).map_err(|e| e.to_string())?;
+    if &magic != b"PAINT10\0" {
+        return Err("This is not a Paint 10 project.".into());
+    }
+    let mut bytes = vec![];
+    flate2::read::ZlibDecoder::new(file)
+        .take(256 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() > 256 * 1024 * 1024 {
+        return Err("Project exceeds the 256 MB limit.".into());
+    }
+    let data: Project =
+        serde_json::from_slice(&bytes).map_err(|e| format!("Invalid project: {e}"))?;
+    if data.version != 1 {
+        return Err("Unsupported Paint 10 project version.".into());
+    }
+    data.resolution.validate()?;
+    let mut doc = Document::from_image(data.image);
+    doc.objects = data.objects;
+    doc.mono = data.mono;
+    doc.resolution = data.resolution;
+    Ok(doc)
+}
+
+fn validate_object(object: &Object) -> Result<usize, String> {
+    if !object.angle.is_finite()
+        || !object.scale.is_finite()
+        || object.scale <= 0.
+        || object.scale > 16.
+    {
+        return Err("Invalid project object transform.".into());
+    }
+    if [object.pos.0, object.pos.1]
+        .iter()
+        .any(|&p| !(i32::MIN + 32768..=i32::MAX - 32768).contains(&p))
+    {
+        return Err("Object position is outside the supported range.".into());
+    }
+    let (width, height, bytes) = match &object.kind {
+        ObjectKind::Raster(image) | ObjectKind::Image(image) => {
+            (image.width(), image.height(), image.as_raw().len())
+        }
+        ObjectKind::Text { text, format } => {
+            format.validate_for_text(text)?;
+            let (width, height) = format.dimensions(text);
+            (width, height, text.len() + format.memory_bytes())
+        }
+    };
+    let width = (width as f64 * object.scale as f64).round().max(1.) as u32;
+    let height = (height as f64 * object.scale as f64).round().max(1.) as u32;
+    if !valid_size(width, height) || rotation_size(width, height, object.angle).is_none() {
+        return Err("An object transform exceeds the canvas allocation limit.".into());
+    }
+    Ok(bytes)
+}
+
+fn deserialize_objects<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<Object>, D::Error> {
+    struct Objects;
+    impl<'de> serde::de::Visitor<'de> for Objects {
+        type Value = Vec<Object>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a bounded list of Paint 10 objects")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut sequence: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut objects = vec![];
+            let mut bytes = 0;
+            while let Some(object) = sequence.next_element::<Object>()? {
+                bytes += validate_object(&object).map_err(serde::de::Error::custom)?;
+                if objects.len() >= 1000 || bytes > 128 * 1024 * 1024 {
+                    return Err(serde::de::Error::custom(
+                        "Project objects exceed the 128 MB or 1,000 object limit.",
+                    ));
+                }
+                objects.push(object);
+            }
+            Ok(objects)
+        }
+    }
+    deserializer.deserialize_seq(Objects)
+}
+
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let directory = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut file = tempfile::NamedTempFile::new_in(directory).map_err(|e| e.to_string())?;
+    file.write_all(bytes).map_err(|e| e.to_string())?;
+    file.as_file().sync_all().map_err(|e| e.to_string())?;
+    file.persist(path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub mod pixels {
+    use super::*;
+    pub fn serialize<S: serde::Serializer>(img: &RgbaImage, s: S) -> Result<S::Ok, S::Error> {
+        let mut bytes = std::io::Cursor::new(vec![]);
+        img.write_to(&mut bytes, image::ImageFormat::Png)
+            .map_err(serde::ser::Error::custom)?;
+        s.serialize_bytes(bytes.get_ref())
+    }
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<RgbaImage, D::Error> {
+        let bytes = Vec::<u8>::deserialize(d)?;
+        let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+            .with_guessed_format()
+            .map_err(serde::de::Error::custom)?;
+        let mut limits = image::Limits::default();
+        limits.max_alloc = Some(96 * 1024 * 1024);
+        limits.max_image_width = Some(16384);
+        limits.max_image_height = Some(16384);
+        reader.limits(limits);
+        let img = reader
+            .decode()
+            .map_err(serde::de::Error::custom)?
+            .to_rgba8();
+        if !valid_size(img.width(), img.height()) {
+            return Err(serde::de::Error::custom(
+                "Image dimensions exceed the canvas limit",
+            ));
+        }
+        Ok(img)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::{ObjectKind, BLACK};
+    #[test]
+    fn editable_objects_roundtrip() {
+        let mut doc = Document::new(64, 64);
+        doc.mono = true;
+        doc.resolution = crate::metadata::Resolution { x: 300.0, y: 150.0 };
+        let mut format = crate::text::TextFormat {
+            size: 18.0,
+            color: BLACK,
+            bold: true,
+            ..Default::default()
+        };
+        format
+            .modify_style(1..4, |style| {
+                style.font = epaint_default_fonts::HACK_REGULAR.to_vec();
+                style.font_name = "Monospace".into();
+                style.color = [255, 0, 0, 255];
+                style.italic = true;
+                style.size = 26.0;
+            })
+            .unwrap();
+        doc.add_object(Object {
+            kind: ObjectKind::Text {
+                text: "Hello".into(),
+                format,
+            },
+            pos: (4, 5),
+            angle: 25.,
+            scale: 1.,
+            color_key: Some(crate::document::WHITE),
+        });
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("test.p10");
+        save(&doc, &path).unwrap();
+        let reopened = load(&path).unwrap();
+        assert_eq!(doc.composite(), reopened.composite());
+        assert!(doc.objects == reopened.objects);
+        assert_eq!(doc.resolution, reopened.resolution);
+        assert!(matches!(
+            reopened.objects.last().unwrap().kind,
+            ObjectKind::Text { .. }
+        ));
+        assert!(reopened.mono);
+    }
+    #[test]
+    fn corrupt_project_fails_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("bad.p10");
+        std::fs::write(&path, b"not a project").unwrap();
+        assert!(load(&path).is_err());
+    }
+
+    #[test]
+    fn invalid_object_data_fails_closed_before_rendering() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("invalid.p10");
+        let bad_formats = [
+            crate::text::TextFormat {
+                size: 0.,
+                ..Default::default()
+            },
+            crate::text::TextFormat {
+                font: vec![1, 2, 3],
+                ..Default::default()
+            },
+            crate::text::TextFormat {
+                width: u32::MAX,
+                ..Default::default()
+            },
+        ];
+        for format in bad_formats {
+            let mut doc = Document::new(8, 8);
+            doc.objects.push(Object {
+                kind: ObjectKind::Text {
+                    text: "bad".into(),
+                    format,
+                },
+                pos: (0, 0),
+                scale: 1.,
+                angle: 0.,
+                color_key: None,
+            });
+            save(&doc, &path).unwrap();
+            assert!(load(&path).is_err());
+        }
+        let mut doc = Document::new(8, 8);
+        doc.objects.push(Object {
+            kind: ObjectKind::Image(RgbaImage::new(512, 512)),
+            pos: (0, 0),
+            scale: 16.,
+            angle: 0.,
+            color_key: None,
+        });
+        save(&doc, &path).unwrap();
+        assert!(load(&path).is_err());
+    }
+}
