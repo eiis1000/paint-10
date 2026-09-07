@@ -1,12 +1,33 @@
 # Paint 10 verification log
 
+## Reopened audit after the completion challenge
+
+The earlier 76-test pass was insufficient. `PARITY_AUDIT.md` records the concrete failures found afterward and the remaining differences. The following checks were performed against rebuilt native executables, using real mouse and keyboard input on private Xvfb desktops.
+
+- **Clipboard replacement and text completion:** reproduced the old stale-image paste after copying characters (`/tmp/paint10-stale-clipboard-confirmed.png`). The rebuilt app finishes text with Ctrl+Enter and reports no picture on a text-only clipboard, preserving the drawing (`/tmp/paint10-audit-clipboard-fixed.png`). An unsuccessful image paste also keeps active text open in a focused regression.
+- **Text palette and clipboard:** only `second` changed color in `First second` (`/tmp/paint10-audit-word-blue-settled.png`). Home Copy/Cut removed only the selected characters; Quick Access Undo restored the word and its color (`/tmp/paint10-audit-home-cut.png`, `/tmp/paint10-audit-text-qat-undo.png`).
+- **Font entry:** typed `4` and `6` in separate rendered frames, then Enter; the font became 46 points without inserting digits into the text (`/tmp/paint10-audit-font-46.png`). Typed `DejaVu Serif` into the new font-name field for one selected word. Its changed rendering is visible in `/tmp/paint10-audit-thumbnail-navigated-text.png`. The automated font test constructs a real two-face TTC, selects face 1, compares its raster against the standalone font and round-trips the face through `.p10`.
+- **Active text handles:** resized the typing box until two words reflowed onto separate lines, moved its border, committed and reopened it at the new position (`/tmp/paint10-audit-text-handle-wrap.png`, `/tmp/paint10-audit-text-handle-move.png`, `/tmp/paint10-audit-moved-text-reopened-settled.png`). Actual-frame tests also check geometry undo/redo.
+- **Transformed text:** a 90° text rotation produced 130×205 bounds. Touching its handle preserved both pixels and the saved title; a horizontal drag stretched it to 230×205 without reflow (`/tmp/paint10-audit-noop-stays-saved.png`, `/tmp/paint10-audit-rotated-text-stretched.png`). Saved through the native `.p10` format selector and reopened with the transform intact (`/tmp/paint10-audit-project-reopened.png`).
+- **Off-canvas resize:** moved that object partly outside the canvas. The status reported visible bounds of 153×205 while Resize correctly initialized the full 230×205 dimensions (`/tmp/paint10-audit-offcanvas-resize-dialog.png`).
+- **Stroke clipping:** an out-and-back brush drag left two clipped diagonal segments and no unwanted horizontal stroke along the canvas edge (`/tmp/paint10-audit-outside-brush.png`). In the packaged app, copying and pasting an active 8-pixel horizontal line retained all eight rows, with 208×8 pasted bounds (`/tmp/paint10-audit-thick-line-paste.png`).
+- **Quick Access Toolbar:** added Open, moved the toolbar below the ribbon, inspected its private preferences file, closed and reopened the app, and verified both settings persisted (`/tmp/paint10-audit-qat-persisted.png`). Manual testing exposed missing direct Alt-number handling; after fixing it, customized Alt+4 opened the native Open dialog in the final package (`/tmp/paint10-audit-packaged-alt4.png`).
+- **Thumbnail and keyboard context:** at 200%, enabled Thumbnail while editing text, then clicked its preview to scroll the active text box into view without committing it (`/tmp/paint10-audit-thumbnail-navigated-text.png`). Shift+F10 displayed text-specific commands (`/tmp/paint10-audit-text-context-menu.png`). The Thumbnail regression was verified to fail without the overlay-layer guard and pass with it using the actual canvas → thumbnail → dialogs update order.
+- **Drawing and gallery regressions:** actual-frame checks cover stationary marker opacity, brush continuation across event batches, curve stability between bend drags, the polygon's first-edge preview and no-op selection handles. Raster checks cover all 23 shape bounds at widths 1/3/8/50, noncrossing Cloud callout geometry and rounded callout corners. The regenerated raster/contact sheets were visually inspected. The 500px ribbon regression checks keyboard scrolling, activation and accessible names in both gallery presentations.
+
+Final verification: **122 tests pass (62 library, 60 application)** in the Nix release package. Native build, strict `cargo clippy --all-targets -- -D warnings`, formatting and `nix flake check .` pass on x86_64-linux. Release log: `tmp/final-package-build.log`. Package tested: `/nix/store/pc6vxlmfsvn05v0j0fwqbj4midwbbywd-paint-10-0.1.0`.
+
+The live development session used `/tmp/paint10-desktop.kWQhCQ`; the final packaged session used `/tmp/paint10-desktop.z1i8U7`. The software renderer can lag input; screenshots above were inspected after the relevant state settled. The early 45 ms-per-digit font-entry attempt on the old binary did **not** reproduce the focus bug and is not cited as failure evidence.
+
+The earlier passes below are historical evidence, not proof that the original requirement was already complete. Hardware/portal checks and exhaustive Windows equivalence remain unverified; see `PARITY_AUDIT.md`.
+
 ## Environment
 
 - Native Rust eframe/egui 0.31.1, Nix dev shell, Rust 1.97.1.
 - The shared KDE Wayland desktop locked during implementation. Computer Use screenshots confirmed the lock screen. No session settings were changed.
 - Xvfb displays (1280×900) are used for manual mouse/keyboard tests: initially `:99`, then dynamically allocated `:1` and `:2` through the delivered launcher. Screenshots use the screenshot skill helper. Actions use XTEST/xdotool against the actual application window.
 - Isolation correction: GTK initially auto-discovered the host Wayland socket and opened Save on the user's desktop. The test process was stopped. The launcher now forces `GDK_BACKEND=x11`, creates a private runtime directory, and uses `dbus-run-session`. A new screenshot of Xvfb itself confirms the native Save dialog is contained there: `/tmp/paint10-truly-isolated-save.png`.
-- The user's desktop must not be accessed until 2026-09-07 05:07:54 UTC, per their two-hour timer request.
+- The user's two-hour desktop restriction expired at 2026-09-07 05:07:54 UTC. The reopened audit continued using private desktops.
 - Mesa 26.1.8 llvmpipe stalled in `lp_fence_wait` on the isolated display. GDB stacks localized it to the software rasterizer. The isolated test uses `GALLIUM_DRIVER=softpipe`; the application does not force a graphics driver or disable vsync.
 
 ## First manual pass
@@ -36,7 +57,7 @@
 ## Automated checks
 
 - Initial 7 tests passed: fill boundaries, history/saved state, canceled previews, clipped paste, rotation/canvas sizing, text/PNG round-trip, PDF layout.
-- The final integrated suite passed 76 tests (54 library and 22 UI tests), including image metadata, bitmap bit depths, rich text/history, transformed selections, project bounds, custom paper sizes and modal keyboard behavior. Strict `cargo clippy --all-targets -- -D warnings` and formatting checks passed. The three dialog keyboard tests use an actual modal Window, and passed again after the manual focus fix.
+- The earlier integrated suite passed 76 tests (54 library and 22 UI tests), including image metadata, bitmap bit depths, rich text/history, transformed selections, project bounds, custom paper sizes and modal keyboard behavior. Strict `cargo clippy --all-targets -- -D warnings` and formatting checks passed. The three dialog keyboard tests use an actual modal Window, and passed again after the manual focus fix.
 - Twelve printing tests pass. Letter, A4 landscape with asymmetric margins, Legal, A3 landscape, custom 100×160 mm paper, and every page of two four-page tiled PDFs were rendered with Poppler and visually inspected. Fixtures are in `tmp/pdfs/`.
 
 ## Manual coverage

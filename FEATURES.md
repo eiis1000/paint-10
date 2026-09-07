@@ -1,8 +1,9 @@
 # Paint 10 compatibility checklist
 
-The target is Windows 10's ribbon-based Paint. A checked feature means implemented; manual verification is recorded separately in `TESTING.md`.
+The target is Windows 10's ribbon-based Paint. A checked feature means implemented; manual verification is recorded separately in `TESTING.md`. `PARITY_AUDIT.md` records the reopened audit and remaining differences; this checklist alone does not establish completion.
 
 - [x] Home/View ribbon, quick save/undo/redo, palette, Color 1/2, status, scrolling canvas
+- [x] Customizable Quick Access Toolbar, above/below placement, persistence and direct numeric Alt shortcuts
 - [x] Pencil, brush, fill, eraser, eyedropper, magnifier
 - [x] All nine brush presets and textured shape outline/fill styles
 - [x] All 23 Paint shapes, multi-point polygon, two-bend curve
@@ -13,9 +14,9 @@ The target is Windows 10's ribbon-based Paint. A checked feature means implement
 - [x] Resize in pixels/percent, aspect ratio, skew, canvas resize handles
 - [x] Rotate 90/180/270, flips, arbitrary-angle rotation
 - [x] Text/image objects remain selectable and movable during editing
-- [x] In-canvas rich text entry, font family, point size, bold/italic/underline/strikeout, opacity
+- [x] In-canvas rich text entry with active move/resize handles, typed font names, collection faces, point size, bold/italic/underline/strikeout, opacity
 - [x] Image properties units, DPI metadata and monochrome conversion
-- [x] Zoom, rulers, pixel grid, image-only view
+- [x] Zoom, rulers, pixel grid, image-only view and live Thumbnail navigation
 - [x] Page setup with 19 paper presets/custom dimensions, multi-page print preview, PDF export and system print dialog
 - [x] Scanner/camera import, email drafts and desktop background integration where supported
 - [x] Context menus, keyboard command navigation and Paint keyboard shortcuts

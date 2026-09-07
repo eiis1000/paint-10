@@ -2,6 +2,16 @@
 
 Objective: recreate Windows 10 MS Paint as a native Rust desktop app, with regular manual computer-use testing.
 
+**Reopened audit, 2026-09-07:** the previous completion claim was premature. The concrete workflow fixes listed in PARITY_AUDIT.md are implemented and verified. All three agents have handed back their files. Root integrated clipboard behavior, editable transforms, toolbar preferences/direct shortcuts, and repeated real GUI tests. The original requirement of complete Windows Paint equivalence has not been established; remaining differences are explicit in the audit.
+
+Current verification: 122 release tests (62 library, 60 application), native build, strict Clippy, formatting and x86_64-linux flake check pass. Package `/nix/store/pc6vxlmfsvn05v0j0fwqbj4midwbbywd-paint-10-0.1.0` was launched and manually exercised. Current manual evidence is at the top of TESTING.md. Scratch projects/screenshots remain outside Git.
+
+Both reopened-audit GUI sessions closed cleanly. The final packaged session was `/tmp/paint10-desktop.z1i8U7`; its temporary stroke and paste were undone before closing. The saved regression project remains `/tmp/paint10-audit-transforms.p10`. No host desktop input was used for these checks.
+
+Current implementation commits: acca55d (toolbar settings/vector command icons), b423e4e (editing, transforms, drawing, fonts, ribbon, keyboard and Thumbnail). No source changes are pending. The following notes describe the earlier, insufficient verification pass and must not override the reopened audit.
+
+## Earlier implementation pass
+
 - [x] Raster document, drawing tools, undo/redo
 - [x] Windows 10 title bar, Home/View ribbon, palette, canvas, status bar
 - [x] First desktop test: drawing, shapes, colors, undo/redo
