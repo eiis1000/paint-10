@@ -590,7 +590,9 @@ impl PaintApp {
                 ctx.memory_mut(|memory| memory.set_modal_layer(shown.response.layer_id));
             }
         }
-        self.text_editor(ctx);
+        if !self.measure.enabled {
+            self.text_editor(ctx);
+        }
         if let Some(dialog) = self.dialog {
             let title = kind.expect("dialog title");
             let mut open = true;
