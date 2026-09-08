@@ -5,7 +5,7 @@ const DEVANAGARI: &[u8] = include_bytes!("../../assets/test-fonts/NotoSansDevana
 
 fn format(font: &[u8]) -> TextFormat {
     TextFormat {
-        font: font.to_vec(),
+        font: font.into(),
         size: 64.0,
         width: 700,
         ..Default::default()
@@ -210,14 +210,14 @@ fn shaping_keeps_fallback_fonts_styles_and_serialized_metadata_unchanged() {
         font_faces: vec![
             EmbeddedFont {
                 family: "Arabic fallback".into(),
-                data: DEJAVU.to_vec(),
+                data: DEJAVU.into(),
                 index: 0,
                 bold: false,
                 italic: false,
             },
             EmbeddedFont {
                 family: "Indic fallback".into(),
-                data: DEVANAGARI.to_vec(),
+                data: DEVANAGARI.into(),
                 index: 0,
                 bold: false,
                 italic: false,
@@ -359,7 +359,7 @@ fn grapheme_fallback_shapes_the_base_and_mark_together() {
         width: 700,
         font_faces: vec![EmbeddedFont {
             family: "DejaVu fallback".into(),
-            data: DEJAVU.to_vec(),
+            data: DEJAVU.into(),
             index: 0,
             bold: false,
             italic: false,

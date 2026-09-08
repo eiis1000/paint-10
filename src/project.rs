@@ -6,6 +6,10 @@ use std::{
     path::Path,
 };
 
+#[cfg(test)]
+mod version_tests;
+mod wire;
+
 const MAX_PROJECT_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_OBJECT_BYTES: usize = 128 * 1024 * 1024;
 const MAX_OBJECTS: usize = 1000;
@@ -27,26 +31,15 @@ pub fn save(doc: &Document, path: &Path) -> Result<(), String> {
     atomic_write(path, &encode(doc)?)
 }
 
-/// The same bounded editable project format for disk and browser downloads.
+/// Encode the bounded version-2 format for disk and browser downloads.
+/// Each distinct font binary is stored once; the loader also accepts version 1.
 pub fn encode(doc: &Document) -> Result<Vec<u8>, String> {
     doc.resolution.validate()?;
     if !valid_size(doc.image.width(), doc.image.height()) {
         return Err("The project canvas exceeds the allocation limit.".into());
     }
-    let mut object_bytes = 0usize;
-    for object in &doc.objects {
-        object_bytes += validate_object(object)?;
-    }
-    if doc.objects.len() > MAX_OBJECTS || object_bytes > MAX_OBJECT_BYTES {
-        return Err("Project objects exceed the 128 MB or 1,000 object limit. Export a picture or reduce the number of editable objects.".into());
-    }
-    let data = Project {
-        version: 1,
-        mono: doc.mono,
-        resolution: doc.resolution,
-        image: doc.image.clone(),
-        objects: doc.objects.clone(),
-    };
+    validate_objects(&doc.objects)?;
+    let data = wire::Project::from_document(doc)?;
     let mut out = vec![];
     out.extend(b"PAINT10\0");
     let mut encoder = BoundedWriter {
@@ -103,11 +96,20 @@ fn decode_reader(mut file: impl Read) -> Result<Document, String> {
     if bytes.len() as u64 > MAX_PROJECT_BYTES {
         return Err("Project exceeds the 256 MB limit.".into());
     }
-    let data: Project =
-        serde_json::from_slice(&bytes).map_err(|e| format!("Invalid project: {e}"))?;
-    if data.version != 1 {
-        return Err("Unsupported Paint 10 project version.".into());
+    #[derive(Deserialize)]
+    struct Version {
+        version: u32,
     }
+    let version: Version =
+        serde_json::from_slice(&bytes).map_err(|e| format!("Invalid project: {e}"))?;
+    let data = match version.version {
+        1 => serde_json::from_slice::<Project>(&bytes)
+            .map_err(|e| format!("Invalid project: {e}"))?,
+        2 => serde_json::from_slice::<wire::Project>(&bytes)
+            .map_err(|e| format!("Invalid project: {e}"))?
+            .into_project()?,
+        _ => return Err("Unsupported Paint 10 project version.".into()),
+    };
     data.resolution.validate()?;
     let mut doc = Document::from_image(data.image);
     doc.objects = data.objects;
@@ -149,6 +151,32 @@ fn validate_object(object: &Object) -> Result<usize, String> {
     Ok(bytes)
 }
 
+fn object_bytes(object: &Object, fonts: &mut crate::text::FontMemory) -> usize {
+    match &object.kind {
+        ObjectKind::Raster(image) | ObjectKind::Image(image) => image.as_raw().len(),
+        ObjectKind::Text { text, format } => text.len() + format.memory_bytes_with_fonts(fonts),
+    }
+}
+
+fn validate_objects(objects: &[Object]) -> Result<(), String> {
+    if objects.len() > MAX_OBJECTS {
+        return Err("Project objects exceed the 1,000 object limit.".into());
+    }
+    let mut fonts = crate::text::FontMemory::default();
+    let mut bytes = 0usize;
+    for object in objects {
+        validate_object(object)?;
+        bytes = bytes.saturating_add(object_bytes(object, &mut fonts));
+        if bytes > MAX_OBJECT_BYTES {
+            break;
+        }
+    }
+    if bytes > MAX_OBJECT_BYTES {
+        return Err("Project objects exceed the 128 MB or 1,000 object limit. Export a picture or reduce the number of editable objects.".into());
+    }
+    Ok(())
+}
+
 fn deserialize_objects<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<Object>, D::Error> {
@@ -163,9 +191,11 @@ fn deserialize_objects<'de, D: serde::Deserializer<'de>>(
             mut sequence: A,
         ) -> Result<Self::Value, A::Error> {
             let mut objects = vec![];
-            let mut bytes = 0;
+            let mut bytes = 0usize;
+            let mut fonts = crate::text::FontMemory::default();
             while let Some(object) = sequence.next_element::<Object>()? {
-                bytes += validate_object(&object).map_err(serde::de::Error::custom)?;
+                validate_object(&object).map_err(serde::de::Error::custom)?;
+                bytes = bytes.saturating_add(object_bytes(&object, &mut fonts));
                 if objects.len() >= MAX_OBJECTS || bytes > MAX_OBJECT_BYTES {
                     return Err(serde::de::Error::custom(
                         "Project objects exceed the 128 MB or 1,000 object limit.",
@@ -260,10 +290,10 @@ mod tests {
     #[test]
     fn project_bytes_preserve_font_variants_and_missing_glyph_fallback() {
         let format = crate::text::TextFormat {
-            font: epaint_default_fonts::HACK_REGULAR.to_vec(),
+            font: epaint_default_fonts::HACK_REGULAR.into(),
             font_faces: vec![crate::text::EmbeddedFont {
                 family: "Noto Emoji".into(),
-                data: epaint_default_fonts::NOTO_EMOJI_REGULAR.to_vec(),
+                data: epaint_default_fonts::NOTO_EMOJI_REGULAR.into(),
                 index: 0,
                 bold: false,
                 italic: false,
@@ -286,7 +316,7 @@ mod tests {
         };
         assert_eq!(text, "A😀B");
         assert_eq!(
-            format.font_faces[0].data,
+            format.font_faces[0].data.as_ref(),
             epaint_default_fonts::NOTO_EMOJI_REGULAR
         );
     }
@@ -460,7 +490,7 @@ mod tests {
         };
         format
             .modify_style(1..4, |style| {
-                style.font = epaint_default_fonts::HACK_REGULAR.to_vec();
+                style.font = epaint_default_fonts::HACK_REGULAR.into();
                 style.font_name = "Monospace".into();
                 style.color = [255, 0, 0, 255];
                 style.italic = true;
@@ -524,7 +554,7 @@ mod tests {
                 ..Default::default()
             },
             crate::text::TextFormat {
-                font: vec![1, 2, 3],
+                font: vec![1, 2, 3].into(),
                 ..Default::default()
             },
             crate::text::TextFormat {

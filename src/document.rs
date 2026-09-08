@@ -1,3 +1,4 @@
+use crate::text::FontMemory;
 use image::{imageops, Rgba, RgbaImage};
 use std::collections::VecDeque;
 
@@ -8,6 +9,9 @@ pub const BLACK: Color = [0, 0, 0, 255];
 pub const MAX_PIXELS: u64 = 16_777_216;
 pub const DEFAULT_CANVAS_SIZE: (u32, u32) = (900, 600);
 const HISTORY_BYTES: usize = 128 * 1024 * 1024;
+
+#[cfg(test)]
+mod history_tests;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
@@ -658,9 +662,14 @@ impl Document {
             self.redo.clear();
             self.revision = self.next_revision;
             self.next_revision += 1;
-            let mut bytes: usize = self.undo.iter().map(Snapshot::bytes).sum();
-            while bytes > HISTORY_BYTES && self.undo.len() > 1 {
-                bytes -= self.undo.pop_front().unwrap().bytes();
+            let mut fonts = FontMemory::default();
+            let mut bytes = 0usize;
+            for index in (0..self.undo.len()).rev() {
+                bytes = bytes.saturating_add(self.undo[index].bytes_with_fonts(&mut fonts));
+                if bytes > HISTORY_BYTES && index + 1 < self.undo.len() {
+                    self.undo.drain(..=index);
+                    break;
+                }
             }
         }
     }
@@ -831,14 +840,16 @@ impl Document {
 }
 
 impl Snapshot {
-    fn bytes(&self) -> usize {
+    fn bytes_with_fonts(&self, fonts: &mut FontMemory) -> usize {
         self.image.as_raw().len()
             + self
                 .objects
                 .iter()
                 .map(|o| match &o.kind {
                     ObjectKind::Raster(img) | ObjectKind::Image(img) => img.as_raw().len(),
-                    ObjectKind::Text { text, format } => text.len() + format.memory_bytes(),
+                    ObjectKind::Text { text, format } => {
+                        text.len() + format.memory_bytes_with_fonts(fonts)
+                    }
                 })
                 .sum::<usize>()
     }

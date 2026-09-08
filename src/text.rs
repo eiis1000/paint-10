@@ -4,13 +4,17 @@ use image::{Rgba, RgbaImage};
 use std::ops::Range;
 
 mod editor_layout;
+mod font_bytes;
 mod shaping;
 #[cfg(test)]
 mod shaping_tests;
+#[cfg(test)]
+mod sharing_tests;
 pub use editor_layout::{EditorCaret, EditorSelectionRect};
+pub use font_bytes::{FontBytes, FontMemory};
 
-const MAX_TEXT_CHARS: usize = 1024 * 1024;
-const MAX_SPANS: usize = 4096;
+pub(crate) const MAX_TEXT_CHARS: usize = 1024 * 1024;
+pub(crate) const MAX_SPANS: usize = 4096;
 pub const MAX_FONT_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_FORMAT_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_TEXT_WIDTH: u32 = 16384;
@@ -33,7 +37,7 @@ pub fn font_supports_outline(font: &impl Font, character: char) -> bool {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EmbeddedFont {
     pub family: String,
-    pub data: Vec<u8>,
+    pub data: FontBytes,
     pub index: u32,
     pub bold: bool,
     pub italic: bool,
@@ -119,7 +123,7 @@ pub fn pixels_to_points(pixels: f32) -> f32 {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TextStyle {
     pub font_name: String,
-    pub font: Vec<u8>,
+    pub font: FontBytes,
     #[serde(default)]
     pub font_index: u32,
     pub size: f32,
@@ -140,7 +144,7 @@ pub struct TextSpan {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextStyleRef<'a> {
     pub font_name: &'a str,
-    pub font: &'a [u8],
+    pub font: &'a FontBytes,
     pub font_index: u32,
     pub size: f32,
     pub color: Color,
@@ -154,7 +158,7 @@ impl<'a> TextStyleRef<'a> {
     pub fn to_owned(self) -> TextStyle {
         TextStyle {
             font_name: self.font_name.to_owned(),
-            font: self.font.to_vec(),
+            font: self.font.clone(),
             font_index: self.font_index,
             size: self.size,
             color: self.color,
@@ -173,7 +177,7 @@ impl<'a> TextStyleRef<'a> {
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TextFormat {
     pub font_name: String,
-    pub font: Vec<u8>,
+    pub font: FontBytes,
     #[serde(default)]
     pub font_index: u32,
     pub size: f32,
@@ -202,7 +206,7 @@ impl Default for TextFormat {
     fn default() -> Self {
         Self {
             font_name: "Sans serif".into(),
-            font: vec![],
+            font: FontBytes::default(),
             font_index: 0,
             size: 24.0,
             color: BLACK,
@@ -501,16 +505,7 @@ impl TextFormat {
             }
             merged.push(span);
         }
-        let bytes = self.font.len()
-            + self
-                .font_faces
-                .iter()
-                .map(|face| face.data.len())
-                .sum::<usize>()
-            + merged
-                .iter()
-                .map(|span| span.style.font.len())
-                .sum::<usize>();
+        let bytes = self.memory_bytes_for_spans(&merged, &mut FontMemory::default());
         if merged.len() > MAX_SPANS || bytes > MAX_FORMAT_BYTES {
             return Err("This text box has reached its formatting limit.".into());
         }
@@ -519,22 +514,39 @@ impl TextFormat {
     }
 
     pub fn memory_bytes(&self) -> usize {
+        self.memory_bytes_with_fonts(&mut FontMemory::default())
+    }
+
+    pub fn font_assets(&self) -> impl Iterator<Item = &FontBytes> {
+        std::iter::once(&self.font)
+            .chain(self.spans.iter().map(|span| &span.style.font))
+            .chain(self.font_faces.iter().map(|face| &face.data))
+    }
+
+    /// Metadata is owned by each format, while immutable font payloads are
+    /// counted once in the caller's document, project or history scope.
+    pub fn memory_bytes_with_fonts(&self, fonts: &mut FontMemory) -> usize {
+        self.memory_bytes_for_spans(&self.spans, fonts)
+    }
+
+    fn memory_bytes_for_spans(&self, spans: &[TextSpan], fonts: &mut FontMemory) -> usize {
         self.font_name.len()
-            + self.font.len()
+            + fonts.include(&self.font)
             + self
                 .font_faces
                 .iter()
                 .map(|face| {
-                    std::mem::size_of::<EmbeddedFont>() + face.family.len() + face.data.len()
+                    std::mem::size_of::<EmbeddedFont>()
+                        + face.family.len()
+                        + fonts.include(&face.data)
                 })
                 .sum::<usize>()
-            + self
-                .spans
+            + spans
                 .iter()
                 .map(|span| {
                     std::mem::size_of::<TextSpan>()
                         + span.style.font_name.len()
-                        + span.style.font.len()
+                        + fonts.include(&span.style.font)
                 })
                 .sum::<usize>()
     }
@@ -1104,7 +1116,8 @@ impl<'a> RenderStyle<'a> {
                 (
                     u8::from(face.bold != source.bold) + u8::from(face.italic != source.italic),
                     u8::from(
-                        face.index != source.font_index || face.data != font_bytes(source.font),
+                        face.index != source.font_index
+                            || face.data.as_ref() != font_bytes(source.font),
                     ),
                 )
             });
@@ -1366,7 +1379,7 @@ mod tests {
     fn embedded(family: &str, bytes: &[u8], bold: bool, italic: bool) -> EmbeddedFont {
         EmbeddedFont {
             family: family.into(),
-            data: bytes.to_vec(),
+            data: bytes.into(),
             index: 0,
             bold,
             italic,
@@ -1379,7 +1392,7 @@ mod tests {
         // in both glyph pixels and caret advances, without relying on host fonts.
         let mut format = TextFormat {
             font_name: "Variant fixture".into(),
-            font: epaint_default_fonts::UBUNTU_LIGHT.to_vec(),
+            font: epaint_default_fonts::UBUNTU_LIGHT.into(),
             bold: true,
             italic: true,
             font_faces: vec![
@@ -1400,7 +1413,7 @@ mod tests {
         };
         format.validate().unwrap();
         let expected = TextFormat {
-            font: epaint_default_fonts::HACK_REGULAR.to_vec(),
+            font: epaint_default_fonts::HACK_REGULAR.into(),
             ..Default::default()
         };
         assert_eq!(
@@ -1439,7 +1452,7 @@ mod tests {
             0
         );
         let format = TextFormat {
-            font: epaint_default_fonts::HACK_REGULAR.to_vec(),
+            font: epaint_default_fonts::HACK_REGULAR.into(),
             width: 100,
             font_faces: vec![embedded(
                 "Noto Emoji",
@@ -1450,7 +1463,7 @@ mod tests {
             ..Default::default()
         };
         let expected = TextFormat {
-            font: epaint_default_fonts::NOTO_EMOJI_REGULAR.to_vec(),
+            font: epaint_default_fonts::NOTO_EMOJI_REGULAR.into(),
             width: 100,
             ..Default::default()
         };
@@ -1499,7 +1512,7 @@ mod tests {
         assert_ne!(without_outlines.glyph_id('A').0, 0);
         assert!(!font_supports_outline(&without_outlines, 'A'));
         let format = TextFormat {
-            font: bytes,
+            font: bytes.into(),
             font_faces: vec![embedded(
                 "Fallback",
                 epaint_default_fonts::UBUNTU_LIGHT,
@@ -1529,7 +1542,7 @@ mod tests {
     fn matching_family_faces_preserve_exact_embedded_source_bytes() {
         let expected = TextFormat {
             font_name: "Same family".into(),
-            font: epaint_default_fonts::HACK_REGULAR.to_vec(),
+            font: epaint_default_fonts::HACK_REGULAR.into(),
             ..Default::default()
         };
         let mut with_faces = expected.clone();
@@ -1572,11 +1585,11 @@ mod tests {
         invalid.font_faces[0].index = u32::MAX;
         assert!(invalid.validate().is_err());
         invalid.font_faces[0] = face.clone();
-        invalid.font_faces[0].data = b"not a font".to_vec();
+        invalid.font_faces[0].data = b"not a font".into();
         assert!(invalid.validate().is_err());
         invalid.font_faces = (0..=MAX_FONT_FACES)
             .map(|_| EmbeddedFont {
-                data: vec![],
+                data: FontBytes::default(),
                 ..face.clone()
             })
             .collect();
@@ -1717,7 +1730,7 @@ mod tests {
     #[test]
     fn alignment_moves_wrapped_rich_text_without_changing_its_styles() {
         let mut format = TextFormat {
-            font: epaint_default_fonts::HACK_REGULAR.to_vec(),
+            font: epaint_default_fonts::HACK_REGULAR.into(),
             size: 28.0,
             width: 160,
             ..Default::default()
@@ -1757,7 +1770,7 @@ mod tests {
     #[test]
     fn outlined_captions_preserve_rich_fill_and_fit_their_bounds() {
         let mut format = TextFormat {
-            font: epaint_default_fonts::HACK_REGULAR.to_vec(),
+            font: epaint_default_fonts::HACK_REGULAR.into(),
             size: 52.0,
             width: 420,
             color: [255, 255, 255, 255],
@@ -1854,7 +1867,7 @@ mod tests {
         let scaled = font.as_scaled(20.0);
         let width = (scaled.h_advance(scaled.glyph_id('a')) * 5.0 + 2.5).ceil() as u32;
         let format = TextFormat {
-            font: epaint_default_fonts::HACK_REGULAR.to_vec(),
+            font: epaint_default_fonts::HACK_REGULAR.into(),
             width,
             size: 20.0,
             ..Default::default()
@@ -1911,7 +1924,7 @@ mod tests {
     fn invalid_metrics_render_bounded_and_fail_validation() {
         let bad = TextFormat {
             size: f32::NAN,
-            font: vec![1, 2, 3],
+            font: vec![1, 2, 3].into(),
             width: u32::MAX,
             ..Default::default()
         };
@@ -1994,7 +2007,7 @@ mod tests {
             .modify_style(2..4, |style| {
                 style.size = 48.0;
                 style.color = [255, 0, 0, 255];
-                style.font = epaint_default_fonts::HACK_REGULAR.to_vec();
+                style.font = epaint_default_fonts::HACK_REGULAR.into();
                 style.font_name = "Monospace".into();
                 style.underline = true;
             })
