@@ -35,6 +35,7 @@ impl PaintApp {
         match read_document(&path, format) {
             Ok(document) => {
                 self.doc = document;
+                self.register_document_fonts();
                 self.file = Some(path.clone());
                 self.clear_selection();
                 self.refresh = true;

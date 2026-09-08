@@ -526,7 +526,7 @@ impl PaintApp {
         }
     }
 
-    fn clipboard_group(&mut self, ui: &mut Ui, o: Pos2, ctx: &Context) {
+    pub(in crate::app) fn clipboard_group(&mut self, ui: &mut Ui, o: Pos2, ctx: &Context) {
         let has_selection = self.text_edit.as_ref().map_or_else(
             || self.selected_region().is_some(),
             |state| !state.selection.is_empty(),

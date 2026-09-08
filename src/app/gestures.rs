@@ -1350,6 +1350,79 @@ mod tests {
         }
     }
 
+    #[test]
+    fn double_clicking_rotated_text_preserves_position_pixels_and_saved_state() {
+        for angle in [28.0, 270.0] {
+            for selected in [false, true] {
+                for cancel in [false, true] {
+                    let context = Context::default();
+                    let mut app = PaintApp::new_with_context(&context, false);
+                    app.doc = Document::new(400, 240);
+                    let mut object = Object::new(
+                        ObjectKind::Text {
+                            text: "Rotated title".into(),
+                            format: crate::text::TextFormat {
+                                width: 160,
+                                ..Default::default()
+                            },
+                        },
+                        (20, 20),
+                    );
+                    object.angle = angle;
+                    let index = app.doc.add_object(object);
+                    app.doc.mark_saved();
+                    app.set_tool(Tool::Select);
+                    if selected {
+                        app.select_object(index);
+                    }
+                    let objects = app.doc.objects.clone();
+                    let pixels = app.doc.composite();
+                    for frame in 0..3 {
+                        pointer_app_frame_at(&mut app, &context, vec![], frame as f64 * 0.03);
+                    }
+                    let first = app.canvas_rect.min + vec2(45.5, 35.5) * app.zoom;
+                    let second = first + vec2(2.0, -1.0);
+                    let mut events = coalesced_click(first, PointerButton::Primary);
+                    events.extend(coalesced_click(second, PointerButton::Primary));
+                    pointer_app_frame_at(&mut app, &context, events, 0.12);
+                    for frame in 5..8 {
+                        pointer_app_frame_at(&mut app, &context, vec![], frame as f64 * 0.03);
+                    }
+                    let editor = app.text_edit.as_ref().expect("Double-click opens text");
+                    assert_eq!(editor.index, Some(index));
+                    assert_eq!(editor.origin, objects[index].pos);
+                    let ObjectKind::Text { format, .. } = &objects[index].kind else {
+                        unreachable!();
+                    };
+                    assert!(
+                        editor.format == *format,
+                        "Opening does not rewrite font assets"
+                    );
+                    assert!(app.doc.objects == objects);
+                    assert!(!app.doc.dirty());
+
+                    let event = Event::Key {
+                        key: if cancel { Key::Escape } else { Key::Enter },
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: if cancel {
+                            Modifiers::NONE
+                        } else {
+                            Modifiers::CTRL
+                        },
+                    };
+                    pointer_app_frame_at(&mut app, &context, vec![event], 0.3);
+                    assert!(app.text_edit.is_none());
+                    assert!(app.doc.objects == objects);
+                    assert!(app.doc.composite() == pixels);
+                    assert!(!app.doc.dirty());
+                    assert!(!app.doc.can_undo());
+                }
+            }
+        }
+    }
+
     fn gesture_frame(app: &mut PaintApp, ctx: &Context, point: Point, released: bool) {
         let _ = ctx.run(RawInput::default(), |ctx| {
             CentralPanel::default().show(ctx, |ui| {

@@ -8,6 +8,7 @@ pub(in crate::app) struct TextHistory {
     redo: Vec<TextSnapshot>,
     last_typing: Option<f64>,
     geometry: Option<TextSnapshot>,
+    cursor: Option<CCursorRange>,
 }
 
 #[derive(Clone)]
@@ -17,6 +18,7 @@ struct TextSnapshot {
     format: crate::text::TextFormat,
     selection: std::ops::Range<usize>,
     insertion_style: Option<DocumentTextStyle>,
+    cursor: Option<CCursorRange>,
 }
 
 #[derive(Clone)]
@@ -24,6 +26,13 @@ struct FontDraft {
     source: String,
     value: String,
     changed: bool,
+}
+
+#[derive(Clone)]
+struct FontPreview {
+    name: String,
+    face: Option<fontdb::ID>,
+    texture: TextureHandle,
 }
 
 impl TextSnapshot {
@@ -34,6 +43,7 @@ impl TextSnapshot {
             format: state.format.clone(),
             selection: state.selection.clone(),
             insertion_style: state.insertion_style.clone(),
+            cursor: state.history.cursor,
         }
     }
 
@@ -43,6 +53,7 @@ impl TextSnapshot {
         state.format = self.format;
         state.selection = self.selection;
         state.insertion_style = self.insertion_style;
+        state.history.cursor = self.cursor;
         state.focus = true;
     }
 
@@ -153,7 +164,7 @@ impl PaintApp {
         {
             return false;
         }
-        let pasted = if matches!(action, Action::Paste) {
+        let pasted: Option<String> = if matches!(action, Action::Paste) {
             match self
                 .clipboard
                 .as_mut()
@@ -288,14 +299,17 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn text_ribbon(&mut self, ui: &mut Ui, origin: Pos2, ctx: &Context) {
-        let Some(mut state) = self.text_edit.take() else {
+        if self.text_edit.is_none() {
             return;
-        };
-        let original_style = active_style(&state);
-        let mut style = original_style.clone();
-        let mut done = false;
-        let mut cancel = false;
+        }
         let groups = [
+            ribbon_layout::Group {
+                label: "Clipboard",
+                width: 120.0,
+                icon: Icon::Paste,
+                keys: "ZC",
+                popup: "text_clipboard",
+            },
             ribbon_layout::Group {
                 label: "Font",
                 width: 311.0,
@@ -332,10 +346,27 @@ impl PaintApp {
                 popup: "text_finish",
             },
         ];
-        let widths =
-            ribbon_layout::widths(&groups, ui.max_rect().right() - origin.x, &[2, 1, 4, 3, 0]);
-        let mut x = origin.x;
-        for (index, (group, width)) in groups.into_iter().zip(widths).enumerate() {
+        let widths = ribbon_layout::widths(
+            &groups,
+            ui.max_rect().right() - origin.x,
+            // Keep Paint's Clipboard, Font, Background and Colors visible
+            // before spending horizontal space on the added editing controls.
+            &[5, 4, 2, 0, 3, 1],
+        );
+        // Clipboard commands need the live text state so Copy/Cut use its
+        // character selection, and Paste can choose text or image contents.
+        ribbon_layout::show(ui, origin, widths[0], "text", groups[0], |ui, origin| {
+            self.clipboard_group(ui, origin, ctx);
+        });
+        let Some(mut state) = self.text_edit.take() else {
+            return;
+        };
+        let original_style = active_style(&state);
+        let mut style = original_style.clone();
+        let mut done = false;
+        let mut cancel = false;
+        let mut x = origin.x + widths[0];
+        for (index, (group, width)) in groups.into_iter().zip(widths).skip(1).enumerate() {
             ribbon_layout::show(ui, pos2(x, origin.y), width, "text", group, |ui, origin| {
                 let origin = origin - vec2([0.0, 311.0, 482.0, 0.0, 829.0][index], 0.0);
                 match index {
@@ -431,7 +462,14 @@ impl PaintApp {
                                 ui.label("Click outside to finish.");
                                 ui.horizontal(|ui| {
                                     done = ribbon_controls::command(ui, "Done").clicked();
-                                    cancel = ribbon_controls::command(ui, "Cancel").clicked();
+                                    let response = ui.button("Cancel");
+                                    ribbon_controls::register(
+                                        ui,
+                                        &response,
+                                        "Q",
+                                        keytips::Kind::Button,
+                                    );
+                                    cancel = response.clicked();
                                 });
                             },
                         );
@@ -589,32 +627,52 @@ impl PaintApp {
                     String::new()
                 };
                 let list = ribbon::ribbon_menu_button(ui, "", "FL", "fonts", None, |ui| {
-                    ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
-                        ui.set_min_width(235.0);
-                        let mut matches = 0;
-                        for name in std::iter::once("Sans serif")
-                            .chain(self.font_names.iter().map(|(name, _)| name.as_str()))
-                        {
-                            if !name.to_lowercase().contains(&filter) {
-                                continue;
+                    let row_count = std::iter::once("Sans serif")
+                        .chain(self.font_names.iter().map(|(name, _)| name.as_str()))
+                        .filter(|name| name.to_lowercase().contains(&filter))
+                        .count();
+                    let height = (row_count.max(1) as f32 * 31.0).min(280.0);
+                    ScrollArea::vertical()
+                        .max_height(280.0)
+                        .min_scrolled_height(height)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            ui.set_min_width(280.0);
+                            let mut matches = 0;
+                            for name in std::iter::once("Sans serif")
+                                .chain(self.font_names.iter().map(|(name, _)| name.as_str()))
+                            {
+                                if !name.to_lowercase().contains(&filter) {
+                                    continue;
+                                }
+                                matches += 1;
+                                let face = self
+                                    .font_names
+                                    .iter()
+                                    .find(|(family, _)| family == name)
+                                    .map(|(_, id)| *id);
+                                let choice = font_choice(
+                                    ui,
+                                    &self.font_db,
+                                    name,
+                                    face,
+                                    style.font_name == name,
+                                );
+                                ribbon_controls::register(
+                                    ui,
+                                    &choice,
+                                    &format!("{matches:03}"),
+                                    keytips::Kind::Button,
+                                );
+                                if choice.clicked() {
+                                    chosen = Some(name.to_owned());
+                                    ui.close_menu();
+                                }
                             }
-                            matches += 1;
-                            let choice = ui.selectable_label(style.font_name == name, name);
-                            ribbon_controls::register(
-                                ui,
-                                &choice,
-                                &format!("{matches:03}"),
-                                keytips::Kind::Button,
-                            );
-                            if choice.clicked() {
-                                chosen = Some(name.to_owned());
-                                ui.close_menu();
+                            if matches == 0 {
+                                ui.label("No matching fonts");
                             }
-                        }
-                        if matches == 0 {
-                            ui.label("No matching fonts");
-                        }
-                    });
+                        });
                 });
                 text_control(ui, &list.response, "Font list", false);
                 ribbon_controls::register(
@@ -630,7 +688,7 @@ impl PaintApp {
         if chosen.is_some() || committed {
             let query = chosen.as_deref().unwrap_or(&draft.value).trim();
             if !self.apply_font_name(query, style) {
-                self.message = format!("No usable installed font matches “{query}”.");
+                self.message = format!("No available font matches “{query}”.");
             }
             draft = FontDraft {
                 source: style.font_name.clone(),
@@ -679,6 +737,39 @@ impl PaintApp {
         true
     }
 
+    pub(in crate::app) fn register_document_fonts(&mut self) {
+        let mut visited = Vec::<&[u8]>::new();
+        let mut added = false;
+        for object in &self.doc.objects {
+            let ObjectKind::Text { format, .. } = &object.kind else {
+                continue;
+            };
+            let sources = std::iter::once(format.font.as_slice())
+                .chain(format.spans.iter().map(|span| span.style.font.as_slice()))
+                .chain(format.font_faces.iter().map(|face| face.data.as_slice()));
+            for data in sources {
+                if data.is_empty() || visited.contains(&data) {
+                    continue;
+                }
+                visited.push(data);
+                let loaded = self.font_db.faces().any(|face| {
+                    self.font_db
+                        .with_face_data(face.id, |existing, _| existing == data)
+                        .unwrap_or(false)
+                });
+                if !loaded {
+                    // Register a collection once; fontdb discovers every face.
+                    // The document keeps its exact original bytes and indices.
+                    self.font_db.load_font_data(data.to_vec());
+                    added = true;
+                }
+            }
+        }
+        if added {
+            self.font_names = font_families(&self.font_db);
+        }
+    }
+
     pub(in crate::app) fn text_editor(&mut self, ctx: &Context) {
         let Some(mut state) = self.text_edit.take() else {
             ctx.data_mut(|data| data.remove::<Rect>(Id::new("paint10_text_editor_rect")));
@@ -695,6 +786,18 @@ impl PaintApp {
         let popup_open = keytips::popup_open(ctx);
         let modal_open = self.dialog.is_some() || self.pending.is_some();
         let first = state.focus && !popup_open && !modal_open;
+        let unchanged_existing_text = state
+            .index
+            .and_then(|index| self.doc.objects.get(index))
+            .is_some_and(|object| {
+                matches!(&object.kind, ObjectKind::Text { text, format }
+                    if text == &state.text && format == &state.format)
+            });
+        if first && !unchanged_existing_text {
+            // Opening a saved box is not an edit. Keep its exact stored font
+            // assets until text or formatting changes require new faces.
+            prepare_text_fonts(&self.font_db, &mut state.format, &state.text);
+        }
         let commit_requested = !popup_open
             && !modal_open
             && ctx.input_mut(|input| {
@@ -704,10 +807,20 @@ impl PaintApp {
         let input_id = Id::new("text_input");
         if first {
             let mut editor = TextEdit::load_state(ctx, input_id).unwrap_or_default();
-            editor.cursor.set_char_range(Some(CCursorRange::two(
-                CCursor::new(state.selection.start),
-                CCursor::new(state.selection.end),
-            )));
+            let cursor = state
+                .history
+                .cursor
+                .filter(|cursor| {
+                    let [start, end] = cursor.sorted();
+                    (start.index..end.index) == state.selection
+                })
+                .unwrap_or_else(|| {
+                    CCursorRange::two(
+                        CCursor::new(state.selection.start),
+                        CCursor::new(state.selection.end),
+                    )
+                });
+            editor.cursor.set_char_range(Some(cursor));
             editor.clear_undoer();
             editor.store(ctx, input_id);
         }
@@ -715,6 +828,7 @@ impl PaintApp {
         let original_text = state.text.clone();
         let original_format = state.format.clone();
         let zoom = self.zoom;
+        let font_db = &self.font_db;
         let (padding_x, padding_y) = state.format.text_padding();
         let mut layouter = |ui: &Ui, text: &str, _width: f32| {
             let mut live_format = original_format.clone();
@@ -724,6 +838,7 @@ impl PaintApp {
                     text,
                     insertion_style.clone(),
                 );
+                prepare_text_fonts(font_db, &mut live_format, text);
             }
             if text.is_empty() {
                 live_format.set_default_style(&insertion_style);
@@ -741,6 +856,12 @@ impl PaintApp {
                 let picture = ui.painter().add(egui::Shape::Noop);
                 ui.visuals_mut().selection.bg_fill =
                     Color32::from_rgba_unmultiplied(40, 140, 235, 85);
+                if !popup_open && !modal_open && !commit_requested {
+                    let viewport = ctx
+                        .data(|data| data.get_temp::<Rect>(Id::new("paint10_canvas_viewport")))
+                        .unwrap_or(self.canvas_rect.intersect(ctx.screen_rect()));
+                    text_navigation(ui, &state.text, &mut layouter, viewport.height());
+                }
                 let output = TextEdit::multiline(&mut state.text)
                     .id(input_id)
                     .layouter(&mut layouter)
@@ -754,7 +875,7 @@ impl PaintApp {
                         state.format.minimum_height as f32 * zoom,
                     ))
                     .show(ui);
-                if first {
+                if first && !output.response.has_focus() {
                     output.response.request_focus();
                 }
                 let mut live_format = original_format.clone();
@@ -768,11 +889,38 @@ impl PaintApp {
                     new_cursor,
                     insertion_style.clone(),
                 );
+                if state.text != original_text {
+                    prepare_text_fonts(font_db, &mut live_format, &state.text);
+                }
                 text_preview::paint(ui, picture, position, &state.text, &live_format, zoom);
                 dashed_rect(ui.painter(), output.response.rect.expand(3.0));
                 output
             })
             .inner;
+        if ctx.data_mut(|data| data.remove_temp::<bool>(input_id.with("navigation_scroll")))
+            == Some(true)
+        {
+            if let Some(cursor) = output.cursor_range {
+                let caret = output
+                    .galley
+                    .pos_from_cursor(&cursor.primary)
+                    .center()
+                    .to_vec2()
+                    + vec2(padding_x as f32, padding_y as f32) * zoom;
+                let viewport = ctx
+                    .data(|data| data.get_temp::<Rect>(Id::new("paint10_canvas_viewport")))
+                    .unwrap_or(self.canvas_rect.intersect(ctx.screen_rect()));
+                if !viewport.contains(position + caret) {
+                    self.center_canvas_on(
+                        (
+                            state.origin.0 + (caret.x / zoom).round() as i32,
+                            state.origin.1 + (caret.y / zoom).round() as i32,
+                        ),
+                        ctx,
+                    );
+                }
+            }
+        }
         ctx.data_mut(|data| {
             data.insert_temp(Id::new("paint10_text_editor_rect"), output.response.rect)
         });
@@ -796,8 +944,10 @@ impl PaintApp {
                     before.restore(&mut state);
                 }
             }
+            prepare_text_fonts(font_db, &mut state.format, &state.text);
         }
         if let Some(range) = output.cursor_range {
+            state.history.cursor = Some(range.as_ccursor_range());
             let selection = range.as_sorted_char_range();
             if selection != state.selection {
                 state.selection = selection;
@@ -832,6 +982,371 @@ impl PaintApp {
             }
         }
     }
+}
+
+pub(in crate::app) fn font_families(database: &fontdb::Database) -> Vec<(String, fontdb::ID)> {
+    let mut names: Vec<_> = database
+        .faces()
+        .filter_map(|face| face.families.first().map(|family| family.0.clone()))
+        .collect();
+    names.sort_by_key(|name| name.to_lowercase());
+    names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let id = database.query(&fontdb::Query {
+                families: &[fontdb::Family::Name(&name)],
+                ..Default::default()
+            })?;
+            Some((name, id))
+        })
+        .collect()
+}
+
+fn font_choice(
+    ui: &mut Ui,
+    database: &fontdb::Database,
+    name: &str,
+    face: Option<fontdb::ID>,
+    selected: bool,
+) -> Response {
+    let response = ui.add(theme::MenuItem::new(name).selected(selected).width(280.0));
+    if !ui.is_rect_visible(response.rect) {
+        return response;
+    }
+    let cache_id = Id::new("paint10-font-previews");
+    let mut cache = ui
+        .ctx()
+        .data(|data| data.get_temp::<Vec<FontPreview>>(cache_id))
+        .unwrap_or_default();
+    let existing = cache
+        .iter()
+        .find(|preview| preview.name == name && preview.face == face);
+    let texture = if let Some(existing) = existing {
+        existing.texture.clone()
+    } else {
+        let mut format = crate::text::TextFormat {
+            width: 1024,
+            size: 17.0,
+            ..Default::default()
+        };
+        if let Some((data, index)) =
+            face.and_then(|id| database.with_face_data(id, |data, index| (data.to_vec(), index)))
+        {
+            format.font = data;
+            format.font_index = index;
+        }
+        let raster = format.render(name);
+        let texture = ui.ctx().load_texture(
+            format!("font-preview-{name}"),
+            ColorImage::from_rgba_unmultiplied(
+                [raster.width() as usize, raster.height() as usize],
+                raster.as_raw(),
+            ),
+            TextureOptions::LINEAR,
+        );
+        if cache.len() >= 32 {
+            cache.remove(0);
+        }
+        cache.push(FontPreview {
+            name: name.into(),
+            face,
+            texture: texture.clone(),
+        });
+        ui.ctx().data_mut(|data| data.insert_temp(cache_id, cache));
+        texture
+    };
+    // Keep the shared menu's selection/checkmark and accessibility label, while
+    // replacing only its glyphs with an example from the actual family.
+    let text_rect = Rect::from_min_max(
+        response.rect.min + vec2(30.0, 1.0),
+        response.rect.max - vec2(2.0, 1.0),
+    );
+    let fill = if selected {
+        ui.visuals().selection.bg_fill
+    } else if response.hovered() || response.has_focus() {
+        ui.visuals().widgets.hovered.weak_bg_fill
+    } else {
+        ui.visuals().window_fill
+    };
+    let painter = ui
+        .painter()
+        .with_clip_rect(text_rect.intersect(ui.clip_rect()));
+    painter.rect_filled(text_rect, 0.0, fill);
+    let size = texture.size_vec2();
+    painter.image(
+        texture.id(),
+        Rect::from_min_size(text_rect.left_center() - vec2(0.0, size.y / 2.0), size),
+        Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
+        Color32::WHITE,
+    );
+    response.on_hover_text(name)
+}
+
+fn prepare_text_fonts(
+    database: &fontdb::Database,
+    format: &mut crate::text::TextFormat,
+    text: &str,
+) {
+    // Legacy projects keep font bytes directly on their spans. Make those
+    // exact faces available as fallbacks without replacing the chosen family.
+    let legacy: Vec<_> = std::iter::once(format.default_style_ref())
+        .chain(format.spans.iter().map(|span| span.style.as_ref()))
+        .filter_map(|style| {
+            let data = style.font_bytes();
+            if format
+                .font_faces
+                .iter()
+                .any(|face| face.index == style.font_index && face.data == data)
+            {
+                return None;
+            }
+            Some(crate::text::EmbeddedFont {
+                family: style.font_name.to_owned(),
+                data: data.to_vec(),
+                index: style.font_index,
+                bold: false,
+                italic: false,
+            })
+        })
+        .collect();
+    for face in legacy {
+        if format.font_faces.len() < crate::text::MAX_FONT_FACES
+            && !format
+                .font_faces
+                .iter()
+                .any(|stored| stored.index == face.index && stored.data == face.data)
+            && format.memory_bytes().saturating_add(face.data.len()) < crate::text::MAX_FORMAT_BYTES
+            && face.validate().is_ok()
+        {
+            format.font_faces.push(face);
+        }
+    }
+    let mut families: Vec<_> = std::iter::once(format.font_name.clone())
+        .chain(format.spans.iter().map(|span| span.style.font_name.clone()))
+        .collect();
+    families.sort();
+    families.dedup();
+    for family in families {
+        for (bold, italic) in [(false, false), (true, false), (false, true), (true, true)] {
+            let id = database.query(&fontdb::Query {
+                families: &[fontdb::Family::Name(&family)],
+                weight: if bold {
+                    fontdb::Weight::BOLD
+                } else {
+                    fontdb::Weight::NORMAL
+                },
+                style: if italic {
+                    fontdb::Style::Italic
+                } else {
+                    fontdb::Style::Normal
+                },
+                ..Default::default()
+            });
+            if let Some(id) = id {
+                embed_font_face(database, format, id, &family);
+            }
+        }
+    }
+    let mut missing: std::collections::BTreeSet<_> = text
+        .chars()
+        .filter(|character| !character.is_control() && !character.is_whitespace())
+        .collect();
+    let base_fonts: Vec<_> = std::iter::once(format.default_style_ref())
+        .chain(format.spans.iter().map(|span| span.style.as_ref()))
+        .filter_map(|style| {
+            ab_glyph::FontRef::try_from_slice_and_index(style.font_bytes(), style.font_index).ok()
+        })
+        .collect();
+    let embedded: Vec<_> = format
+        .font_faces
+        .iter()
+        .filter_map(|face| ab_glyph::FontRef::try_from_slice_and_index(&face.data, face.index).ok())
+        .collect();
+    missing.retain(|character| {
+        !base_fonts
+            .iter()
+            .chain(&embedded)
+            .any(|font| crate::text::font_supports_outline(font, *character))
+    });
+    if missing.is_empty() {
+        return;
+    }
+    for face in database.faces() {
+        let Some(family) = face.families.first().map(|name| name.0.as_str()) else {
+            continue;
+        };
+        let covered = database
+            .with_face_data(face.id, |data, index| {
+                let Ok(font) = ab_glyph::FontRef::try_from_slice_and_index(data, index) else {
+                    return Vec::new();
+                };
+                missing
+                    .iter()
+                    .copied()
+                    .filter(|character| crate::text::font_supports_outline(&font, *character))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if !covered.is_empty() && embed_font_face(database, format, face.id, family) {
+            for character in covered {
+                missing.remove(&character);
+            }
+            if missing.is_empty() {
+                break;
+            }
+        }
+    }
+}
+
+fn embed_font_face(
+    database: &fontdb::Database,
+    format: &mut crate::text::TextFormat,
+    id: fontdb::ID,
+    family: &str,
+) -> bool {
+    let Some(face) = database.face(id) else {
+        return false;
+    };
+    let bold = face.weight >= fontdb::Weight::BOLD;
+    let italic = face.style != fontdb::Style::Normal;
+    if format.font_faces.len() >= crate::text::MAX_FONT_FACES {
+        return false;
+    }
+    let Some(embedded) = database.with_face_data(id, |data, index| {
+        if format.font_faces.iter().any(|face| {
+            face.family == family
+                && face.index == index
+                && face.data == data
+                && face.bold == bold
+                && face.italic == italic
+        }) {
+            return None;
+        }
+        Some(crate::text::EmbeddedFont {
+            family: family.into(),
+            data: data.to_vec(),
+            index,
+            bold,
+            italic,
+        })
+    }) else {
+        return false;
+    };
+    let Some(embedded) = embedded else {
+        return true;
+    };
+    if embedded.validate().is_err()
+        || format.memory_bytes().saturating_add(embedded.data.len()) > crate::text::MAX_FORMAT_BYTES
+    {
+        return false;
+    }
+    format.font_faces.push(embedded);
+    true
+}
+
+fn text_navigation(
+    ui: &Ui,
+    text: &str,
+    layouter: &mut impl FnMut(&Ui, &str, f32) -> std::sync::Arc<egui::Galley>,
+    viewport_height: f32,
+) {
+    let ctx = ui.ctx();
+    let input_id = Id::new("text_input");
+    let queued_id = input_id.with("navigation_input");
+    if !ui.is_enabled() || !ctx.memory(|memory| memory.has_focus(input_id)) {
+        return;
+    }
+    let mac = ctx.os() == egui::os::OperatingSystem::Mac;
+    let navigation = |event: &Event| match event {
+        Event::Key {
+            key,
+            modifiers,
+            pressed: true,
+            ..
+        } => {
+            let paragraph = matches!(key, Key::ArrowUp | Key::ArrowDown)
+                && !modifiers.mac_cmd
+                && if mac {
+                    modifiers.alt && !modifiers.ctrl
+                } else {
+                    modifiers.ctrl && !modifiers.alt
+                };
+            let page = matches!(key, Key::PageUp | Key::PageDown)
+                && !modifiers.ctrl
+                && !modifiers.alt
+                && !modifiers.command;
+            (paragraph || page).then_some((*key, *modifiers, paragraph))
+        }
+        _ => None,
+    };
+    let mut events = ctx.data_mut(|data| {
+        data.remove_temp::<Vec<Event>>(queued_id)
+            .unwrap_or_default()
+    });
+    ctx.input_mut(|input| events.append(&mut input.events));
+    if let Some(index) = events.iter().position(|event| navigation(event).is_some()) {
+        let preceding_edit = events[..index].iter().any(|event| {
+            matches!(
+                event,
+                Event::Text(_)
+                    | Event::Paste(_)
+                    | Event::Cut
+                    | Event::Ime(_)
+                    | Event::Key { pressed: true, .. }
+                    | Event::PointerButton { .. }
+            )
+        });
+        if preceding_edit {
+            // Let the real TextEdit finish preceding input before calculating
+            // a paragraph/page move from its resulting text and caret.
+            let deferred = events.split_off(index);
+            ctx.data_mut(|data| data.insert_temp(queued_id, deferred));
+            ctx.request_repaint();
+        } else {
+            let (key, modifiers, paragraph) = navigation(&events.remove(index)).unwrap();
+            let galley = layouter(ui, text, ui.available_width());
+            let mut editor = TextEdit::load_state(ctx, input_id).unwrap_or_default();
+            let mut cursor = editor
+                .cursor
+                .range(&galley)
+                .unwrap_or_else(|| egui::text::CursorRange::one(galley.begin()));
+            if paragraph {
+                let characters: Vec<_> = text.chars().collect();
+                let current = cursor.primary.ccursor.index.min(characters.len());
+                let next = if key == Key::ArrowUp {
+                    characters[..current.saturating_sub(1)]
+                        .iter()
+                        .rposition(|ch| *ch == '\n')
+                        .map_or(0, |position| position + 1)
+                } else {
+                    characters[current..]
+                        .iter()
+                        .position(|ch| *ch == '\n')
+                        .map_or(characters.len(), |position| current + position + 1)
+                };
+                cursor.primary = galley.from_ccursor(CCursor::new(next));
+            } else {
+                let caret = galley.pos_from_cursor(&cursor.primary);
+                let distance = viewport_height.max(caret.height())
+                    * if key == Key::PageUp { -1.0 } else { 1.0 };
+                cursor.primary =
+                    galley.cursor_from_pos(vec2(caret.center().x, caret.center().y + distance));
+            }
+            if !modifiers.shift {
+                cursor.secondary = cursor.primary;
+            }
+            editor.cursor.set_range(Some(cursor));
+            editor.store(ctx, input_id);
+            ctx.data_mut(|data| data.insert_temp(input_id.with("navigation_scroll"), true));
+            if let Some(next) = events.iter().position(|event| navigation(event).is_some()) {
+                let deferred = events.split_off(next);
+                ctx.data_mut(|data| data.insert_temp(queued_id, deferred));
+                ctx.request_repaint();
+            }
+        }
+    }
+    ctx.input_mut(|input| input.events = events);
 }
 
 fn text_control(ui: &Ui, response: &Response, name: &'static str, selected: bool) {
@@ -969,10 +1484,19 @@ mod tests {
     }
 
     fn app_frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) -> FullOutput {
+        app_frame_at_width(app, ctx, events, 1200.0)
+    }
+
+    fn app_frame_at_width(
+        app: &mut PaintApp,
+        ctx: &Context,
+        events: Vec<Event>,
+        width: f32,
+    ) -> FullOutput {
         ctx.run(
             RawInput {
                 events,
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 720.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 720.0))),
                 ..Default::default()
             },
             |ctx| {
@@ -1072,6 +1596,281 @@ mod tests {
             );
             assert_eq!(app.text_edit.as_ref().unwrap().text, "Replacement");
         }
+    }
+
+    #[test]
+    fn backward_selection_keeps_its_anchor_after_formatting_and_undo() {
+        let ctx = Context::default();
+        let mut app = editing_app(&ctx, "Hello world");
+        app_frame(&mut app, &ctx, vec![key(Key::End, Modifiers::NONE)]);
+        for _ in 0..3 {
+            app_frame(&mut app, &ctx, vec![key(Key::ArrowLeft, Modifiers::SHIFT)]);
+        }
+        assert_eq!(app.text_edit.as_ref().unwrap().selection, 8..11);
+        app_frame(&mut app, &ctx, vec![key(Key::B, Modifiers::CTRL)]);
+        app_frame(&mut app, &ctx, vec![key(Key::ArrowLeft, Modifiers::SHIFT)]);
+        assert_eq!(app.text_edit.as_ref().unwrap().selection, 7..11);
+        app_frame(&mut app, &ctx, vec![key(Key::Z, Modifiers::CTRL)]);
+        assert_eq!(app.text_edit.as_ref().unwrap().selection, 8..11);
+        app_frame(&mut app, &ctx, vec![key(Key::ArrowLeft, Modifiers::SHIFT)]);
+        assert_eq!(app.text_edit.as_ref().unwrap().selection, 7..11);
+        assert!(!app.text_edit.as_ref().unwrap().format.style_at(9).bold);
+    }
+
+    #[test]
+    fn text_paragraph_navigation_preserves_shift_and_native_mac_commands() {
+        for (os, modifier) in [
+            (
+                egui::os::OperatingSystem::Windows,
+                Modifiers::CTRL | Modifiers::COMMAND,
+            ),
+            (egui::os::OperatingSystem::Mac, Modifiers::ALT),
+        ] {
+            let ctx = Context::default();
+            ctx.set_os(os);
+            let mut app = editing_app(&ctx, "One line\nSecond line\nThird line");
+            let state = app.text_edit.as_mut().unwrap();
+            state.selection = 4..4;
+            state.focus = true;
+            app_frame(&mut app, &ctx, Vec::new());
+            app_frame(&mut app, &ctx, vec![key(Key::ArrowDown, modifier)]);
+            assert_eq!(app.text_edit.as_ref().unwrap().selection, 9..9);
+            app_frame(
+                &mut app,
+                &ctx,
+                vec![key(Key::ArrowDown, modifier | Modifiers::SHIFT)],
+            );
+            assert_eq!(app.text_edit.as_ref().unwrap().selection, 9..21);
+            app_frame(&mut app, &ctx, vec![key(Key::ArrowUp, modifier)]);
+            assert_eq!(app.text_edit.as_ref().unwrap().selection, 9..9);
+            if os == egui::os::OperatingSystem::Mac {
+                app_frame(
+                    &mut app,
+                    &ctx,
+                    vec![key(Key::ArrowDown, Modifiers::MAC_CMD | Modifiers::COMMAND)],
+                );
+                assert_eq!(app.text_edit.as_ref().unwrap().selection, 31..31);
+            }
+        }
+    }
+
+    #[test]
+    fn page_navigation_moves_within_long_text_and_ordered_typing_stays_at_the_caret() {
+        let ctx = Context::default();
+        let text = (0..100)
+            .map(|line| format!("Line {line}\n"))
+            .collect::<String>();
+        let mut app = editing_app(&ctx, &text);
+        let state = app.text_edit.as_mut().unwrap();
+        state.selection = 0..0;
+        state.focus = true;
+        app_frame(&mut app, &ctx, Vec::new());
+        app_frame(&mut app, &ctx, vec![key(Key::PageDown, Modifiers::NONE)]);
+        let caret = app.text_edit.as_ref().unwrap().selection.start;
+        assert!(caret > 0 && caret < text.chars().count());
+        app_frame(&mut app, &ctx, vec![key(Key::PageUp, Modifiers::SHIFT)]);
+        assert_eq!(app.text_edit.as_ref().unwrap().selection, 0..caret);
+        app_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::Text("First\nSecond".into()),
+                key(Key::ArrowUp, Modifiers::CTRL),
+                Event::Text("!".into()),
+            ],
+        );
+        for _ in 0..3 {
+            app_frame(&mut app, &ctx, Vec::new());
+        }
+        assert!(app
+            .text_edit
+            .as_ref()
+            .unwrap()
+            .text
+            .starts_with("First\n!Second"));
+    }
+
+    #[test]
+    fn font_picker_includes_light_families_and_typing_embeds_an_emoji_fallback() {
+        let ctx = Context::default();
+        let mut app = editing_app(&ctx, "Hello");
+        app.font_db
+            .load_font_data(epaint_default_fonts::UBUNTU_LIGHT.to_vec());
+        app.font_db
+            .load_font_data(epaint_default_fonts::NOTO_EMOJI_REGULAR.to_vec());
+        app.font_names = font_families(&app.font_db);
+        assert!(app.font_names.iter().any(|(name, _)| name == "Ubuntu"));
+        app_frame(&mut app, &ctx, vec![Event::Text("Hello 😀".into())]);
+        let state = app.text_edit.as_ref().unwrap();
+        assert_eq!(state.text, "Hello 😀");
+        assert!(state
+            .format
+            .font_faces
+            .iter()
+            .any(|face| face.data == epaint_default_fonts::NOTO_EMOJI_REGULAR));
+        let rendered = state.format.render("😀");
+        let mut without_fallback = state.format.clone();
+        without_fallback.font_faces.clear();
+        assert_ne!(rendered, without_fallback.render("😀"));
+        state.format.validate_for_text(&state.text).unwrap();
+    }
+
+    #[test]
+    fn font_popup_grows_after_loading_families_and_paints_the_last_preview() {
+        let ctx = Context::default();
+        let mut app = editing_app(&ctx, "Hello");
+        app.font_db
+            .load_font_data(epaint_default_fonts::HACK_REGULAR.to_vec());
+        app.font_names = font_families(&app.font_db);
+        for code in [Key::F10, Key::T, Key::F, Key::L] {
+            app_frame(&mut app, &ctx, vec![key(code, Modifiers::NONE)]);
+        }
+        for _ in 0..3 {
+            app_frame(&mut app, &ctx, Vec::new());
+        }
+        for _ in 0..3 {
+            app_frame(&mut app, &ctx, vec![key(Key::Escape, Modifiers::NONE)]);
+        }
+        app.font_db
+            .load_font_data(epaint_default_fonts::UBUNTU_LIGHT.to_vec());
+        app.font_db
+            .load_font_data(epaint_default_fonts::NOTO_EMOJI_REGULAR.to_vec());
+        app.font_names = font_families(&app.font_db);
+        for code in [Key::F10, Key::T, Key::F, Key::L] {
+            app_frame(&mut app, &ctx, vec![key(code, Modifiers::NONE)]);
+        }
+        for _ in 0..3 {
+            app_frame(&mut app, &ctx, Vec::new());
+        }
+        let output = app_frame(&mut app, &ctx, Vec::new());
+        let cache = ctx
+            .data(|data| data.get_temp::<Vec<FontPreview>>(Id::new("paint10-font-previews")))
+            .unwrap();
+        let last = cache
+            .iter()
+            .find(|preview| preview.name == "Ubuntu")
+            .expect("last newly loaded family is visible");
+        let clip = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Mesh(mesh) if mesh.texture_id == last.texture.id() => {
+                    Some(shape.clip_rect)
+                }
+                _ => None,
+            })
+            .expect("actual font preview is painted");
+        assert!(clip.height() >= 24.0, "last preview clipped to {clip:?}");
+        let layer = ctx.layer_id_at(clip.center()).unwrap();
+        let popup = ctx.memory(|memory| memory.area_rect(layer.id)).unwrap();
+        assert!(
+            popup.bottom() - clip.bottom() < 12.0,
+            "short font gallery has blank space below its last row: {popup:?}, {clip:?}"
+        );
+    }
+
+    #[test]
+    fn font_popup_scrolls_to_the_last_family_in_a_long_list() {
+        let ctx = Context::default();
+        let mut app = editing_app(&ctx, "Hello");
+        app.font_db
+            .load_font_data(epaint_default_fonts::HACK_REGULAR.to_vec());
+        let face = app.font_db.faces().next().unwrap().id;
+        app.font_names = (0..32)
+            .map(|index| (format!("Family {index:02}"), face))
+            .collect();
+        for code in [Key::F10, Key::T, Key::F, Key::L] {
+            app_frame(&mut app, &ctx, vec![key(code, Modifiers::NONE)]);
+        }
+        for _ in 0..3 {
+            app_frame(&mut app, &ctx, Vec::new());
+        }
+        let output = app_frame(&mut app, &ctx, Vec::new());
+        let first = text_position(&output, "Family 00");
+        let layer = ctx.layer_id_at(first).unwrap();
+        let popup = ctx.memory(|memory| memory.area_rect(layer.id)).unwrap();
+        assert!(popup.height() <= 300.0, "long gallery must remain bounded");
+        app_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::PointerMoved(first),
+                Event::MouseWheel {
+                    unit: MouseWheelUnit::Point,
+                    delta: vec2(0.0, -2000.0),
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+        for _ in 0..30 {
+            app_frame(&mut app, &ctx, Vec::new());
+        }
+        let output = app_frame(&mut app, &ctx, Vec::new());
+        let cache = ctx
+            .data(|data| data.get_temp::<Vec<FontPreview>>(Id::new("paint10-font-previews")))
+            .unwrap();
+        let last = cache
+            .iter()
+            .find(|preview| preview.name == "Family 31")
+            .expect("scrolling reaches the last family");
+        assert!(output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, Shape::Mesh(mesh)
+                if mesh.texture_id == last.texture.id() && shape.clip_rect.height() >= 24.0)
+        }));
+    }
+
+    #[test]
+    fn project_font_registration_exposes_collections_without_changing_the_document() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let collection = font_collection(&[
+            epaint_default_fonts::UBUNTU_LIGHT,
+            epaint_default_fonts::HACK_REGULAR,
+        ]);
+        let mut format = crate::text::TextFormat {
+            font_name: "Hack".into(),
+            font: collection.clone(),
+            font_index: 1,
+            font_faces: vec![crate::text::EmbeddedFont {
+                family: "Noto Emoji".into(),
+                data: epaint_default_fonts::NOTO_EMOJI_REGULAR.to_vec(),
+                index: 0,
+                bold: false,
+                italic: false,
+            }],
+            ..Default::default()
+        };
+        format
+            .modify_style(0..1, |style| {
+                style.font_name = "Ubuntu".into();
+                style.font_index = 0;
+            })
+            .unwrap();
+        app.doc.add_object(Object::new(
+            ObjectKind::Text {
+                text: "AB".into(),
+                format,
+            },
+            (2, 2),
+        ));
+        app.doc.mark_saved();
+        let before = crate::project::encode(&app.doc).unwrap();
+        let pixels = app.doc.composite();
+        app.register_document_fonts();
+        let count = app.font_db.faces().count();
+        assert_eq!(count, 3, "a repeated collection is loaded once");
+        for name in ["Ubuntu", "Hack", "Noto Emoji"] {
+            assert!(app.font_names.iter().any(|(family, _)| family == name));
+        }
+        let mut style = crate::text::TextFormat::default().default_style();
+        assert!(app.apply_font_name("Hack", &mut style));
+        assert_eq!(style.font, collection);
+        assert_eq!(style.font_index, 1);
+        app.register_document_fonts();
+        assert_eq!(app.font_db.faces().count(), count);
+        assert_eq!(crate::project::encode(&app.doc).unwrap(), before);
+        assert!(app.doc.composite() == pixels);
+        assert!(!app.doc.dirty());
     }
 
     fn click(app: &mut PaintApp, ctx: &Context, point: Pos2) -> FullOutput {
@@ -1345,6 +2144,70 @@ mod tests {
         assert!(app.doc.objects.is_empty());
         app_frame(&mut app, &ctx, vec![key(Key::Z, Modifiers::CTRL)]);
         assert_eq!(app.text_edit.as_ref().unwrap().text, "Héllo world");
+    }
+
+    #[test]
+    fn text_ribbon_clipboard_preserves_unicode_selection_in_wide_and_narrow_windows() {
+        for width in [1440.0, 500.0] {
+            let ctx = Context::default();
+            ctx.enable_accesskit();
+            let mut app = editing_app(&ctx, "Héllo world");
+            app.text_edit.as_mut().unwrap().selection = 1..5;
+            app.text_edit.as_mut().unwrap().focus = true;
+            let frame = |app: &mut PaintApp, events| app_frame_at_width(app, &ctx, events, width);
+            frame(&mut app, vec![]);
+            let output = frame(&mut app, vec![]);
+            let nodes = &output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes;
+            for label in ["Paste", "Cut", "Copy"] {
+                let node = nodes
+                    .iter()
+                    .find(|(_, node)| node.label() == Some(label))
+                    .unwrap_or_else(|| panic!("{label} is missing at {width}px"));
+                assert!(!node.1.is_disabled(), "{label} is disabled at {width}px");
+            }
+            let press = |point, pressed| Event::PointerButton {
+                pos: point,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            };
+            let copy = text_position(&output, "Copy");
+            frame(&mut app, vec![Event::PointerMoved(copy), press(copy, true)]);
+            let copied = frame(&mut app, vec![press(copy, false)]);
+            assert!(copied.platform_output.commands.iter().any(|command| {
+                matches!(command, egui::OutputCommand::CopyText(text) if text == "éllo")
+            }));
+            let cut = text_position(&copied, "Cut");
+            frame(&mut app, vec![Event::PointerMoved(cut), press(cut, true)]);
+            frame(&mut app, vec![press(cut, false)]);
+            assert_eq!(app.text_edit.as_ref().unwrap().text, "H world");
+            assert!(app.doc.objects.is_empty());
+            frame(&mut app, vec![key(Key::Z, Modifiers::CTRL)]);
+            assert_eq!(app.text_edit.as_ref().unwrap().text, "Héllo world");
+            assert_eq!(app.text_edit.as_ref().unwrap().selection, 1..5);
+        }
+    }
+
+    #[test]
+    fn text_ribbon_cut_keytip_does_not_activate_cancel() {
+        let ctx = Context::default();
+        let mut app = editing_app(&ctx, "Keep editing");
+        for events in [
+            vec![],
+            vec![key(Key::F10, Modifiers::NONE)],
+            vec![key(Key::T, Modifiers::NONE)],
+            vec![key(Key::X, Modifiers::NONE)],
+        ] {
+            app_frame_at_width(&mut app, &ctx, events, 1440.0);
+        }
+        assert_eq!(app.text_edit.as_ref().unwrap().text, "");
+        assert!(app.doc.objects.is_empty());
+        assert!(!keytips::active(&ctx));
     }
 
     #[test]
