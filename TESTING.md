@@ -1,5 +1,38 @@
 # Paint 10 verification log
 
+## September 8: shared fonts and version 2 projects
+
+Commit `b9257b8` passes **313 native tests (125 library + 188 application)**,
+formatting, strict native/WASM Clippy, native debug and browser release builds,
+and the five browser adapter tests. Logs are
+`tmp/font-sharing-all-app-tests.log`, `tmp/font-sharing-app-gate.log` and
+`tmp/browser-project-v2-{node,clippy,release,static}-gate.log`.
+
+All five actual artwork projects were decoded, encoded as version 2 and
+reopened in memory without modifying their files. Comparisons preserve exact
+base/composite pixels, objects, transforms, fonts, DPI and monochrome metadata.
+The ant slide shrinks from 39,341,235 bytes to 1,992,405 bytes. Shared fonts
+occupy 3,113,388 bytes instead of 61,969,024 repeated bytes; twelve representative
+object moves retain seven undo steps within the existing memory budget.
+These are codec/history measurements; actual GUI resaving remains pending.
+Evidence: `tmp/project-v2-*-probe.log`. Nix packages below precede this source.
+
+Actual native and browser text replay used exact private clipboard input:
+Arabic, Hebrew, Greek, Cyrillic and an accented combining character render in
+the DejaVu Sans editor. Backspace removes the whole accented grapheme; Undo
+restores its original bytes. Browser double-click selects exactly the Hebrew
+word, and replacement/Undo preserve logical text. Captures use
+`/tmp/paint10-{native,browser}-unicode-*.png`. Unicode `xdotool type` was rejected
+as a reliable test input after reproducing dropped characters in Chromium's
+omnibox as well as the app; private `xclip` delivered the exact UTF-8 bytes.
+
+Actual browser ribbon Paste also preserves the selected text after ribbon
+focus, replaces it with two clipboard lines, and normalizes CRLF to LF. Copy
+returns `FIRST\nSECOND` with no carriage return, and Undo restores the original
+selected text. Captures: `/tmp/paint10-browser-ribbon-paste-result.png` and
+`/tmp/paint10-browser-ribbon-paste-undo.png`. This replay used Chromium's allowed
+Clipboard permission on a private display/profile; no host clipboard was used.
+
 ## September 8: Unicode and browser clipboard checkpoint
 
 Commits `20b6fc5`, `fde8102` and `a0fb6b7` pass **292 native tests

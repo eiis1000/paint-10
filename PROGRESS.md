@@ -1,5 +1,37 @@
 # Paint 10 work in progress
 
+## Current September 8 checkpoint, around 19:15 EDT
+
+- Logical commits `36217df` fixes active-shape rotation/inverse selection and
+  the full custom-width shortcut range; `b9257b8` shares immutable font data
+  across captions/history and adds the bounded version 2 project font table.
+  Storage passes 125 library + 188 app tests, strict native/WASM Clippy,
+  native/browser builds and five real-project roundtrips. Old projects load.
+- The ant slide codec probe reduces 39,341,235 bytes to 1,992,405 bytes while
+  preserving exact base/composite pixels, objects, fonts and metadata. Root
+  still must save and reopen through the actual GUI. Agents do not rewrite art.
+- Native launcher 42643, controller 31474, private DISPLAY=:1 currently runs
+  `36217df` with a scratch rectangle. Custom 137px plus Ctrl+Plus yields 138px.
+  Active-shape Rotate Cancel/Apply/Undo replay is underway. Current executable
+  on disk is newer; running processes do not automatically pick up builds.
+- Browser launcher 90300, controller 38238, private DISPLAY=:2 remains on the
+  Unicode/clipboard build. Actual ribbon Paste replaces a blurred editor's
+  selected text and normalizes CRLF to LF; Copy confirms the exact bytes and
+  Undo restores the original selection. Browser server 86539 serves newer v2
+  WASM; reload after canceling the scratch edit remains required.
+- Actual native and browser Unicode paste renders joined Arabic, Hebrew bidi,
+  Greek, Cyrillic and combining marks. Backspace removes the complete accented
+  character; Undo restores it. Browser double-click selects the exact Hebrew
+  word and replacement/Undo preserve logical text. Use private xclip for exact
+  Unicode: xdotool Unicode typing also drops characters in Chrome's omnibox.
+- ribbon_finish is correcting coalesced keytip/text input: F10/H/W/C followed
+  immediately by digits loses the value, whereas slow C focuses correctly.
+  A reproducing actual-frame regression now passes its fix. Joined split
+  controls and distinct File format previews await review and GUI replay.
+- Four artworks are complete. The shape-only landscape remains stylized;
+  its saved branch/rock refinements need more work and fresh raster exports.
+  Read `tmp/landscape-refinement-ledger.txt`. Do not claim completion.
+
 ## Current September 8 checkpoint, around 18:55 EDT
 
 - Regular logical commits: `20b6fc5` adds multilingual shaping, grapheme-safe
