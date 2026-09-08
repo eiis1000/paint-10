@@ -1,5 +1,60 @@
 # Paint 10 work in progress
 
+## Current September 8 checkpoint, around 19:57 EDT
+
+- `ed20826` commits Polygon Enter ordering; `77c1431` commits standalone
+  browser Alt keytips. Both were replayed successfully in the actual GUI.
+  Fast Enter/Enter then a palette change applies the original-colored shape;
+  Undo restores the clean landscape. Browser Alt works from canvas and text,
+  Escape restores the caret, Alt+H remains intact and F10 toggles keytips off.
+  Combined 319 native tests, eight JS tests, native/WASM Clippy and builds pass.
+- Native launcher 83718 is the current debug build, private DISPLAY=:1,
+  directory `/tmp/paint10-desktop.vSpfhJ`, controller 31474, log
+  `tmp/native-polygon-order-replay.log`. Landscape is open at 50%.
+  The first new gradient mountain ravine is drawn; three further hand-chosen
+  Polygon ravines are queued. Continue from actual screenshots and ledger.
+  Previous water bands and foreground rock edge were saved; exports are stale.
+- Browser launcher 90300/private DISPLAY=:2/controller 38238 runs the fresh
+  Alt/Polygon site. It has a scratch text box reading “Keep this editable!”
+  with Home selected and keytips closed. Browser server 86539 remains live.
+- file_finish and browser_finish are independently building/auditing native
+  and web Nix packages from immutable Git commit `77c1431`. No source mutations
+  are assigned. Their exact handoffs will be
+  `tmp/{native,browser}-package-77c1431-handoff.md`. Root owns art/docs/Git.
+- Four artwork exercises are complete. The shape-only landscape remains
+  stylized and is still being refined. Do not claim the full task is finished.
+
+## Current September 8 checkpoint, around 19:50 EDT
+
+- Additional logical commits: `a342b54` saves/verifies the ant artwork in v2;
+  `d23c7e8` fixes browser F10 focus. Actual F10/H/W/C plus immediate 137 now
+  succeeds in native and browser. Ant Open/Save/download in the browser yields
+  a byte-identical 1,992,405-byte project. Its 72pt bold DejaVu Sans title reopens
+  and finishes unchanged. See newest TESTING additions and actual captures.
+- Latest source has two reviewed, uncommitted fixes: ribbon_finish owns
+  gestures.rs + gestures/tests/key_order_tests.rs for coalesced Polygon
+  Enter/Enter; browser_finish owns src/web.rs, keytips.rs and JS tests for
+  standalone Alt taps. Combined native 125 + 194 = 319 tests, fmt, strict Clippy and
+  debug build pass. Root must replay both before their separate logical commits.
+  Read tmp/polygon-enter-order-handoff.md. Browser agent refreshes the site.
+- Native packaged e5248af launcher 44906/private DISPLAY=:1/controller 31474
+  successfully opened the landscape and performed new actual shape work.
+  Water reflection bands are saved; a foreground rock edge is being saved,
+  then this package will close so the new debug fixes can be replayed.
+  Current source/coordinates/actions are in tmp/landscape-refinement-ledger.txt.
+  The art remains stylized; PNG/JPEG/WebP exports are stale. No completion claim.
+- Browser launcher 90300/private DISPLAY=:2/controller 38238 currently holds the
+  clean v2 ant project with its title selected after a no-op edit. Download
+  /tmp/paint10-browser-ant-v2.p10 matches native exactly. F5 will load the next
+  Alt-corrected site when browser_finish reports ready. No host desktop used.
+- Read-only double-click audit found winit loses original click timestamps
+  across separate raw batches, so very slow software presentation can impair
+  the backend's click classifier. This is a plausible cause of one missed
+  140ms title double-click; a subsequent 180ms attempt works. Root has not traced
+  the original failure, and no speculative timing threshold change was made.
+  Evidence: tmp/separate-batch-double-click-audit.md. Known llvmpipe stall is
+  why this private test display uses softpipe; application graphics are unchanged.
+
 ## Current September 8 checkpoint, around 19:26 EDT
 
 - Regular commits continue: `f3dc1a2` storage/Unicode docs, `20d12cc` coalesced

@@ -67,3 +67,7 @@ can act on the browser before the page receives an event, as defined by
 
 With the Paint canvas focused, Ctrl+R / Command+R toggles rulers without also
 reloading the page. Use F5 or the browser's Reload button to reload Paint 10.
+
+Alt or F10 opens the ribbon keytips, including while editing text. Press the
+displayed letters to choose a command; Escape returns to the canvas or text
+caret. Alt+H also opens the Home commands directly.

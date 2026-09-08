@@ -1,5 +1,27 @@
 # Paint 10 verification log
 
+## September 8: polygon completion and browser Alt replay
+
+Commits `ed20826` and `77c1431` pass **319 native tests (125 library + 194 app)**,
+formatting, strict native/WASM Clippy, eight browser adapter tests, and native
+debug/browser release builds. Evidence is in
+`tmp/polygon-enter-final-native-gate.log` and `tmp/browser-alt-*-gate.log`.
+
+Actual native replay draws a triangle, sends two Enter presses 100 ms apart,
+and immediately clicks the red palette swatch. The triangle is applied in its
+original black with no adjustment handles; one Undo removes it and restores
+the clean saved landscape. Captures:
+`/tmp/paint10-native-polygon-fast-enters-{palette,undo}.png`.
+
+Actual browser replay confirms a standalone Alt tap opens the root keytips,
+then H reaches Home. Alt also works while editing text; Escape restores the
+caret and subsequent typing appends to the same text. Alt+H still opens Home,
+and F10 closes keytips without moving focus to Chromium's menu. Captures:
+`/tmp/paint10-browser-alt-{bridge-tap,bridge-home,text-keytips,
+text-focus-restored,chord-preserved}.png` and
+`/tmp/paint10-browser-f10-toggle-off.png`. All were visually inspected on
+separate private Xvfb displays. Updated Nix package builds are underway.
+
 ## September 8: ribbon package and actual version 2 saves
 
 Source `e5248af` passes **316 native tests (125 library + 191 app)**,
@@ -40,6 +62,19 @@ The matching browser release/package build passes, but actual F10 replay found
 Chromium also focuses its own menu and loses following keytip letters. A narrow
 browser event cancellation fix is underway; these package results do not
 certify that interaction. Final browser verification follows the correction.
+
+Commit `d23c7e8` corrects F10's browser focus conflict. After reloading the
+rebuilt site, the actual 80 ms F10/H/W/C sequence followed by immediate 137 and
+Enter now produces 137px. All six JavaScript adapter tests, strict WASM Clippy
+and the release build pass (`tmp/browser-f10-*-gate.log`). Plain Alt is being
+checked separately; Alt+H already reaches the actual Home keytips.
+
+The browser opened the actual version 2 ant project, then Save downloaded
+`/tmp/paint10-browser-ant-v2.p10`. It is byte-identical to the native project,
+SHA-256 `31dbf1531a518c401e3f25dc14d63a8b61d08c68694f0f4be631b3329d810c4a`.
+Double-clicking the title restores 72pt bold DejaVu Sans, and Ctrl+Enter
+finishes the unchanged edit without marking the picture modified. Root
+inspected `/tmp/paint10-browser-ant-v2-{downloaded,title-editor,title-no-op}.png`.
 
 ## September 8: shared fonts and version 2 projects
 
