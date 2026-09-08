@@ -158,7 +158,13 @@ pub(super) fn button(
 }
 
 pub(super) fn command(ui: &mut Ui, label: &str) -> Response {
-    let response = ui.button(label);
+    let popup =
+        current(ui).is_some_and(|scope| matches!(scope.name, "paste" | "select" | "rotate"));
+    let response = if popup {
+        ui.add(theme::MenuItem::new(label).width(245.0))
+    } else {
+        ui.button(label)
+    };
     named(ui, &response, label);
     response
 }

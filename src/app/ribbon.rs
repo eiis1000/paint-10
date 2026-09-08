@@ -62,6 +62,106 @@ fn ribbon_focus(ui: &Ui, response: &Response) {
     }
 }
 
+fn paint_style_choice(ui: &mut Ui, selected: bool, style: PaintStyle, label: &str) -> Response {
+    let response = ui.add(theme::MenuItem::new(label).selected(selected).width(250.0));
+    controls::named(ui, &response, label);
+    let sample = Rect::from_center_size(
+        response.rect.right_center() - vec2(42.0, 0.0),
+        vec2(62.0, 20.0),
+    );
+    let brush = match style {
+        PaintStyle::None => None,
+        PaintStyle::Solid => Some(Brush::Round),
+        PaintStyle::Crayon => Some(Brush::Crayon),
+        PaintStyle::Marker => Some(Brush::Marker),
+        PaintStyle::Oil => Some(Brush::Oil),
+        PaintStyle::Pencil => Some(Brush::Pencil),
+        PaintStyle::Watercolor => Some(Brush::Watercolor),
+    };
+    if let Some(brush) = brush {
+        icons::brush_preview(ui.painter(), sample, brush);
+    } else {
+        ui.painter().rect_stroke(
+            sample.shrink2(vec2(13.0, 3.0)),
+            0.0,
+            Stroke::new(1.0_f32, Color32::from_gray(180)),
+            StrokeKind::Inside,
+        );
+        ui.painter().line_segment(
+            [
+                sample.center() + vec2(-11.0, 5.0),
+                sample.center() + vec2(11.0, -5.0),
+            ],
+            Stroke::new(1.0_f32, Color32::from_gray(145)),
+        );
+    }
+    response
+}
+
+fn gradient_preview(painter: &Painter, rect: Rect, gradient: Gradient, colors: [Color; 2]) {
+    for row in 0..4 {
+        for column in 0..12 {
+            let cell = Rect::from_min_size(
+                rect.min
+                    + vec2(
+                        column as f32 * rect.width() / 12.0,
+                        row as f32 * rect.height() / 4.0,
+                    ),
+                vec2(rect.width() / 12.0, rect.height() / 4.0),
+            );
+            painter.rect_filled(
+                cell,
+                0.0,
+                Color32::from_gray(if (row + column) % 2 == 0 { 255 } else { 220 }),
+            );
+        }
+    }
+    let colors = colors.map(|[r, g, b, a]| Color32::from_rgba_unmultiplied(r, g, b, a));
+    let mut mesh = egui::Mesh::default();
+    match gradient {
+        Gradient::Vertical | Gradient::Horizontal => {
+            for (point, color) in [
+                (rect.left_top(), colors[0]),
+                (
+                    rect.right_top(),
+                    colors[usize::from(gradient == Gradient::Horizontal)],
+                ),
+                (rect.right_bottom(), colors[1]),
+                (
+                    rect.left_bottom(),
+                    colors[usize::from(gradient == Gradient::Vertical)],
+                ),
+            ] {
+                mesh.colored_vertex(point, color);
+            }
+            mesh.add_triangle(0, 1, 2);
+            mesh.add_triangle(0, 2, 3);
+        }
+        Gradient::Radial => {
+            painter.rect_filled(rect, 0.0, colors[1]);
+            mesh.colored_vertex(rect.center(), colors[0]);
+            for index in 0..=32 {
+                let angle = index as f32 * std::f32::consts::TAU / 32.0;
+                mesh.colored_vertex(
+                    rect.center()
+                        + vec2(angle.cos() * rect.width(), angle.sin() * rect.height()) / 2.0,
+                    colors[1],
+                );
+                if index > 0 {
+                    mesh.add_triangle(0, index, index + 1);
+                }
+            }
+        }
+    }
+    painter.add(mesh);
+    painter.rect_stroke(
+        rect,
+        0.0,
+        Stroke::new(1.0_f32, Color32::from_gray(190)),
+        StrokeKind::Inside,
+    );
+}
+
 pub(super) fn ribbon_menu_button<R>(
     ui: &mut Ui,
     label: &str,
@@ -79,6 +179,7 @@ pub(super) fn ribbon_menu_button<R>(
     let size = vec2((galley.size().x + icon_width + 24.0).max(22.0), 22.0);
     let group = controls::current(ui).map_or("Menu", |scope| scope.group);
     let menu = egui::menu::menu_custom_button(ui, Button::new("").min_size(size), |ui| {
+        theme::menu(ui);
         controls::scope(ui, Scope::new(popup_scope, group), contents)
     });
     controls::register(
@@ -497,32 +598,62 @@ impl PaintApp {
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(142., 68.), vec2(35., 20.))),
             |ui| {
                 let menu = ribbon_menu_button(ui, "", "ZS", "select", None, |ui| {
-                    if controls::selectable(ui, !self.free_select, "Rectangular selection")
-                        .clicked()
-                    {
-                        self.free_select = false;
-                        self.set_tool(Tool::Select);
-                        ui.close_menu();
+                    theme::menu_heading(ui, "Selection shapes", 245.0);
+                    for (free, label, key) in [
+                        (false, "Rectangular selection", "1"),
+                        (true, "Free-form selection", "2"),
+                    ] {
+                        let choice = ui.add(
+                            theme::MenuItem::new(label)
+                                .selected(self.free_select == free)
+                                .width(245.0),
+                        );
+                        controls::register(ui, &choice, key, keytips::Kind::Button);
+                        if choice.clicked() {
+                            self.free_select = free;
+                            self.set_tool(Tool::Select);
+                            ui.close_menu();
+                        }
                     }
-                    if controls::selectable(ui, self.free_select, "Free-form selection").clicked() {
-                        self.free_select = true;
-                        self.set_tool(Tool::Select);
-                        ui.close_menu();
-                    }
-                    ui.separator();
-                    if controls::command(ui, "Select all      Ctrl+A").clicked() {
+                    theme::menu_heading(ui, "Selection options", 245.0);
+                    let all = ui.add(
+                        theme::MenuItem::new("Select all")
+                            .shortcut("Ctrl+A")
+                            .width(245.0),
+                    );
+                    controls::register(ui, &all, "3", keytips::Kind::Button);
+                    if all.clicked() {
                         self.action(Action::SelectAll, ctx);
                         ui.close_menu();
                     }
-                    if controls::command(ui, "Delete selection").clicked() {
-                        self.delete_selection();
-                        ui.close_menu();
-                    }
-                    if controls::command(ui, "Invert selection").clicked() {
+                    let invert = ui.add_enabled(
+                        has_selection,
+                        theme::MenuItem::new("Invert selection").width(245.0),
+                    );
+                    controls::register(ui, &invert, "4", keytips::Kind::Button);
+                    if invert.clicked() {
                         self.invert_selection();
                         ui.close_menu();
                     }
-                    controls::checkbox(ui, &mut self.transparent, "Transparent selection");
+                    let delete = ui.add_enabled(
+                        has_selection,
+                        theme::MenuItem::new("Delete").shortcut("Del").width(245.0),
+                    );
+                    controls::register(ui, &delete, "5", keytips::Kind::Button);
+                    if delete.clicked() {
+                        self.delete_selection();
+                        ui.close_menu();
+                    }
+                    let transparent = ui.add(
+                        theme::MenuItem::new("Transparent selection")
+                            .selected(self.transparent)
+                            .width(245.0),
+                    );
+                    controls::register(ui, &transparent, "6", keytips::Kind::Button);
+                    if transparent.clicked() {
+                        self.transparent = !self.transparent;
+                        ui.close_menu();
+                    }
                 });
                 menu.response.widget_info(|| {
                     WidgetInfo::labeled(WidgetType::Button, true, "Selection options")
@@ -632,44 +763,49 @@ impl PaintApp {
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(395., 69.), vec2(38., 20.))),
             |ui| {
                 let menu = ribbon_menu_button(ui, "", "ZB", "brushes", None, |ui| {
-                    for brush in Brush::ALL {
-                        let choice = ui.add_sized(
-                            vec2(262.0, 34.0),
-                            Button::new("").selected(self.brush == brush),
-                        );
-                        let rect = choice.rect;
-                        icons::draw(
-                            ui.painter(),
-                            Rect::from_min_size(rect.min + vec2(5.0, 3.0), vec2(28.0, 28.0)),
-                            Icon::Brush(brush),
-                        );
-                        ui.painter().text(
-                            rect.left_center() + vec2(42.0, 0.0),
-                            Align2::LEFT_CENTER,
-                            brush.name(),
-                            FontId::proportional(12.0),
-                            Color32::from_gray(35),
-                        );
-                        let sample = Rect::from_center_size(
-                            rect.right_center() - vec2(40.0, 0.0),
-                            vec2(66.0, 25.0),
-                        );
-                        icons::brush_preview(ui.painter(), sample, brush);
-                        choice.widget_info(|| {
-                            WidgetInfo::selected(
-                                WidgetType::Button,
-                                true,
-                                self.brush == brush,
-                                brush.name(),
-                            )
+                    let mut preview = self.brush;
+                    ui.set_min_width(184.0);
+                    egui::Grid::new("brush_gallery")
+                        .num_columns(4)
+                        .spacing(vec2(2.0, 2.0))
+                        .show(ui, |ui| {
+                            for (index, brush) in Brush::ALL.into_iter().enumerate() {
+                                let choice = ui.add_sized(
+                                    vec2(44.0, 44.0),
+                                    Button::new("").selected(self.brush == brush),
+                                );
+                                icons::draw(
+                                    ui.painter(),
+                                    choice.rect.shrink(5.0),
+                                    Icon::Brush(brush),
+                                );
+                                choice.widget_info(|| {
+                                    WidgetInfo::selected(
+                                        WidgetType::Button,
+                                        true,
+                                        self.brush == brush,
+                                        brush.name(),
+                                    )
+                                });
+                                controls::named(ui, &choice, brush.name());
+                                if choice.hovered() || choice.has_focus() {
+                                    preview = brush;
+                                }
+                                if choice.clicked() {
+                                    self.brush = brush;
+                                    self.set_tool(Tool::Brush);
+                                    ui.close_menu();
+                                }
+                                choice.on_hover_text(brush.name());
+                                if index % 4 == 3 {
+                                    ui.end_row();
+                                }
+                            }
                         });
-                        controls::named(ui, &choice, brush.name());
-                        if choice.clicked() {
-                            self.brush = brush;
-                            self.set_tool(Tool::Brush);
-                            ui.close_menu();
-                        }
-                    }
+                    ui.separator();
+                    ui.label(preview.name());
+                    let (sample, _) = ui.allocate_exact_size(vec2(184.0, 30.0), Sense::hover());
+                    icons::brush_preview(ui.painter(), sample.shrink2(vec2(8.0, 2.0)), preview);
                 });
                 menu.response.widget_info(|| {
                     WidgetInfo::labeled(WidgetType::Button, true, "Choose a brush")
@@ -777,18 +913,20 @@ impl PaintApp {
                 let outline =
                     ribbon_menu_button(ui, "Outline", "O", "outline", Some(Icon::Outline), |ui| {
                         for style in PaintStyle::ALL {
-                            if controls::selectable(
+                            let choice = paint_style_choice(
                                 ui,
                                 self.outline == style,
+                                style,
                                 if style == PaintStyle::None {
                                     "No outline"
                                 } else {
                                     style.name()
                                 },
-                            )
-                            .clicked()
-                            {
+                            );
+                            self.preview_shape_style(&choice, shapes::StylePreview::Outline(style));
+                            if choice.clicked() {
                                 self.outline = style;
+                                self.accept_shape_style(ui.ctx());
                                 ui.close_menu();
                             }
                         }
@@ -800,37 +938,46 @@ impl PaintApp {
                 ui.add_space(7.);
                 let fill = ribbon_menu_button(ui, "Fill", "L", "fill", Some(Icon::Fill), |ui| {
                     for style in PaintStyle::ALL {
-                        if controls::selectable(
+                        let choice = paint_style_choice(
                             ui,
                             self.fill_gradient.is_none() && self.fill == style,
+                            style,
                             if style == PaintStyle::None {
                                 "No fill"
                             } else {
                                 style.name()
                             },
-                        )
-                        .clicked()
-                        {
+                        );
+                        self.preview_shape_style(&choice, shapes::StylePreview::Fill(style));
+                        if choice.clicked() {
                             self.fill = style;
                             self.fill_gradient = None;
+                            self.accept_shape_style(ui.ctx());
                             ui.close_menu();
                         }
                     }
                     ui.separator();
-                    ui.label("Color 1 to Color 2");
+                    theme::menu_heading(ui, "Color 1 to Color 2", 250.0);
                     for gradient in Gradient::ALL {
                         let (keys, description) = match gradient {
                             Gradient::Vertical => ("V", "Color 1 at the top; Color 2 at the bottom."),
                             Gradient::Horizontal => ("H", "Color 1 on the left; Color 2 on the right."),
                             Gradient::Radial => ("R", "Color 1 at the center; Color 2 at the oval boundary of the shape's bounds."),
                         };
-                        let response = ui.selectable_label(
-                            self.fill_gradient == Some(gradient),
-                            gradient.name(),
-                        ).on_hover_text(description);
+                        let response = ui.add(theme::MenuItem::new(gradient.name())
+                            .selected(self.fill_gradient == Some(gradient)).width(250.0))
+                            .on_hover_text(description);
+                        gradient_preview(
+                            ui.painter(),
+                            Rect::from_center_size(response.rect.right_center() - vec2(41.0, 0.0), vec2(60.0, 16.0)),
+                            gradient,
+                            self.colors,
+                        );
                         controls::register(ui, &response, keys, keytips::Kind::Button);
+                        self.preview_shape_style(&response, shapes::StylePreview::Gradient(gradient));
                         if response.clicked() {
                             self.fill_gradient = Some(gradient);
+                            self.accept_shape_style(ui.ctx());
                             ui.close_menu();
                         }
                     }
@@ -860,14 +1007,52 @@ impl PaintApp {
                 }
                 ui.add_space(46.);
                 let menu = ribbon_menu_button(ui, "Size", "W", "size", None, |ui| {
-                    for size in [1, 3, 5, 8, 12, 20, 32, 50] {
-                        if controls::selectable(ui, self.size == size, &format!("{size} px"))
-                            .clicked()
-                        {
+                    let sizes = match self.tool {
+                        Tool::Pencil => [1, 2, 3, 4],
+                        Tool::Eraser => [4, 6, 8, 10],
+                        _ => [1, 3, 5, 8],
+                    };
+                    for size in sizes {
+                        let label = format!("{size} px");
+                        let choice = ui.add(
+                            theme::MenuItem::new(&label)
+                                .selected(self.size == size)
+                                .width(220.0),
+                        );
+                        controls::named(ui, &choice, &label);
+                        let right = choice.rect.right_center() - vec2(15.0, 0.0);
+                        ui.painter().line_segment(
+                            [right - vec2(100.0, 0.0), right],
+                            Stroke::new(size as f32, Color32::from_gray(42)),
+                        );
+                        self.preview_shape_style(&choice, shapes::StylePreview::Size(size));
+                        if choice.clicked() {
                             self.size = size;
+                            self.accept_shape_style(ui.ctx());
                             ui.close_menu();
                         }
                     }
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label("Custom size");
+                        let size = ui.add(
+                            DragValue::new(&mut self.size)
+                                .range(1..=500)
+                                .update_while_editing(false)
+                                .suffix(" px"),
+                        );
+                        size.widget_info(|| {
+                            WidgetInfo::labeled(
+                                WidgetType::DragValue,
+                                ui.is_enabled(),
+                                "Custom size",
+                            )
+                        });
+                        controls::register(ui, &size, "C", keytips::Kind::NumericInput);
+                        if size.changed() {
+                            self.accept_shape_style(ui.ctx());
+                        }
+                    });
                 });
                 menu.response.widget_info(|| {
                     WidgetInfo::labeled(
@@ -1441,6 +1626,253 @@ mod gradient_tests {
             .nodes
             .iter()
             .any(|(_, node)| node.label() == Some(label))
+    }
+
+    fn center(output: &FullOutput, label: &str) -> Pos2 {
+        let bounds = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some(label))
+            .unwrap_or_else(|| panic!("Missing {label}"))
+            .1
+            .bounds()
+            .unwrap();
+        pos2(
+            ((bounds.x0 + bounds.x1) / 2.0) as f32,
+            ((bounds.y0 + bounds.y1) / 2.0) as f32,
+        )
+    }
+
+    fn click(app: &mut PaintApp, ctx: &Context, position: Pos2) {
+        frame(
+            app,
+            ctx,
+            vec![
+                Event::PointerMoved(position),
+                Event::PointerButton {
+                    pos: position,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+                Event::PointerButton {
+                    pos: position,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn shape_style_menu_hover_changes_only_display_and_restores_on_exit_or_escape() {
+        for (menu, label) in [
+            (Key::O, "Watercolor"),
+            (Key::L, "Oil"),
+            (Key::L, "Vertical gradient"),
+            (Key::W, "8 px"),
+        ] {
+            let context = Context::default();
+            context.enable_accesskit();
+            let mut app = PaintApp::new_with_context(&context, false);
+            app.doc = Document::new(160, 120);
+            app.doc.add_object(Object::new(
+                ObjectKind::Raster(RgbaImage::from_pixel(14, 14, Rgba([40, 180, 80, 255]))),
+                (0, 0),
+            ));
+            app.set_tool(Tool::Rectangle);
+            app.size = 3;
+            app.colors = [[20, 70, 190, 255], [230, 160, 70, 180]];
+            app.doc.begin();
+            app.start_shape_draft(
+                shapes::ShapeGeometry::Primitive {
+                    tool: Tool::Rectangle,
+                    start: (30, 30),
+                    end: (120, 90),
+                },
+                0,
+            );
+            settle(&mut app, &context);
+            let pixels = app.doc.image.clone();
+            let objects = app.doc.objects.clone();
+            let baseline = app.rendered.clone();
+            let dirty = app.doc.dirty();
+            let undo = app.doc.can_undo();
+            let redo = app.doc.can_redo();
+            keys(&mut app, &context, &[Key::F10, Key::H, menu]);
+            let popup = settle(&mut app, &context);
+            let position = center(&popup, label);
+            frame(&mut app, &context, vec![Event::PointerMoved(position)]);
+            assert!(
+                app.rendered != baseline,
+                "{label} must preview on the actual canvas"
+            );
+            assert_eq!(
+                app.rendered.get_pixel(2, 2),
+                baseline.get_pixel(2, 2),
+                "retained objects stay visible"
+            );
+            assert!(
+                app.doc.image == pixels,
+                "hover does not change document pixels"
+            );
+            assert!(app.doc.objects == objects);
+            assert_eq!(
+                (app.doc.dirty(), app.doc.can_undo(), app.doc.can_redo()),
+                (dirty, undo, redo)
+            );
+            assert_eq!(
+                (app.outline, app.fill, app.fill_gradient, app.size),
+                (PaintStyle::Solid, PaintStyle::None, None, 3)
+            );
+            frame(
+                &mut app,
+                &context,
+                vec![Event::PointerMoved(pos2(1190.0, 700.0))],
+            );
+            assert!(
+                app.rendered == baseline,
+                "pointer exit restores chosen style"
+            );
+            frame(&mut app, &context, vec![Event::PointerMoved(position)]);
+            assert!(app.rendered != baseline);
+            keys(&mut app, &context, &[Key::Escape]);
+            settle(&mut app, &context);
+            assert!(app.rendered == baseline, "Escape restores chosen style");
+            assert!(app.doc.image == pixels);
+            assert!(app.shape_draft.is_some());
+            app.finish_editing();
+            assert!(
+                app.doc.composite() == baseline,
+                "save/commit never includes a canceled hover"
+            );
+            app.doc.undo();
+            assert!(app.doc.image.pixels().all(|pixel| pixel[3] == 0));
+            assert!(!app.doc.can_undo(), "hover adds no undo history");
+        }
+    }
+
+    #[test]
+    fn choosing_a_hovered_style_commits_that_style_and_keeps_the_draft_adjustable() {
+        let context = Context::default();
+        context.enable_accesskit();
+        let mut app = PaintApp::new_with_context(&context, false);
+        app.doc = Document::new(160, 120);
+        app.set_tool(Tool::Rectangle);
+        app.colors[1] = [200, 60, 80, 255];
+        app.doc.begin();
+        app.start_shape_draft(
+            shapes::ShapeGeometry::Primitive {
+                tool: Tool::Rectangle,
+                start: (30, 30),
+                end: (120, 90),
+            },
+            0,
+        );
+        settle(&mut app, &context);
+        keys(&mut app, &context, &[Key::F10, Key::H, Key::L]);
+        let popup = settle(&mut app, &context);
+        let position = center(&popup, "Oil");
+        frame(&mut app, &context, vec![Event::PointerMoved(position)]);
+        let preview = app.rendered.clone();
+        keys(&mut app, &context, &[Key::Num2]);
+        assert_eq!(app.fill, PaintStyle::Solid);
+        assert!(
+            app.rendered == app.doc.composite(),
+            "a keyboard choice immediately clears a different hovered row"
+        );
+        settle(&mut app, &context);
+        keys(&mut app, &context, &[Key::F10, Key::H, Key::L]);
+        let popup = settle(&mut app, &context);
+        let position = center(&popup, "Oil");
+        frame(&mut app, &context, vec![Event::PointerMoved(position)]);
+        click(&mut app, &context, position);
+        settle(&mut app, &context);
+        assert_eq!(app.fill, PaintStyle::Oil);
+        assert!(app.shape_draft.is_some());
+        assert!(app.rendered == preview);
+        assert!(app.doc.composite() == preview);
+        assert!(!app.doc.can_undo());
+        keys(&mut app, &context, &[Key::F10, Key::H, Key::W]);
+        let popup = settle(&mut app, &context);
+        let position = center(&popup, "8 px");
+        frame(&mut app, &context, vec![Event::PointerMoved(position)]);
+        keys(&mut app, &context, &[Key::C]);
+        frame(&mut app, &context, vec![Event::Text("13".into())]);
+        keys(&mut app, &context, &[Key::Enter]);
+        assert_eq!(app.size, 13);
+        assert!(
+            app.rendered == app.doc.composite(),
+            "custom size immediately clears a different hovered preset"
+        );
+        app.finish_editing();
+        app.doc.undo();
+        assert!(app.doc.image.pixels().all(|pixel| pixel.0 == WHITE));
+        assert!(!app.doc.can_undo());
+    }
+
+    #[test]
+    fn size_menu_uses_tool_presets_and_accepts_exact_custom_values() {
+        let context = Context::default();
+        context.enable_accesskit();
+        let mut app = PaintApp::new_with_context(&context, false);
+        for (tool, presets) in [
+            (Tool::Pencil, [1, 2, 3, 4]),
+            (Tool::Rectangle, [1, 3, 5, 8]),
+            (Tool::Eraser, [4, 6, 8, 10]),
+        ] {
+            app.set_tool(tool);
+            settle(&mut app, &context);
+            keys(&mut app, &context, &[Key::F10, Key::H, Key::W]);
+            let popup = settle(&mut app, &context);
+            for size in presets {
+                assert!(has_label(&popup, &format!("{size} px")));
+            }
+            assert!(!has_label(&popup, "50 px"));
+            keys(&mut app, &context, &[Key::Num2]);
+            settle(&mut app, &context);
+            assert_eq!(app.size, presets[1]);
+        }
+        for (text, expected, modifiers, cancel) in [
+            ("137", 137, Modifiers::CTRL, false),
+            ("0", 1, Modifiers::CTRL, false),
+            ("900", 500, Modifiers::MAC_CMD, false),
+            ("75", 500, Modifiers::CTRL, true),
+        ] {
+            keys(&mut app, &context, &[Key::F10, Key::H, Key::W, Key::C]);
+            settle(&mut app, &context);
+            frame(
+                &mut app,
+                &context,
+                vec![Event::Key {
+                    key: Key::A,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                }],
+            );
+            assert!(
+                keytips::popup_open(&context),
+                "Select all keeps the numeric editor open"
+            );
+            frame(&mut app, &context, vec![Event::Text(text.into())]);
+            keys(
+                &mut app,
+                &context,
+                &[if cancel { Key::Escape } else { Key::Enter }],
+            );
+            settle(&mut app, &context);
+            assert_eq!(app.size, expected);
+            assert!(app.selection.is_none(), "Ctrl+A never selects the picture");
+            keys(&mut app, &context, &[Key::Escape, Key::Escape, Key::Escape]);
+            settle(&mut app, &context);
+        }
     }
 
     #[test]

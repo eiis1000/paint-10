@@ -17,6 +17,7 @@ mod shapes;
 mod shortcuts;
 mod text_editing;
 mod text_preview;
+mod theme;
 mod thumbnail;
 mod transforms;
 
@@ -237,26 +238,7 @@ impl PaintApp {
     }
 
     fn new_with_context(ctx: &Context, load_environment: bool) -> Self {
-        ctx.set_visuals(Visuals::light());
-        let mut style = (*ctx.style()).clone();
-        style
-            .text_styles
-            .insert(TextStyle::Body, FontId::proportional(13.));
-        style
-            .text_styles
-            .insert(TextStyle::Button, FontId::proportional(13.));
-        style
-            .text_styles
-            .insert(TextStyle::Small, FontId::proportional(11.));
-        style.spacing.item_spacing = vec2(6., 4.);
-        style.spacing.button_padding = vec2(8., 4.);
-        style.visuals.widgets.inactive.corner_radius = CornerRadius::ZERO;
-        style.visuals.widgets.hovered.corner_radius = CornerRadius::ZERO;
-        style.visuals.widgets.active.corner_radius = CornerRadius::ZERO;
-        style.visuals.window_corner_radius = CornerRadius::ZERO;
-        style.visuals.selection.bg_fill = Color32::from_rgb(204, 232, 255);
-        style.visuals.selection.stroke = Stroke::new(1.0_f32, BLUE);
-        ctx.set_style(style);
+        theme::install(ctx);
         let doc = Document::new(900, 600);
         let mut font_db = fontdb::Database::new();
         if load_environment {
@@ -377,6 +359,13 @@ impl eframe::App for PaintApp {
     fn raw_input_hook(&mut self, ctx: &Context, raw_input: &mut RawInput) {
         self.canvas_raw_input(ctx, raw_input);
         self.modal_raw_input(ctx, raw_input);
+        if self.dialog.is_none()
+            && self.pending.is_none()
+            && self.print_preview.is_none()
+            && !self.preview
+        {
+            keytips::raw_input(ctx, raw_input);
+        }
     }
 
     fn update(&mut self, ctx: &Context, _: &mut eframe::Frame) {

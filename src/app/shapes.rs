@@ -1,5 +1,23 @@
 use super::*;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) enum StylePreview {
+    Outline(PaintStyle),
+    Fill(PaintStyle),
+    Gradient(Gradient),
+    Size(u32),
+}
+
+#[derive(Clone, Copy)]
+struct HoverPreview {
+    pass: u64,
+    style: StylePreview,
+}
+
+const HOVER_PREVIEW: &str = "paint10-shape-style-hover";
+const DISPLAYED_PREVIEW: &str = "paint10-shape-displayed-hover";
+const ACCEPTED_PREVIEW: &str = "paint10-shape-accepted-hover";
+
 #[derive(Clone)]
 pub(in crate::app) enum ShapeGeometry {
     Primitive {
@@ -268,6 +286,73 @@ impl ShapeDraft {
 }
 
 impl PaintApp {
+    pub(in crate::app) fn preview_shape_style(&self, response: &Response, style: StylePreview) {
+        let pass = response.ctx.cumulative_pass_nr();
+        if self.shape_draft.is_some()
+            && response.enabled()
+            && response.hovered()
+            && !response.clicked()
+            && !response
+                .ctx
+                .data(|data| data.get_temp::<u64>(Id::new(ACCEPTED_PREVIEW)) == Some(pass))
+        {
+            response.ctx.data_mut(|data| {
+                data.insert_temp(Id::new(HOVER_PREVIEW), HoverPreview { pass, style });
+            });
+        }
+    }
+
+    pub(in crate::app) fn accept_shape_style(&self, ctx: &Context) {
+        let pass = ctx.cumulative_pass_nr();
+        ctx.data_mut(|data| {
+            data.remove::<HoverPreview>(Id::new(HOVER_PREVIEW));
+            data.insert_temp(Id::new(ACCEPTED_PREVIEW), pass);
+        });
+    }
+
+    fn hovered_shape_style(&self, ctx: &Context) -> Option<StylePreview> {
+        self.shape_draft.as_ref()?;
+        ctx.data(|data| data.get_temp::<HoverPreview>(Id::new(HOVER_PREVIEW)))
+            .filter(|preview| preview.pass == ctx.cumulative_pass_nr())
+            .map(|preview| preview.style)
+    }
+
+    pub(in crate::app) fn refresh_shape_hover(&mut self, ctx: &Context) {
+        let current = self.hovered_shape_style(ctx);
+        let previous = ctx.data_mut(|data| {
+            let id = Id::new(DISPLAYED_PREVIEW);
+            let previous = data.get_temp::<Option<StylePreview>>(id).flatten();
+            data.insert_temp(id, current);
+            previous
+        });
+        self.refresh |= current != previous;
+    }
+
+    pub(in crate::app) fn shape_display_image(
+        &self,
+        ctx: &Context,
+        skip: Option<usize>,
+    ) -> RgbaImage {
+        let Some((mut draft, preview)) =
+            self.shape_draft.clone().zip(self.hovered_shape_style(ctx))
+        else {
+            return self.doc.composite_without(skip);
+        };
+        draft.style = self.shape_style();
+        match preview {
+            StylePreview::Outline(style) => draft.style.outline = style,
+            StylePreview::Fill(style) => {
+                draft.style.fill = style;
+                draft.style.fill_gradient = None;
+            }
+            StylePreview::Gradient(gradient) => draft.style.fill_gradient = Some(gradient),
+            StylePreview::Size(size) => draft.style.size = size,
+        }
+        let mut raster = self.doc.preview_raster().clone();
+        draft.render(&mut raster);
+        self.doc.composite_with_raster(&raster, skip)
+    }
+
     pub(in crate::app) fn start_shape_draft(&mut self, geometry: ShapeGeometry, color_slot: usize) {
         self.clear_selection();
         self.shape_draft = Some(ShapeDraft {

@@ -33,6 +33,7 @@ struct Target {
     enabled: bool,
     focusable: bool,
     visible: bool,
+    left_parent: Option<Id>,
 }
 
 #[derive(Clone)]
@@ -68,6 +69,8 @@ struct State {
     focused: Option<Id>,
     deferred_text_commit: Option<Id>,
     deferred_events: Vec<Event>,
+    navigation_events: Vec<(usize, Event)>,
+    navigation_tail: Vec<Event>,
 }
 
 const STATE: &str = "paint10_keytips";
@@ -101,6 +104,7 @@ pub(super) fn register(
         enabled: response.enabled() && response.sense.is_focusable(),
         focusable: response.sense.is_focusable(),
         visible: ui.is_visible() && !ui.is_sizing_pass(),
+        left_parent: None,
     };
     ui.ctx().data_mut(|data| {
         let state = data.get_temp_mut_or_default::<State>(Id::new(STATE));
@@ -134,8 +138,39 @@ pub(super) fn register(
     }
 }
 
+/// Associate a side-pane choice with the command that opened that pane.
+pub(super) fn return_left_to(ui: &Ui, response: &Response, parent_keys: &str) {
+    ui.ctx().data_mut(|data| {
+        let state = data.get_temp_mut_or_default::<State>(Id::new(STATE));
+        let Some(child) = state
+            .targets
+            .iter()
+            .position(|target| target.id == response.id)
+        else {
+            return;
+        };
+        let parent = state
+            .targets
+            .iter()
+            .find(|target| {
+                target.scope == state.targets[child].scope
+                    && target.group == state.targets[child].group
+                    && target.keys == parent_keys
+            })
+            .map(|target| target.id);
+        state.targets[child].left_parent = parent;
+    });
+}
+
 pub(super) fn begin_frame(ctx: &Context) {
     let mut state = read(ctx);
+    if !state.navigation_events.is_empty() {
+        ctx.input_mut(|input| {
+            for (index, event) in std::mem::take(&mut state.navigation_events) {
+                input.events.insert(index.min(input.events.len()), event);
+            }
+        });
+    }
     if !state.deferred_events.is_empty() {
         ctx.input_mut(|input| {
             input
@@ -146,6 +181,94 @@ pub(super) fn begin_frame(ctx: &Context) {
     }
     state.popup_was_open = actual_popup_open(ctx, &state);
     state.previous = std::mem::take(&mut state.targets);
+    write(ctx, state);
+}
+
+/// Keep ribbon navigation out of egui's earlier automatic focus traversal.
+/// Our controller handles these same events after the input pass has begun.
+pub(super) fn raw_input(ctx: &Context, input: &mut RawInput) {
+    let mut state = read(ctx);
+    if !state.navigation_tail.is_empty() {
+        input
+            .events
+            .splice(0..0, std::mem::take(&mut state.navigation_tail))
+            .for_each(drop);
+    }
+    if !state.queued_keys.is_empty() {
+        // Finish the earlier keytip activation before handling newer commands.
+        // Its next key needs the widgets registered by the preceding pass.
+        state.navigation_tail = std::mem::take(&mut input.events);
+        ctx.request_repaint();
+        write(ctx, state);
+        return;
+    }
+    let focused = ctx.memory(|memory| memory.focused());
+    let editing = state
+        .targets
+        .iter()
+        .any(|target| Some(target.id) == focused && target.kind.is_text_input());
+    let owns_focus = state
+        .targets
+        .iter()
+        .any(|target| Some(target.id) == focused && !target.kind.is_text_input());
+    let owns_menu = state.targets.iter().any(|target| {
+        matches!(target.kind, Kind::Menu { .. } | Kind::PopupGroup { .. })
+            && egui::menu::BarState::load(ctx, target.owner).is_some()
+    });
+    let enters_ribbon = input.events.iter().any(|event| {
+        matches!(event,
+        Event::Key { key, pressed: true, modifiers, .. }
+            if *key == Key::F10 || (modifiers.alt && key.name().len() == 1))
+    });
+    if state.levels.is_empty() && !owns_focus && !owns_menu && !enters_ribbon {
+        write(ctx, state);
+        return;
+    }
+    let navigation = |event: &Event| {
+        matches!(
+            event,
+            Event::Key {
+                key: Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown | Key::Tab,
+                pressed: true,
+                ..
+            }
+        )
+    };
+    // Each navigation or close/open command changes the scope for what follows.
+    // Keep letter keytip sequences together (keyboard already queues these),
+    // but separate Escape/F10/arrows so their handler cannot swallow later keys.
+    let mut first_key: Option<bool> = None;
+    let boundary = input.events.iter().enumerate().find_map(|(index, event)| {
+        let Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        let letter = key.name().len() == 1 && !modifiers.ctrl && !modifiers.command;
+        if let Some(letters_allowed) = first_key {
+            (!letters_allowed || !letter).then_some(index)
+        } else {
+            first_key = Some(letter || (*key == Key::F10 && state.levels.is_empty()));
+            None
+        }
+    });
+    if let Some(index) = boundary.filter(|_| !editing) {
+        state.navigation_tail = input.events.split_off(index);
+        ctx.request_repaint();
+    }
+    let mut index = 0;
+    input.events.retain(|event| {
+        let retain = !navigation(event);
+        if !retain {
+            state.navigation_events.push((index, event.clone()));
+        }
+        index += 1;
+        retain
+    });
     write(ctx, state);
 }
 
@@ -543,17 +666,23 @@ pub(super) fn keyboard(ctx: &Context, origin: Id) -> bool {
             }
         }
     }
-    if state.levels.is_empty() {
-        let alt_command = ctx.input(|input| {
-            input.events.iter().any(|event| {
-                matches!(event,
+    let alt_command = ctx.input(|input| {
+        input.events.iter().any(|event| {
+            matches!(event,
             Event::Key { modifiers, pressed: true, key, .. }
-                if modifiers.alt && !modifiers.ctrl && !modifiers.shift && key.name().len() == 1)
-            })
-        });
-        if alt_command {
-            enter(&mut state, origin, true);
-        } else if let Some(target) = state
+                if modifiers.alt && !modifiers.ctrl && !modifiers.command && !modifiers.shift && key.name().len() == 1)
+        })
+    });
+    if alt_command {
+        // An explicit Alt+tab letter starts at the ribbon tabs even when a
+        // previous keytip prefix or nested menu is still pending.
+        close_all(ctx, &state);
+        state.levels.clear();
+        state.restore_at_end = false;
+        enter(&mut state, origin, true);
+    }
+    if state.levels.is_empty() {
+        if let Some(target) = state
             .previous
             .iter()
             .find(|target| Some(target.id) == focused)
@@ -601,19 +730,6 @@ pub(super) fn keyboard(ctx: &Context, origin: Id) -> bool {
         write(ctx, state);
         return true;
     }
-    if ctx.input(|input| {
-        input.events.iter().any(|event| {
-            matches!(event,
-        Event::Key { modifiers, pressed: true, .. } if modifiers.ctrl || modifiers.command)
-        })
-    }) {
-        close_all(ctx, &state);
-        state.levels.clear();
-        state.prefix.clear();
-        state.tips = false;
-        write(ctx, state);
-        return false;
-    }
     let scope = state.levels.last().unwrap().scope.clone();
     let targets: Vec<_> = state
         .previous
@@ -623,6 +739,31 @@ pub(super) fn keyboard(ctx: &Context, origin: Id) -> bool {
         .collect();
     let selected = targets.iter().find(|target| Some(target.id) == focused);
     let editing = selected.is_some_and(|target| target.kind.is_text_input()) && !state.tips;
+    if ctx.input(|input| {
+        input.events.iter().any(|event| {
+            matches!(event,
+        Event::Key { modifiers, pressed: true, .. } if modifiers.ctrl || modifiers.command)
+        })
+    }) {
+        if editing {
+            // Selection, clipboard and word navigation shortcuts belong to the
+            // focused field. Closing its popup here would discard the editor
+            // before it can process Ctrl+A (or Command+A on macOS).
+            write(ctx, state);
+            return true;
+        }
+        close_all(ctx, &state);
+        state.levels.clear();
+        state.prefix.clear();
+        state.tips = false;
+        state.popup_was_open = false;
+        // Return global shortcuts to the editor before ribbon buttons render.
+        // Otherwise an opener can treat Ctrl+Enter as another menu activation
+        // and consume the text editor's commit command.
+        ctx.memory_mut(|memory| memory.request_focus(state.origin.unwrap_or(origin)));
+        write(ctx, state);
+        return false;
+    }
     if editing && consume(ctx, Key::ArrowDown, Modifiers::ALT) {
         if let Some(input) = selected {
             let dropdown = targets.iter().find(|target| {
@@ -691,7 +832,46 @@ pub(super) fn keyboard(ctx: &Context, origin: Id) -> bool {
                         })
                     })
                 {
-                    back(ctx, &mut state);
+                    let left_pane =
+                        selected
+                            .filter(|target| target.scope == "file")
+                            .and_then(|selected| {
+                                selected
+                                    .left_parent
+                                    .and_then(|parent| {
+                                        targets
+                                            .iter()
+                                            .find(|target| target.id == parent && target.enabled)
+                                    })
+                                    .or_else(|| {
+                                        targets
+                                            .iter()
+                                            .filter(|target| {
+                                                target.enabled
+                                                    && target.group == selected.group
+                                                    && target.rect.right()
+                                                        <= selected.rect.left() + 1.0
+                                                    && target.rect.center().x
+                                                        < selected.rect.center().x
+                                            })
+                                            .min_by(|left, right| {
+                                                left.rect
+                                                    .center()
+                                                    .distance_sq(selected.rect.center())
+                                                    .total_cmp(
+                                                        &right
+                                                            .rect
+                                                            .center()
+                                                            .distance_sq(selected.rect.center()),
+                                                    )
+                                            })
+                                    })
+                            });
+                    if let Some(target) = left_pane {
+                        focus(ctx, target);
+                    } else {
+                        back(ctx, &mut state);
+                    }
                 } else if let Some(target) = selected.filter(|target| {
                     matches!(key, Key::ArrowRight | Key::ArrowDown)
                         && matches!(target.kind, Kind::Menu { .. } | Kind::PopupGroup { .. })
@@ -787,9 +967,22 @@ fn next_arrow<'a>(
             .iter()
             .find(|target| target.enabled || !target.visible)
     })?;
+    if key == Key::ArrowRight && selected.scope == "file" {
+        if let Some(child) = targets.iter().find(|target| {
+            target.left_parent == Some(selected.id) && target.enabled && target.visible
+        }) {
+            return Some(child);
+        }
+    }
     let candidates: Vec<_> = targets
         .iter()
-        .filter(|target| (target.enabled || !target.visible) && target.group == selected.group)
+        .filter(|target| {
+            (target.enabled || !target.visible)
+                && target.group == selected.group
+                && (selected.scope != "file"
+                    || key != Key::ArrowRight
+                    || target.rect.left() >= selected.rect.right() - 1.0)
+        })
         .collect();
     let axis = |target: &Target| {
         if matches!(key, Key::ArrowLeft | Key::ArrowRight) {
@@ -1006,128 +1199,115 @@ mod tests {
         events: Vec<Event>,
         modifiers: Modifiers,
     ) -> FullOutput {
-        ctx.run(
-            RawInput {
-                events,
-                modifiers,
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(500.0, 400.0))),
-                ..Default::default()
-            },
-            |ctx| {
-                begin_frame(ctx);
-                current_tab(ctx, if fixture.view { "view" } else { "home" });
-                keyboard(ctx, Id::new("text_input"));
-                TopBottomPanel::top("fixture_tabs").show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        let home = ui.selectable_label(!fixture.view, "Home");
-                        register(ui, &home, "tabs", "Tabs", "H", Kind::Tab { scope: "home" });
-                        if home.clicked() {
-                            fixture.view = false;
-                        }
-                        let view = ui.selectable_label(fixture.view, "View");
-                        register(ui, &view, "tabs", "Tabs", "V", Kind::Tab { scope: "view" });
-                        if view.clicked() {
-                            fixture.view = true;
+        let mut input = RawInput {
+            events,
+            modifiers,
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(500.0, 400.0))),
+            ..Default::default()
+        };
+        raw_input(ctx, &mut input);
+        ctx.run(input, |ctx| {
+            begin_frame(ctx);
+            current_tab(ctx, if fixture.view { "view" } else { "home" });
+            keyboard(ctx, Id::new("text_input"));
+            TopBottomPanel::top("fixture_tabs").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let home = ui.selectable_label(!fixture.view, "Home");
+                    register(ui, &home, "tabs", "Tabs", "H", Kind::Tab { scope: "home" });
+                    if home.clicked() {
+                        fixture.view = false;
+                    }
+                    let view = ui.selectable_label(fixture.view, "View");
+                    register(ui, &view, "tabs", "Tabs", "V", Kind::Tab { scope: "view" });
+                    if view.clicked() {
+                        fixture.view = true;
+                    }
+                });
+            });
+            TopBottomPanel::top("fixture_ribbon").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if fixture.view {
+                        let zoom = ui.button("Zoom in");
+                        register(ui, &zoom, "view", "Zoom", "I", Kind::Button);
+                        return;
+                    }
+                    let (rect, _) = ui.allocate_exact_size(vec2(30.0, 35.0), Sense::hover());
+                    let pencil = icons::button(
+                        ui,
+                        "fixture_pencil",
+                        rect,
+                        Icon::Tool(Tool::Pencil),
+                        "",
+                        fixture.pencil,
+                        true,
+                    );
+                    register(ui, &pencil, "home", "Tools", "P", Kind::Button);
+                    fixture.pencil |= pencil.clicked();
+                    pencil.context_menu(|ui| {
+                        let item = ui.button("Tool settings");
+                        register(ui, &item, "tool_context", "Tools", "S", Kind::Button);
+                    });
+                    let disabled = ui.add_enabled(false, Button::new("Disabled"));
+                    register(ui, &disabled, "home", "Tools", "D", Kind::Button);
+                    assert!(!disabled.clicked());
+                    let menu = egui::menu::menu_custom_button(ui, Button::new("Options"), |ui| {
+                        let first = ui.button("First option");
+                        register(ui, &first, "options", "Options", "F", Kind::Button);
+                        let next = ui.button("Second option");
+                        register(ui, &next, "options", "Options", "S", Kind::Button);
+                        if next.clicked() {
+                            fixture.chosen = true;
+                            ui.close_menu();
                         }
                     });
-                });
-                TopBottomPanel::top("fixture_ribbon").show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        if fixture.view {
-                            let zoom = ui.button("Zoom in");
-                            register(ui, &zoom, "view", "Zoom", "I", Kind::Button);
-                            return;
-                        }
-                        let (rect, _) = ui.allocate_exact_size(vec2(30.0, 35.0), Sense::hover());
-                        let pencil = icons::button(
-                            ui,
-                            "fixture_pencil",
-                            rect,
-                            Icon::Tool(Tool::Pencil),
-                            "",
-                            fixture.pencil,
-                            true,
-                        );
-                        register(ui, &pencil, "home", "Tools", "P", Kind::Button);
-                        fixture.pencil |= pencil.clicked();
-                        pencil.context_menu(|ui| {
-                            let item = ui.button("Tool settings");
-                            register(ui, &item, "tool_context", "Tools", "S", Kind::Button);
-                        });
-                        let disabled = ui.add_enabled(false, Button::new("Disabled"));
-                        register(ui, &disabled, "home", "Tools", "D", Kind::Button);
-                        assert!(!disabled.clicked());
-                        let menu =
-                            egui::menu::menu_custom_button(ui, Button::new("Options"), |ui| {
-                                let first = ui.button("First option");
-                                register(ui, &first, "options", "Options", "F", Kind::Button);
-                                let next = ui.button("Second option");
-                                register(ui, &next, "options", "Options", "S", Kind::Button);
-                                if next.clicked() {
+                    register(
+                        ui,
+                        &menu.response,
+                        "home",
+                        "Options",
+                        "O",
+                        Kind::Menu { scope: "options" },
+                    );
+                    let group = egui::menu::menu_custom_button(ui, Button::new("Colors"), |ui| {
+                        let red = ui.button("Red");
+                        register(ui, &red, "home_colors", "Colors", "R", Kind::Button);
+                        let nested =
+                            egui::menu::menu_custom_button(ui, Button::new("More colors"), |ui| {
+                                let blue = ui.button("Blue");
+                                register(ui, &blue, "more_colors", "Colors", "B", Kind::Button);
+                                if blue.clicked() {
                                     fixture.chosen = true;
                                     ui.close_menu();
                                 }
                             });
                         register(
                             ui,
-                            &menu.response,
-                            "home",
-                            "Options",
-                            "O",
-                            Kind::Menu { scope: "options" },
-                        );
-                        let group =
-                            egui::menu::menu_custom_button(ui, Button::new("Colors"), |ui| {
-                                let red = ui.button("Red");
-                                register(ui, &red, "home_colors", "Colors", "R", Kind::Button);
-                                let nested = egui::menu::menu_custom_button(
-                                    ui,
-                                    Button::new("More colors"),
-                                    |ui| {
-                                        let blue = ui.button("Blue");
-                                        register(
-                                            ui,
-                                            &blue,
-                                            "more_colors",
-                                            "Colors",
-                                            "B",
-                                            Kind::Button,
-                                        );
-                                        if blue.clicked() {
-                                            fixture.chosen = true;
-                                            ui.close_menu();
-                                        }
-                                    },
-                                );
-                                register(
-                                    ui,
-                                    &nested.response,
-                                    "home_colors",
-                                    "Colors",
-                                    "M",
-                                    Kind::Menu {
-                                        scope: "more_colors",
-                                    },
-                                );
-                            });
-                        register(
-                            ui,
-                            &group.response,
-                            "home",
+                            &nested.response,
+                            "home_colors",
                             "Colors",
-                            "ZC",
-                            Kind::PopupGroup {
-                                scope: "home_colors",
+                            "M",
+                            Kind::Menu {
+                                scope: "more_colors",
                             },
                         );
                     });
+                    register(
+                        ui,
+                        &group.response,
+                        "home",
+                        "Colors",
+                        "ZC",
+                        Kind::PopupGroup {
+                            scope: "home_colors",
+                        },
+                    );
                 });
-                CentralPanel::default().show(ctx, |ui| {
-                    ui.add(TextEdit::singleline(&mut fixture.text).id(Id::new("text_input")));
-                });
-                finish_frame(ctx);
-            },
-        )
+            });
+            CentralPanel::default().show(ctx, |ui| {
+                ui.add(TextEdit::singleline(&mut fixture.text).id(Id::new("text_input")));
+            });
+            finish_frame(ctx);
+        })
     }
 
     fn warm(ctx: &Context, fixture: &mut Fixture) {
@@ -1385,25 +1565,33 @@ mod tests {
     }
 
     fn app_frame(app: &mut PaintApp, ctx: &Context, width: f32, events: Vec<Event>) -> FullOutput {
-        ctx.run(
-            RawInput {
-                events,
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 500.0))),
-                ..Default::default()
-            },
-            |ctx| {
-                if !app.ribbon_keyboard(ctx) {
-                    app.shortcut(ctx);
-                }
-                app.titlebar(ctx);
-                app.ribbon(ctx);
-                app.quick_access_below(ctx);
-                app.status(ctx);
-                app.canvas(ctx);
-                app.keyboard_menu(ctx);
-                app.dialogs(ctx);
-            },
-        )
+        let modifiers = events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                Event::Key { modifiers, .. } => Some(*modifiers),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let mut input = RawInput {
+            events,
+            modifiers,
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 500.0))),
+            ..Default::default()
+        };
+        eframe::App::raw_input_hook(app, ctx, &mut input);
+        ctx.run(input, |ctx| {
+            if !app.ribbon_keyboard(ctx) {
+                app.shortcut(ctx);
+            }
+            app.titlebar(ctx);
+            app.ribbon(ctx);
+            app.quick_access_below(ctx);
+            app.status(ctx);
+            app.canvas(ctx);
+            app.keyboard_menu(ctx);
+            app.dialogs(ctx);
+        })
     }
 
     fn app_warm(app: &mut PaintApp, ctx: &Context, width: f32) {
@@ -1415,6 +1603,239 @@ mod tests {
     fn app_keys(app: &mut PaintApp, ctx: &Context, width: f32, keys: &[Key]) {
         for code in keys {
             app_frame(app, ctx, width, vec![key(*code)]);
+        }
+    }
+
+    #[test]
+    fn alt_home_restarts_a_pending_sequence_and_outline_number_activates() {
+        for pending in [vec![], vec![Key::J], vec![Key::O]] {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            app.tool = Tool::Rectangle;
+            app.outline = PaintStyle::None;
+            app_warm(&mut app, &ctx, 1200.0);
+            if !pending.is_empty() {
+                app_keys(&mut app, &ctx, 1200.0, &[Key::F10, Key::H]);
+                app_keys(&mut app, &ctx, 1200.0, &pending);
+            }
+            let mut alt_home = key(Key::H);
+            if let Event::Key { modifiers, .. } = &mut alt_home {
+                *modifiers = Modifiers::ALT;
+            }
+            app_frame(&mut app, &ctx, 1200.0, vec![alt_home]);
+            app_warm(&mut app, &ctx, 1200.0);
+            assert_eq!(
+                read(&ctx).levels.last().map(|level| level.scope.as_str()),
+                Some("home"),
+                "pending sequence: {pending:?}"
+            );
+            assert!(read(&ctx).prefix.is_empty());
+            assert_eq!(app.tool, Tool::Rectangle);
+            app_keys(&mut app, &ctx, 1200.0, &[Key::O, Key::Num7]);
+            app_warm(&mut app, &ctx, 1200.0);
+            assert_eq!(app.outline, PaintStyle::Watercolor);
+            assert!(!active(&ctx));
+        }
+    }
+
+    #[test]
+    fn rapid_file_arrows_move_once_per_press_and_preserve_batched_steps() {
+        for batched in [false, true] {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            app_warm(&mut app, &ctx, 1200.0);
+            app_keys(&mut app, &ctx, 1200.0, &[Key::F10, Key::F]);
+            app_warm(&mut app, &ctx, 1200.0);
+            let focused_keys = |ctx: &Context| {
+                let focused = ctx.memory(|memory| memory.focused());
+                read(ctx)
+                    .targets
+                    .iter()
+                    .find(|target| Some(target.id) == focused)
+                    .map(|target| target.keys.clone())
+            };
+            assert_eq!(focused_keys(&ctx).as_deref(), Some("N"));
+            if batched {
+                app_frame(
+                    &mut app,
+                    &ctx,
+                    1200.0,
+                    vec![
+                        key(Key::ArrowDown),
+                        key(Key::ArrowDown),
+                        key(Key::ArrowDown),
+                    ],
+                );
+                assert_eq!(focused_keys(&ctx).as_deref(), Some("O"));
+                app_frame(&mut app, &ctx, 1200.0, vec![]);
+                assert_eq!(focused_keys(&ctx).as_deref(), Some("S"));
+                app_frame(&mut app, &ctx, 1200.0, vec![]);
+            } else {
+                for expected in ["O", "S", "A"] {
+                    app_keys(&mut app, &ctx, 1200.0, &[Key::ArrowDown]);
+                    assert_eq!(focused_keys(&ctx).as_deref(), Some(expected));
+                }
+            }
+            assert_eq!(focused_keys(&ctx).as_deref(), Some("A"));
+            assert!(active(&ctx));
+            assert!(app.file.is_none());
+            assert!(!app.doc.dirty());
+            app_keys(&mut app, &ctx, 1200.0, &[Key::ArrowRight, Key::ArrowLeft]);
+            assert_eq!(focused_keys(&ctx).as_deref(), Some("A"));
+            assert!(popup_open(&ctx));
+        }
+    }
+
+    #[test]
+    fn rapid_file_arrows_finish_using_only_accepted_repaint_callbacks() {
+        for (batched, restarted) in [(false, false), (true, false), (true, true)] {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            app.doc = Document::new(420, 560);
+            app.recent = vec![PathBuf::from("artworks/mona-lisa.p10")];
+            let callbacks = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let recorded = callbacks.clone();
+            ctx.set_request_repaint_callback(move |info| {
+                recorded.lock().unwrap().push(info);
+            });
+            let mut trace = Vec::new();
+            let mut focus_trace = Vec::new();
+            let mut run_to_idle = |app: &mut PaintApp, events| {
+                app_frame(app, &ctx, 1180.0, events);
+                for _ in 0..20 {
+                    let focused = ctx.memory(|memory| memory.focused());
+                    if let Some(target) = read(&ctx)
+                        .targets
+                        .iter()
+                        .find(|target| Some(target.id) == focused)
+                    {
+                        if focus_trace.last() != Some(&target.keys) {
+                            focus_trace.push(target.keys.clone());
+                        }
+                    }
+                    let pass = ctx.cumulative_pass_nr();
+                    let requests = std::mem::take(&mut *callbacks.lock().unwrap());
+                    let scheduled = requests.iter().any(|request| {
+                        request.delay == std::time::Duration::ZERO
+                            && (pass == request.current_cumulative_pass_nr
+                                || pass == request.current_cumulative_pass_nr + 1)
+                    });
+                    trace.push((pass, requests));
+                    if !scheduled {
+                        return;
+                    }
+                    app_frame(app, &ctx, 1180.0, vec![]);
+                }
+                panic!("Menu must settle instead of continuously repainting; focus={:?}; causes={:?}; trace={trace:?}",
+                    ctx.memory(|memory| memory.focused()), ctx.repaint_causes());
+            };
+            run_to_idle(&mut app, vec![]);
+            let keystroke = |code| {
+                let down = key(code);
+                let mut up = down.clone();
+                if let Event::Key { pressed, .. } = &mut up {
+                    *pressed = false;
+                }
+                vec![down, up]
+            };
+            for code in [Key::F10, Key::F] {
+                run_to_idle(&mut app, keystroke(code));
+            }
+            let arrows = [
+                Key::ArrowDown,
+                Key::ArrowDown,
+                Key::ArrowDown,
+                Key::ArrowRight,
+            ];
+            if restarted {
+                let events = [Key::Escape, Key::Escape, Key::F10, Key::F]
+                    .into_iter()
+                    .chain(arrows)
+                    .flat_map(keystroke)
+                    .collect();
+                run_to_idle(&mut app, events);
+            } else if batched {
+                run_to_idle(&mut app, arrows.into_iter().flat_map(keystroke).collect());
+            } else {
+                for code in arrows {
+                    run_to_idle(&mut app, keystroke(code));
+                }
+            }
+            let state = read(&ctx);
+            let focused = ctx.memory(|memory| memory.focused());
+            let target = state
+                .targets
+                .iter()
+                .find(|target| Some(target.id) == focused);
+            assert!(
+                target.is_some_and(|target| target.left_parent.is_some()),
+                "Three Down steps then Right must reach a save format; batched={batched}; focused={:?}; tail={:?}; {trace:?}",
+                target.map(|target| &target.keys),
+                state.navigation_tail,
+            );
+            assert!(state.navigation_tail.is_empty());
+            assert_eq!(
+                target.map(|target| target.keys.as_str()),
+                Some("G"),
+                "Right from Save as should enter the first format"
+            );
+            assert!(focus_trace.windows(3).any(|keys| keys == ["O", "S", "A"]),
+                "File navigation must preserve Open, Save, Save as in order; restarted={restarted}; {focus_trace:?}");
+            assert!(!app.doc.dirty());
+        }
+    }
+
+    #[test]
+    fn mouse_opened_file_menu_repaints_without_further_pointer_input() {
+        for split_click in [false, true] {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            let callbacks = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let recorded = callbacks.clone();
+            ctx.set_request_repaint_callback(move |info| {
+                recorded.lock().unwrap().push(info);
+            });
+            app_warm(&mut app, &ctx, 1200.0);
+            callbacks.lock().unwrap().clear();
+            let file = read(&ctx)
+                .targets
+                .iter()
+                .find(|target| target.scope == "tabs" && target.keys == "F")
+                .unwrap()
+                .rect
+                .center();
+            let button = |pressed| Event::PointerButton {
+                pos: file,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            };
+            let mut events = vec![Event::PointerMoved(file), button(true)];
+            let mut output = if split_click {
+                app_frame(&mut app, &ctx, 1200.0, events);
+                app_frame(&mut app, &ctx, 1200.0, vec![button(false)])
+            } else {
+                events.push(button(false));
+                app_frame(&mut app, &ctx, 1200.0, events)
+            };
+            let mut trace = Vec::new();
+            for _ in 0..12 {
+                let pass = ctx.cumulative_pass_nr();
+                let requests = std::mem::take(&mut *callbacks.lock().unwrap());
+                // This is eframe0.31's native event-loop acceptance rule.
+                let scheduled = requests.iter().any(|request| {
+                    request.delay == std::time::Duration::ZERO
+                        && (pass == request.current_cumulative_pass_nr
+                            || pass == request.current_cumulative_pass_nr + 1)
+                });
+                trace.push((pass, requests));
+                if visible(&output, "New") || !scheduled {
+                    break;
+                }
+                output = app_frame(&mut app, &ctx, 1200.0, vec![]);
+            }
+            assert!(visible(&output, "New"),
+                "File must become visible without another mouse event; split={split_click}; {trace:?}");
         }
     }
 
@@ -1659,6 +2080,77 @@ mod tests {
         );
         assert_eq!(app.text_edit.as_ref().unwrap().text, "Keep editing");
         assert!(!active(&ctx));
+    }
+
+    #[test]
+    fn escape_then_control_enter_commits_text_without_reopening_font_menu() {
+        for batched in [false, true] {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            app.text_tab = true;
+            app.text_edit = Some(TextEditState {
+                index: None,
+                origin: (10, 10),
+                text: "Keep this caption".into(),
+                format: crate::text::TextFormat::default(),
+                focus: true,
+                selection: 0..4,
+                insertion_style: None,
+                history: text_editing::TextHistory::default(),
+                palette_colors: app.colors,
+            });
+            app_warm(&mut app, &ctx, 1200.0);
+            let position = read(&ctx)
+                .targets
+                .iter()
+                .find(|target| target.kind == Kind::Menu { scope: "fonts" })
+                .unwrap()
+                .rect
+                .center();
+            app_frame(
+                &mut app,
+                &ctx,
+                1200.0,
+                vec![
+                    Event::PointerMoved(position),
+                    Event::PointerButton {
+                        pos: position,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Modifiers::NONE,
+                    },
+                    Event::PointerButton {
+                        pos: position,
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+            );
+            app_warm(&mut app, &ctx, 1200.0);
+            assert!(popup_open(&ctx));
+            let mut commit = key(Key::Enter);
+            if let Event::Key { modifiers, .. } = &mut commit {
+                *modifiers = Modifiers::CTRL;
+            }
+            if batched {
+                app_frame(&mut app, &ctx, 1200.0, vec![key(Key::Escape), commit]);
+            } else {
+                app_keys(&mut app, &ctx, 1200.0, &[Key::Escape]);
+                app_frame(&mut app, &ctx, 1200.0, vec![commit]);
+            }
+            app_warm(&mut app, &ctx, 1200.0);
+            assert!(
+                app.text_edit.is_none(),
+                "Text commit was lost; batched={batched}"
+            );
+            assert!(!popup_open(&ctx), "Font menu reopened; batched={batched}");
+            let selected = app.object.expect("Committed caption should stay selected");
+            let ObjectKind::Text { text, .. } = &app.doc.objects[selected].kind else {
+                panic!("Caption must remain text");
+            };
+            assert_eq!(text, "Keep this caption", "batched={batched}");
+        }
     }
 
     #[test]
