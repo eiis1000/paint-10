@@ -45,6 +45,14 @@ For meme captions, the Text ribbon includes left/center/right alignment and adju
 
 For pixel art, use the 1-pixel Pencil, enable Gridlines, and zoom up to 3200%. Pencil, brush, eraser, and shape widths are remembered separately. Resize's **Keep hard pixel edges (pixel art)** option uses nearest-neighbor scaling. **Transparent Color 2** lets you clear, erase, fill, or grow a transparent canvas; right-click with Fill to use Color 2. The checkerboard shows empty pixels. Fill and eraser operations that remove opacity from existing objects can merge their visible pixels into the raster; one Undo restores the pixels and editable objects.
 
+For precise distances, enable **View → Measure distance** and drag between two
+pixel centers. Drag either endpoint to adjust it, or use arrow keys to move the
+active endpoint by one pixel (Shift: ten). The readout shows distance, horizontal
+and vertical displacement, and angle. Millimeters, centimeters and inches use
+the picture's horizontal and vertical DPI. Delete resets the measurement;
+Escape leaves Measure. The ruler is an overlay and does not alter saved pixels
+or undo history.
+
 Save as a **Paint 10 project (`.p10`)** to retain editable text, image objects, and their transforms. Saving PNG, JPEG, BMP, GIF, or TIFF exports the visible raster picture; reopening those formats gives a flattened image. Undo history is kept for the current session and is not stored in project files. Destructive raster operations, including lifting a raster selection or transforming the whole canvas, can merge editable objects; undo can restore the previous state while it remains in history.
 
 The Save As format selector updates the filename extension and supports monochrome, 16-color, 256-color, and 24-bit BMP files, as well as PNG, JPEG, GIF, TIFF, WebP, icons, and editable projects. JPEG aliases such as `.jpe` and bitmap files named `.dib` are accepted. Indexed BMP export reduces the picture to the selected number of colors.
@@ -103,7 +111,11 @@ nix flake check path:.
 
 The development shell supplies Rust, native libraries, GTK schemas, and the capture helpers without modifying your desktop settings. The packaged executable carries its runtime environment in a wrapper.
 
-Source commit `32ff8ec` passes **197 tests (84 library + 113 application)** in both the native and Nix release suites, plus two explicit tests of the vendored clipboard patch. Strict Clippy, formatting and x86_64-linux flake check pass. The verified package is `/nix/store/jrp82pfckf8kdqnw0y8klnfb2nzs648b-paint-10-0.1.0`; its build log is `tmp/nix-package-verified.log`. Windows/macOS native execution remains unverified locally.
+The [verification log](TESTING.md) records source-specific native and browser
+checks, Nix package builds, and actual isolated mouse/keyboard workflows.
+Windows/macOS native execution remains unverified locally. Artwork acceptance
+and any remaining implementation work are tracked separately in
+[PROGRESS.md](PROGRESS.md).
 
 For manual testing on an isolated desktop:
 
