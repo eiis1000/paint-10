@@ -1,5 +1,163 @@
 use super::*;
 
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::app) enum DownloadAction {
+    #[default]
+    None,
+    Download,
+    Cancel,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+pub(in crate::app) fn browser_download_controls(
+    ctx: &Context,
+    name: &mut String,
+    format: &mut crate::raster_io::RasterFormat,
+    copy: bool,
+    error: Option<&str>,
+    initial_focus: &mut bool,
+) -> DownloadAction {
+    let dialog_id = Id::new("browser_download");
+    let filename_id = dialog_id.with("filename");
+    let queued_id = dialog_id.with("opening_input");
+    let popup_was_open = ctx.memory(|memory| memory.any_popup_open());
+    let mut action = DownloadAction::None;
+    let shown = egui::Modal::new(dialog_id)
+        .frame(Frame::window(&ctx.style()))
+        .show(ctx, |ui| {
+            let width = 380.0_f32.min((ctx.screen_rect().width() - 56.0).max(180.0));
+            ui.set_width(width);
+            ui.spacing_mut().interact_size.y = 28.0;
+            ui.heading(if copy {
+                "Download a copy"
+            } else {
+                "Save picture"
+            });
+            ui.add_space(4.0);
+            let download_note = concat!(
+                "The browser downloads a file; ",
+                "it cannot replace the original automatically."
+            );
+            ui.add(Label::new(RichText::new(download_note).weak()).wrap());
+            ui.add_space(12.0);
+            if *initial_focus {
+                if ui.is_enabled() && !ui.is_sizing_pass() {
+                    ctx.memory_mut(|memory| memory.request_focus(filename_id));
+                    select_number(ctx, filename_id);
+                    let mut queued = ctx.data_mut(|data| {
+                        data.remove_temp::<Vec<Event>>(queued_id)
+                            .unwrap_or_default()
+                    });
+                    ctx.input_mut(|input| {
+                        queued.append(&mut input.events);
+                        input.events = queued;
+                    });
+                    *initial_focus = false;
+                } else {
+                    let mut queued = Vec::new();
+                    ctx.input_mut(|input| {
+                        input.events.retain(|event| {
+                            if matches!(
+                                event,
+                                Event::Text(_)
+                                    | Event::Paste(_)
+                                    | Event::Key {
+                                        key: Key::Enter | Key::Tab,
+                                        ..
+                                    }
+                            ) {
+                                queued.push(event.clone());
+                                false
+                            } else {
+                                true
+                            }
+                        });
+                    });
+                    ctx.data_mut(|data| {
+                        data.get_temp_mut_or_default::<Vec<Event>>(queued_id)
+                            .extend(queued);
+                    });
+                    ctx.request_repaint();
+                }
+            }
+            let enter_filename = ui.is_enabled()
+                && !popup_was_open
+                && ctx.memory(|memory| memory.has_focus(filename_id))
+                && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
+            let filename_label = ui.label("Filename");
+            ui.add_sized([width, 28.0], TextEdit::singleline(name).id(filename_id))
+                .labelled_by(filename_label.id);
+            ui.add_space(8.0);
+            let format_label = ui.label("File type");
+            // Keep the original salt while moving the label above the field.
+            ComboBox::from_id_salt("File type")
+                .width(width)
+                .selected_text(format.label())
+                .show_ui(ui, |ui| {
+                    theme::menu(ui);
+                    for choice in crate::raster_io::RasterFormat::ALL {
+                        if ui
+                            .add(
+                                theme::MenuItem::new(choice.label())
+                                    .selected(*format == choice)
+                                    .width(ui.available_width()),
+                            )
+                            .clicked()
+                        {
+                            *format = choice;
+                        }
+                    }
+                })
+                .response
+                .labelled_by(format_label.id);
+            if *format == crate::raster_io::RasterFormat::Project {
+                ui.add_space(4.0);
+                ui.add(
+                    Label::new(
+                        RichText::new("Keeps text, images, transparency, and editable transforms.")
+                            .weak(),
+                    )
+                    .wrap(),
+                );
+            }
+            if let Some(error) = error {
+                ui.add_space(8.0);
+                ui.add(Label::new(RichText::new(error).color(ui.visuals().error_fg_color)).wrap());
+            }
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                let button_size = vec2(92.0, 30.0);
+                ui.add_space((ui.available_width() - 2.0 * button_size.x - 8.0).max(0.0));
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let valid = !name.trim().is_empty();
+                if ui
+                    .add_enabled(valid, Button::new("Download").min_size(button_size))
+                    .clicked()
+                    || (valid && enter_filename)
+                {
+                    action = DownloadAction::Download;
+                }
+                if ui
+                    .add(Button::new("Cancel").min_size(button_size))
+                    .clicked()
+                {
+                    action = DownloadAction::Cancel;
+                }
+            });
+        });
+    if shown.is_top_modal
+        && !shown.any_popup_open
+        && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
+    {
+        action = DownloadAction::Cancel;
+    }
+    if action != DownloadAction::None {
+        ctx.data_mut(|data| data.remove::<Vec<Event>>(queued_id));
+    }
+    action
+}
+
 #[derive(Clone, Default)]
 struct ModalKeys {
     kind: String,
@@ -1141,6 +1299,7 @@ impl PaintApp {
         }
         ui.separator();
         ui.horizontal(|ui| {
+            #[cfg(not(target_arch = "wasm32"))]
             if default_button(ui, "Print…", valid) {
                 match crate::printing::print(&self.doc.composite(), &self.page) {
                     Ok(()) => {
@@ -1150,6 +1309,22 @@ impl PaintApp {
                     Err(e) => self.dialog_error = Some(format!("Print: {e}")),
                 }
             }
+            #[cfg(target_arch = "wasm32")]
+            if default_button(ui, "Download PDF", valid) {
+                match crate::printing::pdf(&self.doc.composite(), &self.page).and_then(|bytes| {
+                    crate::web::download("Paint10.pdf", "application/pdf", &bytes)
+                }) {
+                    Ok(()) => {
+                        self.message = "PDF download started".into();
+                        self.dialog_error = None;
+                        close = true;
+                    }
+                    Err(error) => {
+                        self.dialog_error = Some(format!("Could not download PDF: {error}"));
+                    }
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
             if ui
                 .add_enabled_ui(valid, |ui| dialog_button(ui, "Save PDF…"))
                 .inner
@@ -1598,5 +1773,128 @@ mod tests {
         });
         ctx.memory_mut(|memory| memory.request_focus(cancel));
         assert_eq!(modal_frame(&ctx, vec![enter()], &mut value), (false, true));
+    }
+
+    fn download_frame(
+        ctx: &Context,
+        events: Vec<Event>,
+        name: &mut String,
+        initial: &mut bool,
+    ) -> DownloadAction {
+        let mut action = DownloadAction::None;
+        let _ = ctx.run(
+            RawInput {
+                events,
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(640.0, 480.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                action = browser_download_controls(
+                    ctx,
+                    name,
+                    &mut crate::raster_io::RasterFormat::Png,
+                    false,
+                    None,
+                    initial,
+                );
+            },
+        );
+        action
+    }
+
+    #[test]
+    fn browser_download_selects_filename_preserves_early_typing_and_accepts_enter() {
+        for first_input_frame in 0..=2 {
+            let ctx = Context::default();
+            let mut name = "Untitled".to_owned();
+            let mut initial = true;
+            let mut downloaded = false;
+            for frame in 0..4 {
+                let events = if frame == first_input_frame {
+                    vec![Event::Text("My picture".into()), enter()]
+                } else {
+                    Vec::new()
+                };
+                let action = download_frame(&ctx, events, &mut name, &mut initial);
+                downloaded |= action == DownloadAction::Download;
+                if downloaded {
+                    break;
+                }
+            }
+            assert!(downloaded, "initial input frame {first_input_frame}");
+            assert_eq!(name, "My picture");
+        }
+    }
+
+    #[test]
+    fn browser_download_escape_cancels_and_enter_respects_focused_cancel() {
+        let ctx = Context::default();
+        let mut name = "Untitled".to_owned();
+        let mut initial = true;
+        for _ in 0..3 {
+            download_frame(&ctx, Vec::new(), &mut name, &mut initial);
+        }
+        let tab = Event::Key {
+            key: Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        for _ in 0..3 {
+            assert_eq!(
+                download_frame(&ctx, vec![tab.clone()], &mut name, &mut initial),
+                DownloadAction::None
+            );
+        }
+        assert_eq!(
+            download_frame(&ctx, vec![enter()], &mut name, &mut initial),
+            DownloadAction::Cancel
+        );
+        let escape = Event::Key {
+            key: Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        assert_eq!(
+            download_frame(&ctx, vec![escape], &mut name, &mut initial),
+            DownloadAction::Cancel
+        );
+        assert!(!ctx.input(|input| input.key_pressed(Key::Escape)));
+    }
+
+    #[test]
+    fn browser_download_format_popup_owns_enter_and_escape() {
+        let ctx = Context::default();
+        let mut name = "Untitled".to_owned();
+        let mut initial = true;
+        for _ in 0..3 {
+            download_frame(&ctx, Vec::new(), &mut name, &mut initial);
+        }
+        let key = |key| Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        download_frame(&ctx, vec![key(Key::Tab)], &mut name, &mut initial);
+        assert_eq!(
+            download_frame(&ctx, vec![enter()], &mut name, &mut initial),
+            DownloadAction::None
+        );
+        assert!(ctx.memory(|memory| memory.any_popup_open()));
+        download_frame(&ctx, Vec::new(), &mut name, &mut initial);
+        assert_eq!(
+            download_frame(&ctx, vec![key(Key::Escape)], &mut name, &mut initial),
+            DownloadAction::None
+        );
+        assert!(!ctx.memory(|memory| memory.any_popup_open()));
+        assert_eq!(
+            download_frame(&ctx, vec![key(Key::Escape)], &mut name, &mut initial),
+            DownloadAction::Cancel
+        );
     }
 }

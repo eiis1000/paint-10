@@ -95,6 +95,7 @@ impl PaintApp {
             .map(Object::render_unkeyed)
             .or_else(|| self.selected_image());
         if let Some(img) = image {
+            #[cfg(not(target_arch = "wasm32"))]
             if let Some(cb) = &mut self.clipboard {
                 if let Err(error) = cb.set_image(arboard::ImageData {
                     width: img.width() as usize,
@@ -105,13 +106,22 @@ impl PaintApp {
                     return false;
                 }
             }
+            #[cfg(target_arch = "wasm32")]
+            self.copy_browser_image(&img);
             self.copied = Some(img);
-            self.message = if self.clipboard.is_some() {
-                "Selection copied"
-            } else {
-                "Selection copied within Paint 10; the system clipboard is unavailable"
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.message = if self.clipboard.is_some() {
+                    "Selection copied"
+                } else {
+                    "Selection copied within Paint 10; the system clipboard is unavailable"
+                }
+                .into();
             }
-            .into();
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.message = "Selection copied within Paint 10".into();
+            }
             return true;
         }
         false
@@ -160,35 +170,40 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn paste_clipboard(&mut self) {
-        // Once a system clipboard exists it is authoritative. Its contents may
-        // have changed to text (or been cleared) since our last image copy.
-        // The local fallback is only for systems without clipboard access.
-        let result = if let Some(clipboard) = &mut self.clipboard {
-            clipboard
-                .get_image()
-                .map_err(|error| match error {
-                    arboard::Error::ContentNotAvailable => {
-                        "No picture on the clipboard. Use Paste from to insert a file.".into()
-                    }
-                    error => format!("Could not read the clipboard: {error}"),
-                })
-                .and_then(|image| {
-                    let width = u32::try_from(image.width).unwrap_or(u32::MAX);
-                    let height = u32::try_from(image.height).unwrap_or(u32::MAX);
-                    if !d::valid_size(width, height) {
-                        return Err("Clipboard picture exceeds the image size limit.".into());
-                    }
-                    RgbaImage::from_raw(width, height, image.bytes.into_owned())
-                        .ok_or_else(|| "The clipboard picture has invalid pixel data.".into())
-                })
-        } else {
-            self.copied
-                .clone()
-                .ok_or_else(|| "No picture has been copied in Paint 10.".into())
-        };
-        match result {
-            Ok(image) => self.insert_image(image),
-            Err(error) => self.message = error,
+        #[cfg(target_arch = "wasm32")]
+        self.paste_browser_clipboard();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Once a system clipboard exists it is authoritative. Its contents may
+            // have changed to text (or been cleared) since our last image copy.
+            // The local fallback is only for systems without clipboard access.
+            let result = if let Some(clipboard) = &mut self.clipboard {
+                clipboard
+                    .get_image()
+                    .map_err(|error| match error {
+                        arboard::Error::ContentNotAvailable => {
+                            "No picture on the clipboard. Use Paste from to insert a file.".into()
+                        }
+                        error => format!("Could not read the clipboard: {error}"),
+                    })
+                    .and_then(|image| {
+                        let width = u32::try_from(image.width).unwrap_or(u32::MAX);
+                        let height = u32::try_from(image.height).unwrap_or(u32::MAX);
+                        if !d::valid_size(width, height) {
+                            return Err("Clipboard picture exceeds the image size limit.".into());
+                        }
+                        RgbaImage::from_raw(width, height, image.bytes.into_owned())
+                            .ok_or_else(|| "The clipboard picture has invalid pixel data.".into())
+                    })
+            } else {
+                self.copied
+                    .clone()
+                    .ok_or_else(|| "No picture has been copied in Paint 10.".into())
+            };
+            match result {
+                Ok(image) => self.insert_image(image),
+                Err(error) => self.message = error,
+            }
         }
     }
 

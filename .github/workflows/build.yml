@@ -54,3 +54,22 @@ jobs:
       - uses: cachix/install-nix-action@v31
       - run: nix flake check
       - run: nix build .#paint-10
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y lld
+      - run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+      - run: cargo clippy --locked --lib --target wasm32-unknown-unknown -- -D warnings
+      - run: bash scripts/build-web.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paint-10-browser
+          path: target/web
+          if-no-files-found: error

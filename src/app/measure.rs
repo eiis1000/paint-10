@@ -263,6 +263,7 @@ impl PaintApp {
         }
         let blocked = self.dialog.is_some()
             || self.pending.is_some()
+            || self.browser_dialog_open()
             || keytips::popup_open(ctx);
         if blocked {
             self.measure.dragging = None;

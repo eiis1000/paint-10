@@ -76,6 +76,38 @@
             mainProgram = "paint-10";
           };
         };
+      mkWeb =
+        pkgs:
+        pkgs.rustPlatform.buildRustPackage {
+          pname = "paint-10-web";
+          version = "0.1.0";
+          src = source;
+          cargoLock.lockFile = ./Cargo.lock;
+          nativeBuildInputs = [
+            pkgs.wasm-bindgen-cli
+            pkgs.llvmPackages.lld
+          ];
+          # Override the native Cargo hook's target while retaining its locked,
+          # vendored dependency setup. Browser behavior is checked in shared tests.
+          buildPhase = ''
+            runHook preBuild
+            cargo build --frozen --release --lib --target wasm32-unknown-unknown -j "$NIX_BUILD_CORES"
+            runHook postBuild
+          '';
+          doCheck = false;
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out/pkg"
+            wasm-bindgen --target web --out-dir "$out/pkg" --out-name paint_10 target/wasm32-unknown-unknown/release/paint_10.wasm
+            cp web/index.html "$out/index.html"
+            runHook postInstall
+          '';
+          meta = {
+            description = "Paint 10 browser application using the shared Rust UI and engine";
+            license = pkgs.lib.licenses.mit;
+            platforms = systems;
+          };
+        };
     in
     {
       devShells = eachSystem (
@@ -116,6 +148,15 @@
                 openbox
               ]);
           });
+          # nixpkgs' Rust includes the wasm32 standard library. Keep the
+          # binding generator in sync with the pinned wasm-bindgen crate.
+          web = default.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [
+              pkgs.wasm-bindgen-cli
+              pkgs.llvmPackages.lld
+              pkgs.python3
+            ];
+          });
         }
       );
       packages = eachSystem (
@@ -125,6 +166,7 @@
         in
         rec {
           paint-10 = mkPaint pkgs;
+          paint-10-web = mkWeb pkgs;
           default = paint-10;
         }
       );

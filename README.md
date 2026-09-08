@@ -29,6 +29,12 @@ The flake provides packages and development shells for `x86_64-linux` and `aarch
 
 Use the Home ribbon for brushes, shapes, fill, eraser, text, selections, colors, and image transformations. Color 1 is the foreground; Color 2 is the background. Right-click a palette swatch to choose Color 2. The View ribbon controls zoom, rulers, gridlines, and picture view. Above 100% zoom, enable Thumbnail to navigate the picture through a floating preview.
 
+Shapes remain adjustable until applied; press Enter to apply a finished shape.
+The Fill menu also offers vertical, horizontal, and radial gradients from
+Color 1 to Color 2. A transparent Color 2 gives a soft edge for light and mist.
+These optional fills use V, H, and R keytips after opening Fill; the original
+Paint fill choices retain their numeric keytips.
+
 The title-bar dropdown customizes the Quick Access Toolbar and moves it below the ribbon. Its commands and placement persist. Alt+1, Alt+2, and subsequent numbers invoke the commands in their current order.
 
 At narrow widths, ribbon groups collapse into buttons that open their full controls. Alt or F10 displays keytips on the actual commands; type the displayed letters to activate them. Tab moves between groups, arrows navigate within a group, and Escape returns through open menus.
@@ -113,7 +119,35 @@ The ordinary GUI pixel exercise verified an exact RGBA PNG copy, an exact 2× ne
 
 ## Source layout
 
-`src/lib.rs` exposes the document model, raster tools, text rendering, project format, image codecs, metadata and printing. The binary owns `src/app/`, whose modules separate gestures, selections, text editing, ribbon controls, dialogs, keyboard commands and file operations. `src/icons/` contains vector artwork without a dependency on symbol fonts. The small vendored egui-winit patch preserves image paste and Paint's modified clipboard shortcuts; its rationale and upstream licenses are included alongside the source.
+`src/lib.rs` exposes the document model, raster tools, text rendering, project format, image codecs, metadata and printing. The native binary and browser library compile the same `src/app/` modules for gestures, selections, text editing, ribbon controls, dialogs, keyboard commands and file operations. `src/icons/` contains vector artwork without a dependency on symbol fonts. The small vendored egui-winit patch preserves image paste and Paint's modified clipboard shortcuts; its rationale and upstream licenses are included alongside the source.
+
+## Browser
+
+The same Rust application also compiles to WebAssembly and runs locally in a
+desktop browser with WebGL. Pictures are processed on your device; the browser
+target is a static site and does not upload images to a server.
+
+```sh
+nix develop path:.#web -c bash scripts/build-web.sh
+nix develop path:.#web -c python3 -m http.server 8080 --bind 127.0.0.1 --directory target/web
+```
+
+Open `http://127.0.0.1:8080/`. `nix build .#paint-10-web` produces the packaged
+static site. The [browser guide](web/README.md) also covers building without Nix.
+
+Open imports pictures and editable `.p10` projects. Save, Save as, Save a copy,
+and Save selection download files in the shared raster/project formats;
+Download PDF uses the shared page layout. Font list → Load font imports local
+TTF, OTF, and TTC files, and used fonts are embedded in saved projects. Opening
+a project makes its embedded font families available in the font list. Browser
+preferences preserve custom colors and Quick Access settings.
+
+Browsers cannot confirm that a download dialog finished, so downloading keeps
+the document marked as modified. Before New/Open, verify the downloaded file
+and then choose **Don't save** in the pending prompt. Reloading or closing a
+modified picture triggers the browser's unsaved-work warning. Clipboard access
+depends on browser permissions; standard paste events and explicit Paste from
+remain available. Native desktop integrations require the desktop application.
 
 ## Windows, macOS, and portable exports
 

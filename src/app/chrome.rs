@@ -54,7 +54,7 @@ impl PaintApp {
                     }
                     QuickCommand::Redo if self.text_edit.is_some() => self.text_can_redo(),
                     QuickCommand::Redo => self.doc.can_redo(),
-                    QuickCommand::Email => self.job.is_none(),
+                    QuickCommand::Email => self.job.is_none() && !cfg!(target_arch = "wasm32"),
                     _ => true,
                 };
             let response = icons::button(
@@ -253,92 +253,104 @@ impl PaintApp {
                 if title_changed {
                     ctx.send_viewport_cmd(ViewportCommand::Title(title));
                 }
-                let drag = ui.interact(
-                    title_rect,
-                    Id::new("title_drag"),
-                    Sense::click_and_drag().difference(Sense::FOCUSABLE),
-                );
-                if drag.drag_started() {
-                    ctx.send_viewport_cmd(ViewportCommand::StartDrag);
-                }
-                if drag.double_clicked() {
-                    ctx.send_viewport_cmd(ViewportCommand::Maximized(
-                        !ctx.input(|i| i.viewport().maximized.unwrap_or(false)),
-                    ));
-                }
-                for i in 0..3 {
-                    let rr = Rect::from_min_size(
-                        pos2(r.right() - 138. + i as f32 * 46., r.top()),
-                        vec2(46., 31.),
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let drag = ui.interact(
+                        title_rect,
+                        Id::new("title_drag"),
+                        Sense::click_and_drag().difference(Sense::FOCUSABLE),
                     );
-                    let response = ui.interact(rr, Id::new(("caption", i)), Sense::click());
-                    let label = match i {
-                        0 => "Minimize",
-                        1 if ctx.input(|input| input.viewport().maximized.unwrap_or(false)) => {
-                            "Restore window"
+                    if drag.drag_started() {
+                        ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+                    }
+                    if drag.double_clicked() {
+                        ctx.send_viewport_cmd(ViewportCommand::Maximized(
+                            !ctx.input(|i| i.viewport().maximized.unwrap_or(false)),
+                        ));
+                    }
+                    for i in 0..3 {
+                        let rr = Rect::from_min_size(
+                            pos2(r.right() - 138. + i as f32 * 46., r.top()),
+                            vec2(46., 31.),
+                        );
+                        let response = ui.interact(rr, Id::new(("caption", i)), Sense::click());
+                        let label = match i {
+                            0 => "Minimize",
+                            1 if ctx.input(|input| input.viewport().maximized.unwrap_or(false)) => {
+                                "Restore window"
+                            }
+                            1 => "Maximize",
+                            _ => "Close Paint 10",
+                        };
+                        response
+                            .widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+                        if response.hovered() {
+                            ui.painter().rect_filled(
+                                rr,
+                                0.,
+                                if i == 2 {
+                                    Color32::from_rgb(232, 17, 35)
+                                } else {
+                                    Color32::from_gray(231)
+                                },
+                            );
                         }
-                        1 => "Maximize",
-                        _ => "Close Paint 10",
-                    };
-                    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
-                    if response.hovered() {
-                        ui.painter().rect_filled(
-                            rr,
-                            0.,
-                            if i == 2 {
-                                Color32::from_rgb(232, 17, 35)
-                            } else {
-                                Color32::from_gray(231)
-                            },
-                        );
-                    }
-                    let c = if i == 2 && response.hovered() {
-                        Color32::WHITE
-                    } else {
-                        Color32::from_gray(30)
-                    };
-                    let center = rr.center();
-                    if i == 0 {
-                        ui.painter().line_segment(
-                            [center + vec2(-5., 0.), center + vec2(5., 0.)],
-                            Stroke::new(1.0_f32, c),
-                        );
-                    } else if i == 1 {
-                        ui.painter().rect_stroke(
-                            Rect::from_center_size(center, vec2(10., 10.)),
-                            0.,
-                            Stroke::new(1.0_f32, c),
-                            StrokeKind::Inside,
-                        );
-                    } else {
-                        ui.painter().line_segment(
-                            [center + vec2(-5., -5.), center + vec2(5., 5.)],
-                            Stroke::new(1.0_f32, c),
-                        );
-                        ui.painter().line_segment(
-                            [center + vec2(5., -5.), center + vec2(-5., 5.)],
-                            Stroke::new(1.0_f32, c),
-                        );
-                    }
-                    if response.clicked() {
-                        match i {
-                            0 => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
-                            1 => ctx.send_viewport_cmd(ViewportCommand::Maximized(
-                                !ctx.input(|i| i.viewport().maximized.unwrap_or(false)),
-                            )),
-                            _ => self.action(Action::Close, ctx),
+                        let c = if i == 2 && response.hovered() {
+                            Color32::WHITE
+                        } else {
+                            Color32::from_gray(30)
+                        };
+                        let center = rr.center();
+                        if i == 0 {
+                            ui.painter().line_segment(
+                                [center + vec2(-5., 0.), center + vec2(5., 0.)],
+                                Stroke::new(1.0_f32, c),
+                            );
+                        } else if i == 1 {
+                            ui.painter().rect_stroke(
+                                Rect::from_center_size(center, vec2(10., 10.)),
+                                0.,
+                                Stroke::new(1.0_f32, c),
+                                StrokeKind::Inside,
+                            );
+                        } else {
+                            ui.painter().line_segment(
+                                [center + vec2(-5., -5.), center + vec2(5., 5.)],
+                                Stroke::new(1.0_f32, c),
+                            );
+                            ui.painter().line_segment(
+                                [center + vec2(5., -5.), center + vec2(-5., 5.)],
+                                Stroke::new(1.0_f32, c),
+                            );
                         }
+                        if response.clicked() {
+                            match i {
+                                0 => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
+                                1 => ctx.send_viewport_cmd(ViewportCommand::Maximized(
+                                    !ctx.input(|i| i.viewport().maximized.unwrap_or(false)),
+                                )),
+                                _ => self.action(Action::Close, ctx),
+                            }
+                        }
+                        if response.has_focus() {
+                            ui.painter().rect_stroke(
+                                rr.shrink(3.0),
+                                0.0,
+                                Stroke::new(2.0_f32, Color32::from_rgb(0, 80, 160)),
+                                StrokeKind::Inside,
+                            );
+                        }
+                        response.on_hover_text(label);
                     }
-                    if response.has_focus() {
-                        ui.painter().rect_stroke(
-                            rr.shrink(3.0),
-                            0.0,
-                            Stroke::new(2.0_f32, Color32::from_rgb(0, 80, 160)),
-                            StrokeKind::Inside,
-                        );
-                    }
-                    response.on_hover_text(label);
                 }
+                #[cfg(target_arch = "wasm32")]
+                ui.painter().text(
+                    r.right_top() + vec2(-12.0, 15.0),
+                    Align2::RIGHT_CENTER,
+                    "Browser edition",
+                    FontId::proportional(12.0),
+                    Color32::from_gray(90),
+                );
             });
     }
 

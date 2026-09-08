@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Paint 10</title>
+
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #f0f0f0;
+      }
+
+      #paint {
+        display: block;
+        width: 100%;
+        height: 100%;
+        touch-action: none;
+      }
+
+      #loading {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        gap: 12px;
+        font: 16px system-ui, sans-serif;
+        color: #25364a;
+        text-align: center;
+        padding: 24px;
+      }
+
+      #loading strong {
+        font-size: 30px;
+      }
+
+      #loading[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+
+  <body>
+    <canvas id="paint" aria-label="Paint 10 drawing application"></canvas>
+    <div id="loading">
+      <strong>Paint 10</strong>
+      <span id="status">Loading the drawing tools…</span>
+    </div>
+
+    <script type="module">
+      import init, { WebHandle } from './pkg/paint_10.js';
+
+      const loading = document.querySelector('#loading');
+      const status = document.querySelector('#status');
+
+      try {
+        await init();
+        const app = new WebHandle();
+        await app.start(document.querySelector('#paint'));
+        window.paint10 = app;
+        loading.hidden = true;
+
+        window.setInterval(() => {
+          if (app.has_panicked()) {
+            loading.hidden = false;
+            status.textContent = app.panic_message()
+              || 'Paint 10 stopped unexpectedly. Reload to restart.';
+          }
+        }, 1000);
+      } catch (error) {
+        status.textContent = `Paint 10 could not start: ${error}. WebGL is required.`;
+        console.error(error);
+      }
+    </script>
+  </body>
+</html>

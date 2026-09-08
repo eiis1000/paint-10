@@ -165,6 +165,12 @@ impl PaintApp {
             return false;
         }
         let pasted: Option<String> = if matches!(action, Action::Paste) {
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.paste_browser_clipboard();
+                return true;
+            }
+            #[cfg(not(target_arch = "wasm32"))]
             match self
                 .clipboard
                 .as_mut()
@@ -631,7 +637,8 @@ impl PaintApp {
                         .chain(self.font_names.iter().map(|(name, _)| name.as_str()))
                         .filter(|name| name.to_lowercase().contains(&filter))
                         .count();
-                    let height = (row_count.max(1) as f32 * 31.0).min(280.0);
+                    let extra_rows = usize::from(cfg!(target_arch = "wasm32"));
+                    let height = ((row_count.max(1) + extra_rows) as f32 * 31.0).min(280.0);
                     ScrollArea::vertical()
                         .max_height(280.0)
                         .min_scrolled_height(height)
@@ -671,6 +678,16 @@ impl PaintApp {
                             }
                             if matches == 0 {
                                 ui.label("No matching fonts");
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                ui.separator();
+                                let load = ui.button("Load font… (TTF, OTF, TTC)");
+                                ribbon_controls::register(ui, &load, "L", keytips::Kind::Button);
+                                if load.clicked() {
+                                    self.choose_browser_font();
+                                    ui.close_menu();
+                                }
                             }
                         });
                 });
