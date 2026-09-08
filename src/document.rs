@@ -700,8 +700,21 @@ impl Document {
         self.composite_without(None)
     }
     pub fn composite_without(&self, skip: Option<usize>) -> RgbaImage {
+        self.composite_with_raster(&self.image, skip)
+    }
+
+    /// Raster beneath an active drawing transaction, without changing its state.
+    pub fn preview_raster(&self) -> &RgbaImage {
+        self.before
+            .as_ref()
+            .map_or(&self.image, |before| &before.image)
+    }
+
+    /// Composite a display-only raster replacement over the retained objects.
+    pub fn composite_with_raster(&self, raster: &RgbaImage, skip: Option<usize>) -> RgbaImage {
+        debug_assert_eq!(raster.dimensions(), self.image.dimensions());
         let mut out = if self.objects.is_empty() {
-            self.image.clone()
+            raster.clone()
         } else {
             RgbaImage::new(self.image.width(), self.image.height())
         };
@@ -711,7 +724,7 @@ impl Document {
             }
         }
         if !self.objects.is_empty() {
-            overlay(&mut out, &self.image, 0, 0);
+            overlay(&mut out, raster, 0, 0);
         }
         if self.mono {
             for p in out.pixels_mut() {
