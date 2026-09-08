@@ -873,7 +873,9 @@ impl State {
 
         if let Some(ime) = ime {
             let pixels_per_point = pixels_per_point(&self.egui_ctx, window);
-            let ime_rect_px = pixels_per_point * ime.rect;
+            // A Paint text box can span most of the canvas. Anchor candidates
+            // to the current caret rather than the whole editable box.
+            let ime_rect_px = pixels_per_point * ime.cursor_rect;
             if self.ime_rect_px != Some(ime_rect_px)
                 || self.egui_ctx.input(|i| !i.events.is_empty())
             {
