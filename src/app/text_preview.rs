@@ -18,6 +18,150 @@ struct PreviewTile {
     texture: TextureHandle,
 }
 
+pub(super) struct Interaction {
+    cursor: egui::text_selection::TextCursorState,
+    selection_color: Color32,
+    cursor_style: egui::style::TextCursorStyle,
+}
+
+/// egui keeps logical scalar indices for editing, but its own selection painter
+/// assumes increasing x coordinates and ASCII word boundaries. Unicode text
+/// uses this bridge while retaining the same logical editing machinery.
+pub(super) fn begin_interaction(
+    ui: &mut Ui,
+    text: &str,
+    _format: &TextFormat,
+) -> Option<Interaction> {
+    let incoming_unicode = ui.input(|input| {
+        input.events.iter().any(|event| match event {
+            Event::Text(text)
+            | Event::Paste(text)
+            | Event::Ime(egui::ImeEvent::Preedit(text) | egui::ImeEvent::Commit(text)) => {
+                !text.is_ascii()
+            }
+            _ => false,
+        })
+    });
+    if text.is_ascii() && !incoming_unicode {
+        return None;
+    }
+    let interaction = Interaction {
+        cursor: TextEdit::load_state(ui.ctx(), Id::new("text_input"))
+            .unwrap_or_default()
+            .cursor,
+        selection_color: ui.visuals().selection.bg_fill,
+        cursor_style: ui.visuals().text_cursor.clone(),
+    };
+    ui.visuals_mut().selection.bg_fill = Color32::TRANSPARENT;
+    ui.visuals_mut().text_cursor.stroke = Stroke::NONE;
+    ui.visuals_mut().text_cursor.preview = false;
+    Some(interaction)
+}
+
+pub(super) fn finish_interaction(
+    ui: &mut Ui,
+    output: &mut egui::text_edit::TextEditOutput,
+    text: &str,
+    format: &TextFormat,
+    zoom: f32,
+    interaction: Option<Interaction>,
+) {
+    let Some(mut interaction) = interaction else {
+        return;
+    };
+    ui.visuals_mut().selection.bg_fill = interaction.selection_color;
+    ui.visuals_mut().text_cursor = interaction.cursor_style;
+    let layout = format.editor_layout(text);
+    if let Some(pointer) = ui.ctx().pointer_interact_pos() {
+        let local = (pointer - output.galley_pos) / zoom;
+        let index = layout.hit_test(local.x, local.y);
+        let cursor = output.galley.from_ccursor(egui::text::CCursor::new(index));
+        if interaction.cursor.pointer_interaction(
+            ui,
+            &output.response,
+            cursor,
+            &output.galley,
+            ui.ctx().is_being_dragged(output.response.id),
+        ) {
+            if output.response.double_clicked() {
+                // A click near a glyph's trailing edge may resolve to the next
+                // caret. Word selection belongs to the actual cell under the
+                // pointer, including when its advance runs right-to-left.
+                let character = layout
+                    .rows
+                    .iter()
+                    .filter(|row| local.y >= row.top && local.y <= row.top + row.height)
+                    .flat_map(|row| &row.glyphs)
+                    .filter(|glyph| glyph.advance != 0.0)
+                    .min_by(|a, b| {
+                        let distance = |glyph: &crate::text::EditorGlyph| {
+                            let left = glyph.x.min(glyph.x + glyph.advance);
+                            let right = glyph.x.max(glyph.x + glyph.advance);
+                            (left - local.x).max(0.0) + (local.x - right).max(0.0)
+                        };
+                        distance(a).total_cmp(&distance(b))
+                    })
+                    .map_or(index, |glyph| glyph.character_index);
+                let range = text_editing::word_selection(text, character);
+                interaction
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(range.start),
+                        egui::text::CCursor::new(range.end),
+                    )));
+            }
+            output.state.cursor = interaction.cursor;
+            output.cursor_range = output.state.cursor.range(&output.galley);
+            output.state.clone().store(ui.ctx(), output.response.id);
+        }
+    }
+    if !output.response.has_focus() {
+        return;
+    }
+    let Some(cursor) = output.cursor_range else {
+        return;
+    };
+    let painter = ui.painter().with_clip_rect(output.text_clip_rect);
+    let range = cursor.as_sorted_char_range();
+    for selection in layout.selection_rects(range) {
+        painter.rect_filled(
+            Rect::from_min_size(
+                output.galley_pos + vec2(selection.x, selection.y) * zoom,
+                vec2(selection.width, selection.height) * zoom,
+            ),
+            0.0,
+            interaction.selection_color,
+        );
+    }
+    let caret = layout.caret(cursor.primary.ccursor.index);
+    let rect = Rect::from_min_size(
+        output.galley_pos + vec2(caret.x, caret.y) * zoom,
+        vec2(0.0, caret.height * zoom),
+    );
+    let clock_id = output.response.id.with("visual-caret-clock");
+    let now = ui.input(|input| input.time);
+    let previous = ui
+        .ctx()
+        .data(|data| data.get_temp::<(usize, f64)>(clock_id));
+    let changed =
+        output.response.changed() || previous.is_none_or(|(index, _)| index != caret.index);
+    let since = if changed { now } else { previous.unwrap().1 };
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(clock_id, (caret.index, since)));
+    if ui.input(|input| input.focused) {
+        egui::text_selection::visuals::paint_text_cursor(ui, &painter, rect, now - since);
+    }
+    let transform = ui
+        .ctx()
+        .layer_transform_to_global(ui.layer_id())
+        .unwrap_or_default();
+    ui.output_mut(|output| {
+        if let Some(ime) = &mut output.ime {
+            ime.cursor_rect = transform * rect;
+        }
+    });
+}
+
 /// Use the document renderer for live pixels as well as saved pixels. The
 /// editor draws its translucent selection and caret over this same image.
 pub(super) fn paint(

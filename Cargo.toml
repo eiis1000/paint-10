@@ -13,6 +13,10 @@ eframe = { version = "=0.31.1", default-features = false, features = ["default_f
 image = { version = "=0.25.6", default-features = false, features = ["png", "jpeg", "bmp", "gif", "ico", "tiff", "webp"] }
 tiff = "=0.9.1"
 ab_glyph = "0.2.32"
+rustybuzz = "=0.20.1"
+unicode-bidi = "=0.3.18"
+unicode-script = "=0.5.8"
+unicode-segmentation = "=1.13.3"
 epaint_default_fonts = "=0.31.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }

@@ -1,6 +1,10 @@
 use super::*;
 use crate::text::TextStyle as DocumentTextStyle;
 use egui::text::{CCursor, CCursorRange};
+mod unicode_input;
+
+pub(in crate::app) use unicode_input::word_selection;
+use unicode_input::{snap_editor_selection, text_navigation, update_composition, GraphemeBuffer};
 
 #[derive(Default)]
 pub(in crate::app) struct TextHistory {
@@ -9,6 +13,7 @@ pub(in crate::app) struct TextHistory {
     last_typing: Option<f64>,
     geometry: Option<TextSnapshot>,
     cursor: Option<CCursorRange>,
+    composition: Option<TextSnapshot>,
 }
 
 #[derive(Clone)]
@@ -213,7 +218,12 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn commit_text(&mut self) {
-        if let Some(state) = self.text_edit.take() {
+        if let Some(mut state) = self.text_edit.take() {
+            if let Some(before) = state.history.composition.take() {
+                // A global Save/tool change can end editing before the input
+                // method commits. Only confirmed text belongs in the project.
+                before.restore(&mut state);
+            }
             self.text_tab = false;
             let next_style = active_style(&state);
             self.text_format = state.format.clone();
@@ -248,6 +258,19 @@ impl PaintApp {
 
     pub(in crate::app) fn text_shortcuts(&mut self, ctx: &Context) {
         if keytips::popup_open(ctx) {
+            return;
+        }
+        if self.text_edit.as_ref().is_some_and(|state| {
+            state.history.composition.is_some()
+                || ctx.input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, Event::Ime(ImeEvent::Preedit(text) | ImeEvent::Commit(text)) if !text.is_empty()))
+                })
+        }) {
+            // Composition owns cancellation and history until its final text
+            // is committed. Intermediate predictions are not ordinary edits.
             return;
         }
         if self.text_edit.is_some()
@@ -792,6 +815,7 @@ impl PaintApp {
             ctx.data_mut(|data| data.remove::<Rect>(Id::new("paint10_text_editor_rect")));
             return;
         };
+        let composition_ends = update_composition(&mut state, ctx);
         if self.dialog.is_none() && self.pending.is_none() {
             if let Err(error) = sync_palette(&mut state, self.colors, ctx.input(|input| input.time))
             {
@@ -815,7 +839,9 @@ impl PaintApp {
             // assets until text or formatting changes require new faces.
             prepare_text_fonts(&self.font_db, &mut state.format, &state.text);
         }
-        let commit_requested = !popup_open
+        let composing = state.history.composition.is_some();
+        let commit_requested = !composing
+            && !popup_open
             && !modal_open
             && ctx.input_mut(|input| {
                 super::shortcuts::consume_shortcut(input, Modifiers::CTRL, Key::Enter)
@@ -873,13 +899,25 @@ impl PaintApp {
                 let picture = ui.painter().add(egui::Shape::Noop);
                 ui.visuals_mut().selection.bg_fill =
                     Color32::from_rgba_unmultiplied(40, 140, 235, 85);
-                if !popup_open && !modal_open && !commit_requested {
+                if !popup_open && !modal_open && !commit_requested && !composing {
                     let viewport = ctx
                         .data(|data| data.get_temp::<Rect>(Id::new("paint10_canvas_viewport")))
                         .unwrap_or(self.canvas_rect.intersect(ctx.screen_rect()));
-                    text_navigation(ui, &state.text, &mut layouter, viewport.height());
+                    text_navigation(
+                        ui,
+                        &state.text,
+                        &state.format,
+                        &mut layouter,
+                        viewport.height(),
+                        zoom,
+                    );
                 }
-                let output = TextEdit::multiline(&mut state.text)
+                let interaction = text_preview::begin_interaction(ui, &state.text, &state.format);
+                let mut buffer = GraphemeBuffer {
+                    text: &mut state.text,
+                    composing,
+                };
+                let mut output = TextEdit::multiline(&mut buffer)
                     .id(input_id)
                     .layouter(&mut layouter)
                     .frame(false)
@@ -909,6 +947,17 @@ impl PaintApp {
                 if state.text != original_text {
                     prepare_text_fonts(font_db, &mut live_format, &state.text);
                 }
+                text_preview::finish_interaction(
+                    ui,
+                    &mut output,
+                    &state.text,
+                    &live_format,
+                    zoom,
+                    interaction,
+                );
+                if !composing {
+                    snap_editor_selection(&state.text, &mut output, ctx, input_id);
+                }
                 text_preview::paint(ui, picture, position, &state.text, &live_format, zoom);
                 dashed_rect(ui.painter(), output.response.rect.expand(3.0));
                 output
@@ -918,11 +967,9 @@ impl PaintApp {
             == Some(true)
         {
             if let Some(cursor) = output.cursor_range {
-                let caret = output
-                    .galley
-                    .pos_from_cursor(&cursor.primary)
-                    .center()
-                    .to_vec2()
+                let layout = state.format.editor_layout(&state.text);
+                let caret = layout.caret(cursor.primary.ccursor.index);
+                let caret = vec2(caret.x, caret.y + caret.height * 0.5) * zoom
                     + vec2(padding_x as f32, padding_y as f32) * zoom;
                 let viewport = ctx
                     .data(|data| data.get_temp::<Rect>(Id::new("paint10_canvas_viewport")))
@@ -953,9 +1000,13 @@ impl PaintApp {
                 new_cursor,
                 insertion_style.clone(),
             ) {
-                Ok(()) => state
-                    .history
-                    .record(before, ctx.input(|input| input.time), true),
+                Ok(()) => {
+                    if !composing {
+                        state
+                            .history
+                            .record(before, ctx.input(|input| input.time), true);
+                    }
+                }
                 Err(error) => {
                     self.message = error;
                     before.restore(&mut state);
@@ -976,8 +1027,22 @@ impl PaintApp {
                 state.palette_colors = self.colors;
             }
         }
+        if composition_ends {
+            if let Some(before) = state.history.composition.take() {
+                if before.text != state.text {
+                    state
+                        .history
+                        .record(before, ctx.input(|input| input.time), false);
+                } else {
+                    // An unchanged prediction must not add automatically
+                    // discovered font assets to an existing saved object.
+                    state.format = before.format;
+                }
+            }
+        }
         let done = !popup_open
             && !modal_open
+            && state.history.composition.is_none()
             && !self.text_geometry_gesture()
             && (commit_requested
                 || (!first
@@ -1262,110 +1327,6 @@ fn embed_font_face(
     true
 }
 
-fn text_navigation(
-    ui: &Ui,
-    text: &str,
-    layouter: &mut impl FnMut(&Ui, &str, f32) -> std::sync::Arc<egui::Galley>,
-    viewport_height: f32,
-) {
-    let ctx = ui.ctx();
-    let input_id = Id::new("text_input");
-    let queued_id = input_id.with("navigation_input");
-    if !ui.is_enabled() || !ctx.memory(|memory| memory.has_focus(input_id)) {
-        return;
-    }
-    let mac = ctx.os() == egui::os::OperatingSystem::Mac;
-    let navigation = |event: &Event| match event {
-        Event::Key {
-            key,
-            modifiers,
-            pressed: true,
-            ..
-        } => {
-            let paragraph = matches!(key, Key::ArrowUp | Key::ArrowDown)
-                && !modifiers.mac_cmd
-                && if mac {
-                    modifiers.alt && !modifiers.ctrl
-                } else {
-                    modifiers.ctrl && !modifiers.alt
-                };
-            let page = matches!(key, Key::PageUp | Key::PageDown)
-                && !modifiers.ctrl
-                && !modifiers.alt
-                && !modifiers.command;
-            (paragraph || page).then_some((*key, *modifiers, paragraph))
-        }
-        _ => None,
-    };
-    let mut events = ctx.data_mut(|data| {
-        data.remove_temp::<Vec<Event>>(queued_id)
-            .unwrap_or_default()
-    });
-    ctx.input_mut(|input| events.append(&mut input.events));
-    if let Some(index) = events.iter().position(|event| navigation(event).is_some()) {
-        let preceding_edit = events[..index].iter().any(|event| {
-            matches!(
-                event,
-                Event::Text(_)
-                    | Event::Paste(_)
-                    | Event::Cut
-                    | Event::Ime(_)
-                    | Event::Key { pressed: true, .. }
-                    | Event::PointerButton { .. }
-            )
-        });
-        if preceding_edit {
-            // Let the real TextEdit finish preceding input before calculating
-            // a paragraph/page move from its resulting text and caret.
-            let deferred = events.split_off(index);
-            ctx.data_mut(|data| data.insert_temp(queued_id, deferred));
-            ctx.request_repaint();
-        } else {
-            let (key, modifiers, paragraph) = navigation(&events.remove(index)).unwrap();
-            let galley = layouter(ui, text, ui.available_width());
-            let mut editor = TextEdit::load_state(ctx, input_id).unwrap_or_default();
-            let mut cursor = editor
-                .cursor
-                .range(&galley)
-                .unwrap_or_else(|| egui::text::CursorRange::one(galley.begin()));
-            if paragraph {
-                let characters: Vec<_> = text.chars().collect();
-                let current = cursor.primary.ccursor.index.min(characters.len());
-                let next = if key == Key::ArrowUp {
-                    characters[..current.saturating_sub(1)]
-                        .iter()
-                        .rposition(|ch| *ch == '\n')
-                        .map_or(0, |position| position + 1)
-                } else {
-                    characters[current..]
-                        .iter()
-                        .position(|ch| *ch == '\n')
-                        .map_or(characters.len(), |position| current + position + 1)
-                };
-                cursor.primary = galley.from_ccursor(CCursor::new(next));
-            } else {
-                let caret = galley.pos_from_cursor(&cursor.primary);
-                let distance = viewport_height.max(caret.height())
-                    * if key == Key::PageUp { -1.0 } else { 1.0 };
-                cursor.primary =
-                    galley.cursor_from_pos(vec2(caret.center().x, caret.center().y + distance));
-            }
-            if !modifiers.shift {
-                cursor.secondary = cursor.primary;
-            }
-            editor.cursor.set_range(Some(cursor));
-            editor.store(ctx, input_id);
-            ctx.data_mut(|data| data.insert_temp(input_id.with("navigation_scroll"), true));
-            if let Some(next) = events.iter().position(|event| navigation(event).is_some()) {
-                let deferred = events.split_off(next);
-                ctx.data_mut(|data| data.insert_temp(queued_id, deferred));
-                ctx.request_repaint();
-            }
-        }
-    }
-    ctx.input_mut(|input| input.events = events);
-}
-
 fn text_control(ui: &Ui, response: &Response, name: &'static str, selected: bool) {
     ribbon_controls::named(ui, response, name);
     response.widget_info(|| match name {
@@ -1406,7 +1367,7 @@ fn sync_palette(state: &mut TextEditState, colors: [Color; 2], time: f64) -> Res
     Ok(())
 }
 
-fn apply_text_clipboard(
+pub(in crate::app) fn apply_text_clipboard(
     state: &mut TextEditState,
     action: Action,
     pasted: Option<&str>,
@@ -1542,6 +1503,572 @@ mod tests {
             app_frame(&mut app, ctx, Vec::new());
         }
         app
+    }
+
+    fn timed_input_frame(
+        app: &mut PaintApp,
+        ctx: &Context,
+        events: Vec<Event>,
+        time: f64,
+    ) -> FullOutput {
+        let mut input = RawInput {
+            events,
+            time: Some(time),
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 720.0))),
+            ..Default::default()
+        };
+        eframe::App::raw_input_hook(app, ctx, &mut input);
+        ctx.run(input, |ctx| {
+            if !app.ribbon_keyboard(ctx) {
+                app.shortcut(ctx);
+            }
+            app.titlebar(ctx);
+            app.ribbon(ctx);
+            app.status(ctx);
+            app.canvas(ctx);
+            app.keyboard_menu(ctx);
+            app.dialogs(ctx);
+        })
+    }
+
+    #[test]
+    fn character_navigation_and_deletion_preserve_whole_graphemes() {
+        for grapheme in ["e\u{301}", "👩\u{200d}💻", "🇺🇸", "👍🏽", "क्ष"] {
+            let ctx = Context::default();
+            let text = format!("A{grapheme}B");
+            let end = 1 + grapheme.chars().count();
+            let mut app = editing_app(&ctx, &text);
+            let state = app.text_edit.as_mut().unwrap();
+            state.selection = end..end;
+            state.focus = true;
+            timed_input_frame(&mut app, &ctx, vec![], 1.0);
+            timed_input_frame(
+                &mut app,
+                &ctx,
+                vec![key(Key::ArrowLeft, Modifiers::SHIFT)],
+                2.0,
+            );
+            assert_eq!(
+                app.text_edit.as_ref().unwrap().selection,
+                1..end,
+                "{grapheme}"
+            );
+            timed_input_frame(
+                &mut app,
+                &ctx,
+                vec![key(Key::ArrowRight, Modifiers::NONE)],
+                3.0,
+            );
+            assert_eq!(app.text_edit.as_ref().unwrap().selection, end..end);
+            timed_input_frame(
+                &mut app,
+                &ctx,
+                vec![key(Key::Backspace, Modifiers::NONE)],
+                4.0,
+            );
+            assert_eq!(app.text_edit.as_ref().unwrap().text, "AB", "{grapheme}");
+            timed_input_frame(&mut app, &ctx, vec![key(Key::Z, Modifiers::CTRL)], 5.0);
+            assert_eq!(app.text_edit.as_ref().unwrap().text, text);
+            timed_input_frame(
+                &mut app,
+                &ctx,
+                vec![key(Key::ArrowLeft, Modifiers::NONE)],
+                6.0,
+            );
+            assert_eq!(app.text_edit.as_ref().unwrap().selection, 1..1);
+            timed_input_frame(&mut app, &ctx, vec![key(Key::Delete, Modifiers::NONE)], 7.0);
+            assert_eq!(app.text_edit.as_ref().unwrap().text, "AB", "{grapheme}");
+        }
+    }
+
+    #[test]
+    fn ordered_typing_then_grapheme_arrow_and_replacement_keeps_the_caret() {
+        let ctx = Context::default();
+        let mut app = editing_app(&ctx, "");
+        timed_input_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::Text("Ae\u{301}B".into()),
+                key(Key::ArrowLeft, Modifiers::NONE),
+                key(Key::ArrowLeft, Modifiers::SHIFT),
+                Event::Text("X".into()),
+            ],
+            1.0,
+        );
+        for step in 0..5 {
+            timed_input_frame(&mut app, &ctx, vec![], 1.1 + step as f64 * 0.1);
+        }
+        assert_eq!(app.text_edit.as_ref().unwrap().text, "AXB");
+        assert_eq!(app.text_edit.as_ref().unwrap().selection, 2..2);
+    }
+
+    fn rtl_editing_app(ctx: &Context, text: &str) -> PaintApp {
+        let mut app = editing_app(ctx, text);
+        let state = app.text_edit.as_mut().unwrap();
+        state.format.font = include_bytes!("../../assets/test-fonts/DejaVuSans.ttf").to_vec();
+        state.format.font_name = "DejaVu Sans".into();
+        state.format.size = 40.0;
+        state.selection = 0..0;
+        state.focus = true;
+        timed_input_frame(&mut app, ctx, vec![], 0.5);
+        app
+    }
+
+    #[test]
+    fn rtl_arrow_selection_and_click_then_typing_follow_visual_carets() {
+        let ctx = Context::default();
+        let mut app = rtl_editing_app(&ctx, "שלום");
+        timed_input_frame(
+            &mut app,
+            &ctx,
+            vec![key(Key::ArrowLeft, Modifiers::NONE)],
+            1.0,
+        );
+        assert_eq!(app.text_edit.as_ref().unwrap().selection, 1..1);
+        timed_input_frame(
+            &mut app,
+            &ctx,
+            vec![key(Key::ArrowLeft, Modifiers::SHIFT)],
+            2.0,
+        );
+        assert_eq!(app.text_edit.as_ref().unwrap().selection, 1..2);
+        let copied = timed_input_frame(&mut app, &ctx, vec![Event::Copy], 3.0);
+        assert!(copied.platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyText(text) if text == "ל")
+        }));
+        timed_input_frame(
+            &mut app,
+            &ctx,
+            vec![key(Key::ArrowRight, Modifiers::NONE)],
+            4.0,
+        );
+        assert_eq!(app.text_edit.as_ref().unwrap().selection, 1..1);
+        let end = timed_input_frame(&mut app, &ctx, vec![key(Key::End, Modifiers::NONE)], 4.1);
+        assert_eq!(app.text_edit.as_ref().unwrap().selection, 4..4);
+        let home = timed_input_frame(&mut app, &ctx, vec![key(Key::Home, Modifiers::NONE)], 4.2);
+        assert_eq!(app.text_edit.as_ref().unwrap().selection, 0..0);
+        assert!(
+            home.platform_output.ime.unwrap().cursor_rect.left()
+                > end.platform_output.ime.unwrap().cursor_rect.left()
+        );
+        let state = app.text_edit.as_ref().unwrap();
+        let caret = state.format.editor_layout(&state.text).caret(2);
+        let (px, py) = state.format.text_padding();
+        let point = app.canvas_rect.min
+            + vec2(
+                state.origin.0 as f32 + px as f32 + caret.x,
+                state.origin.1 as f32 + py as f32 + caret.y + caret.height * 0.5,
+            );
+        timed_input_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::PointerMoved(point),
+                Event::PointerButton {
+                    pos: point,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+                Event::Text("!".into()),
+                Event::PointerButton {
+                    pos: point,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+            5.0,
+        );
+        for step in 0..5 {
+            timed_input_frame(&mut app, &ctx, vec![], 5.1 + step as f64 * 0.1);
+        }
+        assert_eq!(app.text_edit.as_ref().unwrap().text, "של!ום");
+    }
+
+    #[test]
+    fn mixed_direction_multiline_selection_copies_and_replaces_logical_text() {
+        let ctx = Context::default();
+        let original = "abc שלום xyz\nעוד line";
+        let mut app = rtl_editing_app(&ctx, original);
+        let state = app.text_edit.as_mut().unwrap();
+        state.selection = 4..16;
+        state.focus = true;
+        timed_input_frame(&mut app, &ctx, vec![], 1.0);
+        let copied = timed_input_frame(&mut app, &ctx, vec![Event::Copy], 2.0);
+        assert!(copied.platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyText(text) if text == "שלום xyz\nעוד")
+        }));
+        timed_input_frame(&mut app, &ctx, vec![Event::Paste("חדש\nnew".into())], 3.0);
+        assert_eq!(app.text_edit.as_ref().unwrap().text, "abc חדש\nnew line");
+        timed_input_frame(&mut app, &ctx, vec![key(Key::Z, Modifiers::CTRL)], 4.0);
+        assert_eq!(app.text_edit.as_ref().unwrap().text, original);
+        assert_eq!(app.text_edit.as_ref().unwrap().selection, 4..16);
+    }
+
+    #[test]
+    fn word_navigation_moves_visually_through_rtl_words() {
+        for (os, modifier) in [
+            (
+                egui::os::OperatingSystem::Windows,
+                Modifiers::CTRL | Modifiers::COMMAND,
+            ),
+            (egui::os::OperatingSystem::Mac, Modifiers::ALT),
+        ] {
+            let ctx = Context::default();
+            ctx.set_os(os);
+            let mut app = rtl_editing_app(&ctx, "שלום עולם");
+            timed_input_frame(&mut app, &ctx, vec![key(Key::ArrowLeft, modifier)], 1.0);
+            assert_eq!(app.text_edit.as_ref().unwrap().selection, 4..4);
+            timed_input_frame(
+                &mut app,
+                &ctx,
+                vec![key(Key::ArrowLeft, modifier | Modifiers::SHIFT)],
+                2.0,
+            );
+            assert_eq!(app.text_edit.as_ref().unwrap().selection, 4..9);
+            let copy = timed_input_frame(&mut app, &ctx, vec![Event::Copy], 3.0);
+            assert!(copy.platform_output.commands.iter().any(|command| {
+                matches!(command, egui::OutputCommand::CopyText(text) if text == " עולם")
+            }));
+            let state = app.text_edit.as_mut().unwrap();
+            state.selection = 9..9;
+            state.focus = true;
+            timed_input_frame(&mut app, &ctx, vec![], 4.0);
+            timed_input_frame(&mut app, &ctx, vec![key(Key::Backspace, modifier)], 5.0);
+            assert_eq!(app.text_edit.as_ref().unwrap().text, "שלום ");
+        }
+    }
+
+    #[test]
+    fn double_click_selects_one_unicode_word_in_rtl_greek_and_cyrillic() {
+        for (text, selected) in [
+            ("שלום עולם", "עולם"),
+            ("άλφα βήτα", "βήτα"),
+            ("один два", "два"),
+        ] {
+            let ctx = Context::default();
+            let mut app = rtl_editing_app(&ctx, text);
+            let state = app.text_edit.as_ref().unwrap();
+            let layout = state.format.editor_layout(&state.text);
+            let glyph = &layout.rows[0].glyphs[6];
+            let (px, py) = state.format.text_padding();
+            let point = app.canvas_rect.min
+                + vec2(
+                    state.origin.0 as f32 + px as f32 + glyph.x + glyph.advance * 0.45,
+                    state.origin.1 as f32 + py as f32 + glyph.baseline - glyph.ascent * 0.5,
+                );
+            for (time, pressed) in [(1.0, true), (1.01, false), (1.1, true), (1.11, false)] {
+                timed_input_frame(
+                    &mut app,
+                    &ctx,
+                    vec![
+                        Event::PointerMoved(point),
+                        Event::PointerButton {
+                            pos: point,
+                            button: PointerButton::Primary,
+                            pressed,
+                            modifiers: Modifiers::NONE,
+                        },
+                    ],
+                    time,
+                );
+            }
+            let copied = timed_input_frame(&mut app, &ctx, vec![Event::Copy], 2.0);
+            assert!(
+                copied.platform_output.commands.iter().any(|command| {
+                    matches!(command, egui::OutputCommand::CopyText(text) if text == selected)
+                }),
+                "Wrong double-click selection for {text:?}: {:?}",
+                app.text_edit.as_ref().unwrap().selection
+            );
+        }
+    }
+
+    #[test]
+    fn first_complex_input_frame_emits_the_visual_ime_caret() {
+        let ctx = Context::default();
+        let mut app = rtl_editing_app(&ctx, "");
+        let output = timed_input_frame(&mut app, &ctx, vec![Event::Text("שלום".into())], 1.0);
+        let state = app.text_edit.as_ref().unwrap();
+        let caret = state.format.editor_layout(&state.text).caret(4);
+        let (px, py) = state.format.text_padding();
+        let expected = app.canvas_rect.min
+            + vec2(
+                state.origin.0 as f32 + px as f32 + caret.x,
+                state.origin.1 as f32 + py as f32 + caret.y,
+            );
+        let actual = output
+            .platform_output
+            .ime
+            .expect("Focused text supplies IME geometry")
+            .cursor_rect
+            .min;
+        assert!(
+            (actual - expected).length() < 1.0,
+            "actual {actual:?}, expected {expected:?}"
+        );
+    }
+
+    #[test]
+    fn asynchronous_text_paste_restores_focus_and_preserves_multiline_history() {
+        let ctx = Context::default();
+        let original = "Aé\n猫B\nC";
+        let mut app = editing_app(&ctx, original);
+        let state = app.text_edit.as_mut().unwrap();
+        state.selection = 1..6;
+        state
+            .format
+            .modify_style(2..4, |style| style.bold = true)
+            .unwrap();
+        state.focus = true;
+        timed_input_frame(&mut app, &ctx, vec![], 1.0);
+        let original_format = app.text_edit.as_ref().unwrap().format.clone();
+        ctx.memory_mut(|memory| memory.request_focus(Id::new("clipboard_ribbon_button")));
+        assert!(!ctx.memory(|memory| memory.has_focus(Id::new("text_input"))));
+        apply_text_clipboard(
+            app.text_edit.as_mut().unwrap(),
+            Action::Paste,
+            Some("β\nγ"),
+            &ctx,
+        )
+        .unwrap();
+        timed_input_frame(&mut app, &ctx, vec![], 2.0);
+        assert_eq!(app.text_edit.as_ref().unwrap().text, "Aβ\nγC");
+        assert_eq!(app.text_edit.as_ref().unwrap().selection, 4..4);
+        assert!(ctx.memory(|memory| memory.has_focus(Id::new("text_input"))));
+        timed_input_frame(&mut app, &ctx, vec![key(Key::Z, Modifiers::CTRL)], 3.0);
+        let state = app.text_edit.as_ref().unwrap();
+        assert_eq!(state.text, original);
+        assert_eq!(state.selection, 1..6);
+        assert!(state.format == original_format);
+        assert!(!app.text_can_undo());
+    }
+
+    #[test]
+    fn ime_commit_is_one_undo_step_even_when_predictions_are_slow() {
+        let ctx = Context::default();
+        let mut app = editing_app(&ctx, "Before ");
+        let state = app.text_edit.as_mut().unwrap();
+        state.selection = 7..7;
+        state.focus = true;
+        timed_input_frame(&mut app, &ctx, vec![], 1.0);
+        let original_format = app.text_edit.as_ref().unwrap().format.clone();
+        for (time, event) in [
+            (2.0, ImeEvent::Enabled),
+            (3.0, ImeEvent::Preedit("に".into())),
+            (4.0, ImeEvent::Preedit("にほ".into())),
+        ] {
+            let output = timed_input_frame(&mut app, &ctx, vec![Event::Ime(event)], time);
+            assert!(output.platform_output.ime.is_some());
+            assert!(
+                !app.text_can_undo(),
+                "Preedit must not enter typing history"
+            );
+        }
+        timed_input_frame(
+            &mut app,
+            &ctx,
+            vec![Event::Ime(ImeEvent::Commit("日本".into()))],
+            5.0,
+        );
+        assert_eq!(app.text_edit.as_ref().unwrap().text, "Before 日本");
+        timed_input_frame(&mut app, &ctx, vec![key(Key::Z, Modifiers::CTRL)], 6.0);
+        let state = app.text_edit.as_ref().unwrap();
+        assert_eq!(state.text, "Before ");
+        assert!(state.format == original_format);
+        assert_eq!(state.selection, 7..7);
+        assert!(!app.text_can_undo());
+        timed_input_frame(&mut app, &ctx, vec![key(Key::Y, Modifiers::CTRL)], 7.0);
+        assert_eq!(app.text_edit.as_ref().unwrap().text, "Before 日本");
+    }
+
+    #[test]
+    fn enabling_an_input_method_keeps_ordinary_typing_history_and_commit() {
+        for keyboard_commit in [false, true] {
+            let ctx = Context::default();
+            ctx.set_os(egui::os::OperatingSystem::Mac);
+            let mut app = editing_app(&ctx, "");
+            timed_input_frame(&mut app, &ctx, vec![Event::Ime(ImeEvent::Enabled)], 1.0);
+            timed_input_frame(&mut app, &ctx, vec![Event::Text("Abc".into())], 2.0);
+            timed_input_frame(
+                &mut app,
+                &ctx,
+                vec![key(Key::Backspace, Modifiers::NONE)],
+                2.1,
+            );
+            assert_eq!(app.text_edit.as_ref().unwrap().text, "Ab");
+            assert!(app
+                .text_edit
+                .as_ref()
+                .unwrap()
+                .history
+                .composition
+                .is_none());
+            assert!(app.text_can_undo());
+            timed_input_frame(
+                &mut app,
+                &ctx,
+                vec![key(Key::Z, Modifiers::MAC_CMD | Modifiers::COMMAND)],
+                3.0,
+            );
+            assert_eq!(app.text_edit.as_ref().unwrap().text, "");
+            timed_input_frame(
+                &mut app,
+                &ctx,
+                vec![key(Key::Y, Modifiers::MAC_CMD | Modifiers::COMMAND)],
+                4.0,
+            );
+            assert_eq!(app.text_edit.as_ref().unwrap().text, "Ab");
+            if keyboard_commit {
+                timed_input_frame(&mut app, &ctx, vec![key(Key::Enter, Modifiers::CTRL)], 5.0);
+                assert!(app.text_edit.is_none());
+            } else {
+                // Save and tool changes share this commit path.
+                app.commit_text();
+            }
+            let ObjectKind::Text { text, .. } = &app.doc.objects[app.object.unwrap()].kind else {
+                panic!("Confirmed typing must remain a text object");
+            };
+            assert_eq!(text, "Ab");
+        }
+    }
+
+    #[test]
+    fn coalesced_ime_compositions_preserve_each_committed_undo_boundary() {
+        let ctx = Context::default();
+        let mut app = editing_app(&ctx, "");
+        timed_input_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::Ime(ImeEvent::Enabled),
+                Event::Ime(ImeEvent::Preedit("a".into())),
+                Event::Ime(ImeEvent::Commit("亜".into())),
+                Event::Ime(ImeEvent::Disabled),
+                Event::Ime(ImeEvent::Enabled),
+                Event::Ime(ImeEvent::Preedit("kan".into())),
+                Event::Ime(ImeEvent::Commit("漢".into())),
+                Event::Ime(ImeEvent::Disabled),
+                key(Key::Z, Modifiers::CTRL),
+            ],
+            1.0,
+        );
+        for step in 0..5 {
+            timed_input_frame(&mut app, &ctx, vec![], 1.1 + step as f64 * 0.1);
+        }
+        assert_eq!(app.text_edit.as_ref().unwrap().text, "亜");
+        timed_input_frame(&mut app, &ctx, vec![key(Key::Z, Modifiers::CTRL)], 2.0);
+        assert_eq!(app.text_edit.as_ref().unwrap().text, "");
+        assert!(!app.text_can_undo());
+    }
+
+    #[test]
+    fn confirmed_typing_before_same_frame_preedit_survives_cancel_and_undo() {
+        for commit in [false, true] {
+            let ctx = Context::default();
+            let mut app = editing_app(&ctx, "");
+            timed_input_frame(
+                &mut app,
+                &ctx,
+                vec![
+                    Event::Text("prefix".into()),
+                    Event::Ime(ImeEvent::Enabled),
+                    Event::Ime(ImeEvent::Preedit("に".into())),
+                ],
+                1.0,
+            );
+            for step in 0..3 {
+                timed_input_frame(&mut app, &ctx, vec![], 1.1 + step as f64 * 0.1);
+            }
+            assert_eq!(app.text_edit.as_ref().unwrap().text, "prefixに");
+            timed_input_frame(
+                &mut app,
+                &ctx,
+                vec![Event::Ime(ImeEvent::Commit(if commit {
+                    "日本".into()
+                } else {
+                    String::new()
+                }))],
+                2.0,
+            );
+            if commit {
+                assert_eq!(app.text_edit.as_ref().unwrap().text, "prefix日本");
+                timed_input_frame(&mut app, &ctx, vec![key(Key::Z, Modifiers::CTRL)], 3.0);
+            }
+            assert_eq!(app.text_edit.as_ref().unwrap().text, "prefix");
+            timed_input_frame(&mut app, &ctx, vec![key(Key::Z, Modifiers::CTRL)], 4.0);
+            assert_eq!(app.text_edit.as_ref().unwrap().text, "");
+            assert!(!app.text_can_undo());
+        }
+    }
+
+    #[test]
+    fn ime_cancellation_preserves_the_open_box_and_its_exact_saved_object() {
+        for ending in [
+            vec![
+                Event::Ime(ImeEvent::Preedit(String::new())),
+                key(Key::Escape, Modifiers::NONE),
+            ],
+            vec![Event::Ime(ImeEvent::Commit(String::new()))],
+            vec![Event::Ime(ImeEvent::Disabled)],
+            vec![key(Key::Z, Modifiers::CTRL)],
+        ] {
+            let ctx = Context::default();
+            let mut app = editing_app(&ctx, "Keep this caption");
+            app.commit_text();
+            app.doc.mark_saved();
+            let object = app.object.unwrap();
+            let saved = app.doc.objects[object].clone();
+            let pixels = app.doc.composite();
+            app.edit_text_object(object);
+            timed_input_frame(&mut app, &ctx, vec![], 1.0);
+            timed_input_frame(&mut app, &ctx, vec![Event::Ime(ImeEvent::Enabled)], 2.0);
+            timed_input_frame(
+                &mut app,
+                &ctx,
+                vec![Event::Ime(ImeEvent::Preedit("にほ".into()))],
+                3.0,
+            );
+            timed_input_frame(&mut app, &ctx, ending, 4.0);
+            for step in 0..3 {
+                timed_input_frame(&mut app, &ctx, vec![], 4.1 + step as f64 * 0.1);
+            }
+            let state = app
+                .text_edit
+                .as_ref()
+                .expect("Composition cancellation must keep editing");
+            assert_eq!(state.text, "Keep this caption");
+            assert!(state.history.composition.is_none());
+            assert!(!app.text_can_undo());
+            app.commit_text();
+            assert!(app.doc.objects[object] == saved);
+            assert_eq!(app.doc.composite(), pixels);
+            assert!(!app.doc.dirty());
+        }
+    }
+
+    #[test]
+    fn ending_text_editing_does_not_save_an_unconfirmed_ime_prediction() {
+        let ctx = Context::default();
+        let mut app = editing_app(&ctx, "Confirmed caption");
+        app.commit_text();
+        app.doc.mark_saved();
+        let object = app.object.unwrap();
+        let saved = app.doc.objects[object].clone();
+        app.edit_text_object(object);
+        timed_input_frame(&mut app, &ctx, vec![], 1.0);
+        timed_input_frame(&mut app, &ctx, vec![Event::Ime(ImeEvent::Enabled)], 2.0);
+        timed_input_frame(
+            &mut app,
+            &ctx,
+            vec![Event::Ime(ImeEvent::Preedit("draft".into()))],
+            3.0,
+        );
+        app.commit_text();
+        assert!(app.doc.objects[object] == saved);
+        assert!(!app.doc.dirty());
     }
 
     #[test]
