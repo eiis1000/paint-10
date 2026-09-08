@@ -222,6 +222,60 @@ pub(super) fn command(canvas: &Canvas<'_>, icon: Icon) {
             canvas.polygon(&[(1.0, 20.0), (12.0, 10.0), (23.0, 20.0)], LIGHT_BLUE, BLUE);
             canvas.polygon(&[(1.0, 5.0), (23.0, 5.0), (12.0, 15.0)], SILVER, BLUE);
         }
+        Icon::Scanner => {
+            canvas.polygon(
+                &[(3.0, 13.0), (7.0, 3.0), (21.0, 5.0), (21.0, 14.0)],
+                SILVER,
+                INK,
+            );
+            canvas.polygon(
+                &[(6.0, 12.0), (9.0, 6.0), (18.0, 7.0), (19.0, 13.0)],
+                Color32::WHITE,
+                CLEAR,
+            );
+            canvas.rect((2.0, 14.0), (22.0, 21.0), SILVER, INK);
+            canvas.line((4.0, 16.0), (20.0, 16.0), LIGHT_BLUE, 1.5);
+            canvas.line((4.0, 19.0), (14.0, 19.0), INK, 1.0);
+            canvas.circle((19.0, 19.0), 0.9, BLUE, CLEAR);
+        }
+        Icon::Wallpaper => {
+            canvas.rect((1.0, 3.0), (23.0, 18.0), SILVER, INK);
+            canvas.rect((3.0, 5.0), (21.0, 16.0), LIGHT_BLUE, CLEAR);
+            canvas.circle((17.0, 8.0), 2.0, GOLD, CLEAR);
+            canvas.polygon(&[(3.0, 16.0), (9.0, 8.0), (15.0, 16.0)], BLUE, CLEAR);
+            canvas.polygon(
+                &[(10.0, 16.0), (16.0, 11.0), (21.0, 16.0)],
+                Color32::from_rgb(67, 145, 122),
+                CLEAR,
+            );
+            canvas.line((12.0, 19.0), (12.0, 22.0), INK, 2.0);
+            canvas.line((7.0, 22.0), (17.0, 22.0), INK, 1.5);
+        }
+        Icon::Properties => {
+            document(canvas);
+            for (y, thumb) in [(11.0, 10.0), (15.0, 15.0), (19.0, 11.0)] {
+                canvas.line((7.0, y), (17.0, y), BLUE, 1.0);
+                canvas.rect((thumb - 1.0, y - 1.5), (thumb + 1.0, y + 1.5), GOLD, INK);
+            }
+        }
+        Icon::About => {
+            canvas.circle((12.0, 12.0), 10.0, BLUE, INK);
+            canvas.circle((12.0, 6.5), 1.3, Color32::WHITE, CLEAR);
+            canvas.line((12.0, 10.0), (12.0, 18.0), Color32::WHITE, 2.0);
+            canvas.line((9.0, 18.0), (15.0, 18.0), Color32::WHITE, 1.5);
+            canvas.line((9.5, 10.0), (12.0, 10.0), Color32::WHITE, 1.5);
+        }
+        Icon::Exit => {
+            canvas.rect((3.0, 2.0), (15.0, 22.0), SILVER, INK);
+            canvas.polygon(
+                &[(4.0, 3.0), (11.0, 6.0), (11.0, 20.0), (4.0, 22.0)],
+                GOLD,
+                WOOD,
+            );
+            canvas.circle((9.0, 13.0), 0.9, WOOD, CLEAR);
+            canvas.line((14.0, 12.0), (22.0, 12.0), BLUE, 2.0);
+            canvas.path(&[(18.0, 8.0), (22.0, 12.0), (18.0, 16.0)], BLUE, 2.0, false);
+        }
         Icon::Save => {
             canvas.polygon(
                 &[
