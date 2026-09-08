@@ -239,7 +239,20 @@ impl PaintApp {
                     FontId::proportional(13.),
                     Color32::from_gray(25),
                 );
-                ctx.send_viewport_cmd(ViewportCommand::Title(title));
+                // Viewport commands request another repaint. Send the title
+                // only when it changes, so an idle picture can remain idle.
+                let title_key = Id::new("paint10-last-window-title");
+                let title_changed = ctx.data_mut(|data| {
+                    if data.get_temp::<String>(title_key).as_ref() == Some(&title) {
+                        false
+                    } else {
+                        data.insert_temp(title_key, title.clone());
+                        true
+                    }
+                });
+                if title_changed {
+                    ctx.send_viewport_cmd(ViewportCommand::Title(title));
+                }
                 let drag = ui.interact(
                     title_rect,
                     Id::new("title_drag"),
@@ -457,6 +470,38 @@ mod tests {
                 keytips::finish_frame(ctx);
             },
         )
+    }
+
+    #[test]
+    fn window_title_updates_on_document_changes_without_repainting_idle_frames() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let titles = |output: FullOutput| {
+            output.viewport_output[&ViewportId::ROOT]
+                .commands
+                .iter()
+                .filter_map(|command| match command {
+                    ViewportCommand::Title(title) => Some(title.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(titles(frame(&mut app, &ctx, None)), ["Untitled - Paint 10"]);
+        assert!(titles(frame(&mut app, &ctx, None)).is_empty());
+        app.doc.begin();
+        d::stamp(&mut app.doc.image, (10, 10), 1, BLACK, Brush::Round);
+        app.doc.commit();
+        assert_eq!(
+            titles(frame(&mut app, &ctx, None)),
+            ["*Untitled - Paint 10"]
+        );
+        app.file = Some(PathBuf::from("portrait.p10"));
+        app.doc.mark_saved();
+        assert_eq!(
+            titles(frame(&mut app, &ctx, None)),
+            ["portrait.p10 - Paint 10"]
+        );
+        assert!(titles(frame(&mut app, &ctx, None)).is_empty());
     }
 
     #[test]
