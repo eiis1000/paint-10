@@ -443,6 +443,15 @@ fn prepare_modal(ctx: &Context, kind: &str) -> bool {
 
 pub(in crate::app) fn numeric_input(ui: &mut Ui, value: DragValue<'_>) -> Response {
     let id = ui.next_auto_id();
+    if ui.ctx().data(|data| {
+        data.get_temp::<ModalKeys>(modal_key())
+            .is_some_and(|state| state.initial)
+    }) {
+        // Initial focus is assigned after this widget renders. On reopening,
+        // DragValue therefore cannot detect gained_focus in time to discard
+        // its old text draft. Start the new dialog from its current value.
+        ui.data_mut(|data| data.remove::<String>(id));
+    }
     // Register before constructing DragValue's inner TextEdit so a Tab focus
     // transition can select the existing number before any typing is handled.
     if ui.is_enabled() && !ui.is_sizing_pass() {
@@ -1632,6 +1641,169 @@ mod tests {
         assert_eq!(app.colors[0], original);
         assert!(app.dialog.is_none());
         assert!(!app.doc.dirty() && !app.doc.can_undo());
+    }
+
+    #[test]
+    fn reopening_colors_replaces_numeric_drafts_with_the_selected_color() {
+        let ctx = Context::default();
+        ctx.enable_accesskit();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let frame = |app: &mut PaintApp, events: Vec<Event>| {
+            let mut input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 800.0))),
+                time: Some(ctx.cumulative_pass_nr() as f64 / 30.0),
+                events,
+                ..Default::default()
+            };
+            eframe::App::raw_input_hook(app, &ctx, &mut input);
+            ctx.run(input, |ctx| app.dialogs(ctx))
+        };
+        let center = |output: &FullOutput, value: &str| {
+            let bounds = output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .find_map(|(_, node)| {
+                    (node.label() == Some(value) || node.value() == Some(value))
+                        .then(|| node.bounds())
+                        .flatten()
+                })
+                .unwrap_or_else(|| panic!("Missing control {value}"));
+            pos2(
+                ((bounds.x0 + bounds.x1) / 2.0) as f32,
+                ((bounds.y0 + bounds.y1) / 2.0) as f32,
+            )
+        };
+        let click = |app: &mut PaintApp, point| {
+            frame(
+                app,
+                vec![
+                    Event::PointerMoved(point),
+                    Event::PointerButton {
+                        pos: point,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Modifiers::NONE,
+                    },
+                    Event::PointerButton {
+                        pos: point,
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+            );
+        };
+        app.dialog = Some(Dialog::Colors);
+        for _ in 0..3 {
+            frame(&mut app, vec![]);
+        }
+        let first = frame(&mut app, vec![]);
+        click(&mut app, center(&first, "000000"));
+        frame(
+            &mut app,
+            vec![
+                Event::Key {
+                    key: Key::A,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers {
+                        ctrl: true,
+                        command: true,
+                        ..Default::default()
+                    },
+                },
+                Event::Text("153E3B".into()),
+            ],
+        );
+        let edited = frame(&mut app, vec![]);
+        assert_eq!(app.colors[0], [0x15, 0x3e, 0x3b, 255]);
+        click(&mut app, center(&edited, "OK"));
+        assert!(app.dialog.is_none());
+        frame(&mut app, vec![]);
+        app.active_color = 1;
+        app.hex = "FFFFFF".into();
+        app.dialog = Some(Dialog::Colors);
+        for _ in 0..3 {
+            frame(&mut app, vec![]);
+        }
+        let reopened = frame(&mut app, vec![]);
+        let focused = ctx.memory(|memory| memory.focused()).unwrap();
+        let node = reopened
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(id, _)| id.0 == focused.value())
+            .map(|(_, node)| node)
+            .unwrap();
+        assert_eq!(
+            node.value(),
+            Some("255"),
+            "Reopened Red field must show Color 2's value; role={:?}, numeric={:?}",
+            node.role(),
+            node.numeric_value()
+        );
+        assert_eq!(app.colors, [[0x15, 0x3e, 0x3b, 255], WHITE]);
+        assert_eq!(app.hex, "FFFFFF");
+        let mut channels: Vec<_> = reopened
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.role() == egui::accesskit::Role::SpinButton)
+            .map(|(_, node)| node)
+            .collect();
+        channels.sort_by(|left, right| {
+            left.bounds()
+                .unwrap()
+                .y0
+                .total_cmp(&right.bounds().unwrap().y0)
+        });
+        let channels: Vec<_> = channels
+            .into_iter()
+            .map(|node| {
+                (
+                    node.value().unwrap_or_default(),
+                    node.numeric_value().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            channels,
+            vec![
+                ("255", 255.0),
+                ("255", 255.0),
+                ("255", 255.0),
+                ("160", 160.0),
+                ("0", 0.0),
+                ("240", 240.0)
+            ]
+        );
+        frame(&mut app, vec![Event::Text("128".into())]);
+        frame(&mut app, vec![]);
+        assert_eq!(app.colors, [[0x15, 0x3e, 0x3b, 255], [128, 255, 255, 255]]);
+        assert_eq!(app.hex, "80FFFF");
+        frame(
+            &mut app,
+            vec![Event::Key {
+                key: Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        assert!(app.dialog.is_none());
+        assert_eq!(app.colors, [[0x15, 0x3e, 0x3b, 255], WHITE]);
     }
 
     #[test]
