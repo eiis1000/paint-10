@@ -14,11 +14,13 @@ const adapter = await import(moduleUrl);
 
 const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+const originalKeyboardEvent = Object.getOwnPropertyDescriptor(globalThis, 'KeyboardEvent');
 
 afterEach(() => {
     for (const [name, descriptor] of [
         ['navigator', originalNavigator],
         ['window', originalWindow],
+        ['KeyboardEvent', originalKeyboardEvent],
     ]) {
         if (descriptor) {
             Object.defineProperty(globalThis, name, descriptor);
@@ -87,6 +89,14 @@ class Target {
         for (const listener of this.listeners) {
             if (listener.type === type && listener.capture === capture) {
                 await listener.callback(event);
+            }
+        }
+    }
+
+    dispatchSync(type, event, capture = false) {
+        for (const listener of this.listeners) {
+            if (listener.type === type && listener.capture === capture) {
+                listener.callback(event);
             }
         }
     }
@@ -208,4 +218,161 @@ test('F10 stays with Paint keytips while context-menu and IME shortcuts keep the
         assert.equal(key.prevented, expected, JSON.stringify(properties));
         assert.equal(key.stopped, false, 'eframe must still receive the key event');
     }
+});
+
+function keyboardBrowser() {
+    const windowTarget = new Target();
+    globalThis.window = windowTarget;
+    globalThis.KeyboardEvent = class {
+        constructor(type, properties) {
+            return event({ type, ...properties });
+        }
+    };
+
+    const document = { hasFocus: () => focused, activeElement: null };
+    let focused = true;
+    const received = [];
+    const makeTarget = (tagName, type) => {
+        const target = new Target();
+        Object.assign(target, { tagName, type, ownerDocument: document, isConnected: true });
+        target.dispatchEvent = key => {
+            key.target = target;
+            windowTarget.dispatchSync(key.type, key, true);
+            if (!key.stopped) {
+                // The backend accepts both real keys and the bridge's F10,
+                // but pure modifier events do not queue an egui key.
+                received.push({ key: key.key, type: key.type, target, prevented: key.prevented });
+            }
+            return !key.prevented;
+        };
+        return target;
+    };
+    const canvas = makeTarget('CANVAS');
+    const input = makeTarget('INPUT', 'text');
+    document.activeElement = canvas;
+    adapter.installBrowserEvents(() => {}, canvas);
+
+    return {
+        canvas,
+        input,
+        document,
+        received,
+        focusPage: value => { focused = value; },
+        cancel: type => windowTarget.dispatchSync(type, event(), true),
+        send(type, properties = {}) {
+            const key = event({
+                key: 'Alt',
+                altKey: type === 'keydown',
+                type,
+                ...properties,
+            });
+            (properties.target ?? document.activeElement).dispatchEvent(key);
+            return key;
+        },
+    };
+}
+
+test('a standalone Alt tap queues exactly one keytip toggle before subsequent letters', async () => {
+    for (const targetName of ['canvas', 'input']) {
+        for (const pause of [false, true]) {
+            const browser = keyboardBrowser();
+            const target = browser[targetName];
+            browser.document.activeElement = target;
+            browser.send('keydown');
+            browser.send('keydown', { repeat: true });
+            if (pause) {
+                // An intervening frame must not change which DOM event carries
+                // the toggle. Rust separately tests an already-seen Alt-down.
+                await Promise.resolve();
+            }
+            browser.send('keyup');
+            browser.send('keyup');
+            browser.send('keydown', { key: 'h', altKey: false });
+            browser.send('keyup', { key: 'h' });
+            const keys = browser.received.filter(key => key.key !== 'Alt');
+            assert.deepEqual(keys.map(key => [key.type, key.key]), [
+                ['keydown', 'F10'],
+                ['keyup', 'F10'],
+                ['keydown', 'h'],
+                ['keyup', 'h'],
+            ]);
+            assert.ok(keys.every(key => key.target === target));
+            assert.equal(keys[0].prevented, true, 'The generated F10 keeps browser menu focus away');
+        }
+    }
+});
+
+test('Alt chords, IME, pointer actions and lost focus do not become standalone taps', () => {
+    const cases = [
+        ['Alt+H', browser => browser.send('keydown', { key: 'h' })],
+        ['Ctrl+Alt', browser => browser.send('keydown', { ctrlKey: true })],
+        ['Shift+Alt', browser => browser.send('keydown', { shiftKey: true })],
+        ['Meta+Alt', browser => browser.send('keydown', { metaKey: true })],
+        ['AltGraph', browser => browser.send('keydown', {
+            getModifierState: name => name === 'AltGraph',
+        })],
+        ['IME key', browser => browser.send('keydown', { isComposing: true })],
+        ['IME compatibility key', browser => browser.send('keydown', { keyCode: 229 })],
+        ['composition begins', browser => browser.cancel('compositionstart')],
+        ['pointer action', browser => browser.cancel('pointerdown')],
+        ['focus leaves and returns', browser => browser.cancel('blur')],
+        ['page loses focus', browser => browser.focusPage(false)],
+        ['target changes', browser => { browser.document.activeElement = browser.input; }],
+        ['target removed', browser => { browser.canvas.isConnected = false; }],
+    ];
+    for (const [name, interrupt] of cases) {
+        const browser = keyboardBrowser();
+        browser.send('keydown');
+        interrupt(browser);
+        browser.send('keyup');
+        assert.ok(browser.received.every(key => key.key !== 'F10'), name);
+    }
+
+    for (const properties of [
+        { shiftKey: true },
+        { ctrlKey: true },
+        { metaKey: true },
+        { isComposing: true },
+        { keyCode: 229 },
+        { repeat: true },
+        { getModifierState: name => name === 'AltGraph' },
+    ]) {
+        const browser = keyboardBrowser();
+        browser.send('keydown', properties);
+        browser.send('keyup');
+        assert.ok(browser.received.every(key => key.key !== 'F10'), JSON.stringify(properties));
+    }
+
+    const unpaired = keyboardBrowser();
+    unpaired.send('keyup');
+    assert.ok(unpaired.received.every(key => key.key !== 'F10'));
+
+    const unfocused = keyboardBrowser();
+    unfocused.focusPage(false);
+    unfocused.send('keydown');
+    unfocused.focusPage(true);
+    unfocused.send('keyup');
+    assert.ok(unfocused.received.every(key => key.key !== 'F10'));
+
+    for (const properties of [
+        { shiftKey: true },
+        { ctrlKey: true },
+        { metaKey: true },
+        { altKey: true },
+        { isComposing: true },
+        { keyCode: 229 },
+        { getModifierState: name => name === 'AltGraph' },
+    ]) {
+        const browser = keyboardBrowser();
+        browser.send('keydown');
+        browser.send('keyup', properties);
+        assert.ok(browser.received.every(key => key.key !== 'F10'), JSON.stringify(properties));
+    }
+
+    const fileInput = keyboardBrowser();
+    fileInput.input.type = 'file';
+    fileInput.document.activeElement = fileInput.input;
+    fileInput.send('keydown');
+    fileInput.send('keyup');
+    assert.ok(fileInput.received.every(key => key.key !== 'F10'));
 });
