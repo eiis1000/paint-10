@@ -11,7 +11,7 @@ imported or generated as a substitute for using the application.
 - Mona Lisa recreation: complete, exported, reopened, and rotated text retested.
 - AirSense 10 with AirFit P30i pixel art: complete, exports checked, reopened.
 - Photorealistic landscape using only shapes: underway.
-- Widescreen ant-colony simulation slide: pending.
+- Widescreen ant-colony simulation slide: painted, exported and reopened; PowerPoint render verified.
 
 Each finished exercise will include an editable `.p10` project, raster exports,
 the tools used, and any defects or improvements discovered.
@@ -73,6 +73,27 @@ The project reopened in the browser. Native Save a copy retained its project
 destination while exporting PNG, JPEG and WebP. PNG and JPEG were visually
 inspected; the project, PNG and lossless WebP have exactly matching RGBA pixels.
 
+## Ant-colony simulation slide
+
+[Editable project](ant-colony-simulation.p10) ·
+[PNG](ant-colony-simulation.png) · [PowerPoint](ant-colony-simulation.pptx)
+
+A 1920 × 1080 teaching slide with a dark horizontal gradient, gold reinforced
+trail, muted exploratory branches, nest and food markers, and a hand-drawn ant.
+Rectangle, Curve, Oval, Polygon and Line tools build the diagram; Pencil draws
+the ant's legs and antennae. Sixteen retained DejaVu Sans text objects provide
+the title, three explanatory steps, labels, legend and footer. All artwork was
+made through the actual Paint interface. The project reopened with the same
+composition; double-clicking its title restored the 72-point bold DejaVu Sans
+editor.
+
+Save a copy exported an opaque PNG while retaining the `.p10` destination.
+Inspection caught an unpainted bottom row and right column, which were corrected
+with Rectangle tools and re-exported. The PowerPoint contains one 16:9 slide
+with that exact PNG and source notes. Reimporting and rendering it produces
+identical RGBA pixels to the PNG. The diagram illustrates local rules; it does
+not claim to show a measured or numerical simulation result.
+
 ## Findings
 
 - Canvas setup: entering 720 and 560 in Image Properties yielded 7 × 16384.
@@ -94,3 +115,7 @@ inspected; the project, PNG and lossless WebP have exactly matching RGBA pixels.
   re-exported through the real Save a copy dialog; its alpha tag is correct,
   pixels match the PNG, and ImageMagick/libtiff reports no warnings. Separate
   fixtures verify all 256 alpha values and noninteger DPI through that reader.
+- Slide color setup found a stale numeric draft when reopening Edit Colors for
+  white Color 2: Red displayed 0 while the actual channel was 255. The modal now
+  resets draft fields before focusing; actual native replay shows synchronized
+  RGB/HSL/Hex fields after reopening and preserves the project on Cancel.
