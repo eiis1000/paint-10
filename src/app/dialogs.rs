@@ -61,6 +61,21 @@ fn color_dialog_key() -> Id {
     Id::new("paint10-color-dialog")
 }
 
+fn settle_dialog_geometry(ctx: &Context, response: &Response) {
+    // An anchored egui window positions itself using its previous frame's size.
+    // Repaint after content changes so its controls settle before the next click.
+    let key = response.id.with("paint10-dialog-size");
+    let size = response.rect.size();
+    let previous = ctx.data_mut(|data| {
+        let previous = data.get_temp::<Vec2>(key);
+        data.insert_temp(key, size);
+        previous
+    });
+    if previous != Some(size) {
+        ctx.request_repaint();
+    }
+}
+
 fn rgb_to_hsl(rgb: [u8; 3]) -> [u16; 3] {
     let [red, green, blue] = rgb.map(|channel| f64::from(channel) / 255.0);
     let maximum = red.max(green).max(blue);
@@ -101,6 +116,128 @@ fn hsl_to_rgb([hue, saturation, lightness]: [u16; 3]) -> [u8; 3] {
         _ => [chroma, 0.0, secondary],
     };
     channels.map(|channel| ((channel + base) * 255.0).round().clamp(0.0, 255.0) as u8)
+}
+
+fn color_spectrum(ui: &mut Ui, hsl: &mut [u16; 3]) -> bool {
+    let before = *hsl;
+    let (rect, response) = ui.allocate_exact_size(vec2(250.0, 166.0), Sense::click_and_drag());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, true, "Hue and saturation"));
+    if response.clicked() || response.dragged() {
+        if let Some(point) = response.interact_pointer_pos() {
+            hsl[0] =
+                (((point.x - rect.left()) / rect.width()).clamp(0.0, 1.0) * 239.0).round() as u16;
+            hsl[1] = ((1.0 - (point.y - rect.top()) / rect.height()).clamp(0.0, 1.0) * 240.0)
+                .round() as u16;
+        }
+    }
+    let mut mesh = egui::Mesh::default();
+    for row in 0..=8 {
+        for column in 0..=24 {
+            let rgb = hsl_to_rgb([column * 10, 240 - row * 30, 120]);
+            mesh.colored_vertex(
+                rect.min
+                    + vec2(
+                        column as f32 / 24.0 * rect.width(),
+                        row as f32 / 8.0 * rect.height(),
+                    ),
+                Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
+            );
+            if row < 8 && column < 24 {
+                let index = u32::from(row * 25 + column);
+                mesh.add_triangle(index, index + 1, index + 25);
+                mesh.add_triangle(index + 1, index + 26, index + 25);
+            }
+        }
+    }
+    ui.painter().add(mesh);
+    ui.painter().rect_stroke(
+        rect,
+        0.0,
+        Stroke::new(1.0_f32, Color32::from_gray(140)),
+        StrokeKind::Inside,
+    );
+    let position = rect.min
+        + vec2(
+            hsl[0] as f32 / 239.0 * rect.width(),
+            (1.0 - hsl[1] as f32 / 240.0) * rect.height(),
+        );
+    let painter = ui.painter().with_clip_rect(rect);
+    painter.circle_stroke(position, 5.0, Stroke::new(3.0_f32, Color32::WHITE));
+    painter.circle_stroke(position, 5.0, Stroke::new(1.0_f32, Color32::BLACK));
+    response.on_hover_text(
+        "Choose hue and saturation. The numeric fields provide exact keyboard entry.",
+    );
+    before != *hsl
+}
+
+fn luminosity_strip(ui: &mut Ui, hsl: &mut [u16; 3]) -> bool {
+    let before = *hsl;
+    let (rect, response) = ui.allocate_exact_size(vec2(20.0, 166.0), Sense::click_and_drag());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, true, "Luminosity"));
+    if response.clicked() || response.dragged() {
+        if let Some(point) = response.interact_pointer_pos() {
+            hsl[2] = ((1.0 - (point.y - rect.top()) / rect.height()).clamp(0.0, 1.0) * 240.0)
+                .round() as u16;
+        }
+    }
+    for row in 0..166 {
+        let rgb = hsl_to_rgb([
+            hsl[0],
+            hsl[1],
+            240 - (row as f32 / 165.0 * 240.0).round() as u16,
+        ]);
+        ui.painter().rect_filled(
+            Rect::from_min_size(rect.min + vec2(0.0, row as f32), vec2(rect.width(), 1.0)),
+            0.0,
+            Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
+        );
+    }
+    let y = rect.top() + (1.0 - hsl[2] as f32 / 240.0) * rect.height();
+    let marker = Rect::from_center_size(pos2(rect.center().x, y), vec2(24.0, 4.0));
+    ui.painter().rect_stroke(
+        marker,
+        0.0,
+        Stroke::new(2.0_f32, Color32::WHITE),
+        StrokeKind::Middle,
+    );
+    ui.painter().rect_stroke(
+        marker,
+        0.0,
+        Stroke::new(1.0_f32, Color32::BLACK),
+        StrokeKind::Middle,
+    );
+    response.on_hover_text("Adjust luminosity from black to white.");
+    before != *hsl
+}
+
+fn color_swatch(ui: &mut Ui, color: Color, size: Vec2, label: &str) -> Response {
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    register_button(ui, &response);
+    canvas::checkerboard(ui.painter(), rect, 5.0);
+    ui.painter().rect_filled(
+        rect.shrink(1.0),
+        0.0,
+        Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]),
+    );
+    ui.painter().rect_stroke(
+        rect,
+        0.0,
+        Stroke::new(
+            if response.hovered() || response.has_focus() {
+                2.0_f32
+            } else {
+                1.0_f32
+            },
+            if response.hovered() || response.has_focus() {
+                BLUE
+            } else {
+                Color32::from_gray(140)
+            },
+        ),
+        StrokeKind::Inside,
+    );
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+    response.on_hover_text(label)
 }
 
 fn prepare_modal(ctx: &Context, kind: &str) -> bool {
@@ -446,6 +583,7 @@ impl PaintApp {
                     }
                 });
             if let Some(shown) = shown {
+                settle_dialog_geometry(ctx, &shown.response);
                 ctx.memory_mut(|memory| memory.set_modal_layer(shown.response.layer_id));
             }
         }
@@ -482,6 +620,7 @@ impl PaintApp {
                     }
                 });
             if let Some(shown) = shown {
+                settle_dialog_geometry(ctx, &shown.response);
                 ctx.memory_mut(|memory| memory.set_modal_layer(shown.response.layer_id));
             }
             if !open || close {
@@ -656,41 +795,123 @@ impl PaintApp {
                 rgb,
                 hsl: rgb_to_hsl(rgb),
             });
-        let mut picked = Color32::from_rgb(c[0], c[1], c[2]);
-        if egui::color_picker::color_picker_color32(
-            ui,
-            &mut picked,
-            egui::color_picker::Alpha::Opaque,
-        ) {
-            rgb = [picked.r(), picked.g(), picked.b()];
-        }
-        ui.horizontal(|ui| {
-            for (i, label) in ["Red", "Green", "Blue"].into_iter().enumerate() {
-                ui.label(label);
-                let response = numeric_input(ui, DragValue::new(&mut rgb[i]));
-                if i == 0 {
-                    initial_focus(ui, &response);
+        ui.set_width(430.0);
+        ui.horizontal_top(|ui| {
+            let spectrum_changed = color_spectrum(ui, &mut state.hsl);
+            let luminosity_changed = luminosity_strip(ui, &mut state.hsl);
+            if spectrum_changed || luminosity_changed {
+                rgb = hsl_to_rgb(state.hsl);
+            }
+            ui.add_space(4.0);
+            Grid::new("paint_color_channels")
+                .num_columns(2)
+                .spacing(vec2(8.0, 6.0))
+                .show(ui, |ui| {
+                    for (index, label) in ["Red", "Green", "Blue"].into_iter().enumerate() {
+                        ui.label(label);
+                        let previous_rgb = rgb;
+                        let response = numeric_input(ui, DragValue::new(&mut rgb[index]));
+                        if index == 0 {
+                            initial_focus(ui, &response);
+                        }
+                        if previous_rgb != rgb {
+                            state.hsl = rgb_to_hsl(rgb);
+                        }
+                        ui.end_row();
+                    }
+                    for (index, label, maximum) in [
+                        (0, "Hue", 239),
+                        (1, "Saturation", 240),
+                        (2, "Luminosity", 240),
+                    ] {
+                        ui.label(label);
+                        let previous_hsl = state.hsl;
+                        numeric_input(ui, DragValue::new(&mut state.hsl[index]).range(0..=maximum));
+                        if previous_hsl != state.hsl {
+                            rgb = hsl_to_rgb(state.hsl);
+                        }
+                        ui.end_row();
+                    }
+                });
+        });
+        ui.add_space(8.0);
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.label("Basic colors");
+                Grid::new("dialog_basic_colors")
+                    .num_columns(10)
+                    .min_col_width(19.0)
+                    .spacing(vec2(4.0, 4.0))
+                    .show(ui, |ui| {
+                        for (index, color) in ribbon::PALETTE.into_iter().enumerate() {
+                            if color_swatch(
+                                ui,
+                                [color[0], color[1], color[2], 255],
+                                vec2(19.0, 19.0),
+                                ribbon::PALETTE_NAMES[index],
+                            )
+                            .clicked()
+                            {
+                                rgb = color;
+                                state.hsl = rgb_to_hsl(rgb);
+                            }
+                            if index % 10 == 9 {
+                                ui.end_row();
+                            }
+                        }
+                    });
+                ui.label("Custom colors");
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    for index in 0..10 {
+                        let saved = self.custom_colors.get(index).copied();
+                        let label = saved.map_or_else(
+                            || format!("Empty custom color {}", index + 1),
+                            |[r, g, b, _]| {
+                                format!("Custom color {}: #{r:02X}{g:02X}{b:02X}", index + 1)
+                            },
+                        );
+                        if color_swatch(
+                            ui,
+                            saved.unwrap_or([255, 255, 255, 255]),
+                            vec2(19.0, 19.0),
+                            &label,
+                        )
+                        .clicked()
+                        {
+                            if let Some(color) = saved {
+                                rgb = [color[0], color[1], color[2]];
+                                state.hsl = rgb_to_hsl(rgb);
+                            }
+                        }
+                    }
+                });
+            });
+            ui.add_space(12.0);
+            ui.vertical(|ui| {
+                ui.label("Current");
+                if color_swatch(
+                    ui,
+                    state.original,
+                    vec2(68.0, 40.0),
+                    "Restore the original color",
+                )
+                .clicked()
+                {
+                    rgb = [state.original[0], state.original[1], state.original[2]];
+                    state.hsl = rgb_to_hsl(rgb);
                 }
-            }
+            });
+            ui.vertical(|ui| {
+                ui.label("New");
+                color_swatch(
+                    ui,
+                    [rgb[0], rgb[1], rgb[2], 255],
+                    vec2(68.0, 40.0),
+                    "New color",
+                );
+            });
         });
-        if rgb != state.rgb {
-            state.hsl = rgb_to_hsl(rgb);
-        }
-        let previous_hsl = state.hsl;
-        Grid::new("paint_hls").num_columns(2).show(ui, |ui| {
-            for (index, label, maximum) in [
-                (0, "Hue", 239),
-                (1, "Saturation", 240),
-                (2, "Luminosity", 240),
-            ] {
-                ui.label(label);
-                numeric_input(ui, DragValue::new(&mut state.hsl[index]).range(0..=maximum));
-                ui.end_row();
-            }
-        });
-        if previous_hsl != state.hsl {
-            rgb = hsl_to_rgb(state.hsl);
-        }
         if rgb != [c[0], c[1], c[2]] {
             self.colors[self.active_color] = [rgb[0], rgb[1], rgb[2], 255];
             self.hex = format!("{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2]);
@@ -719,7 +940,9 @@ impl PaintApp {
                 "Enter six hexadecimal digits, such as 00A2E8.",
             );
         }
-        if dialog_button(ui, "Add to custom colors") {
+        let add = ui.add_enabled(valid_hex, Button::new("Add to custom colors"));
+        register_button(ui, &add);
+        if add.clicked() {
             if self.custom_colors.len() == 10 {
                 self.custom_colors.remove(0);
             }
@@ -728,15 +951,27 @@ impl PaintApp {
                 self.dialog_error = Some(format!("Could not save custom colors: {error}"));
             }
         }
-        ui.horizontal(|ui| {
-            if default_button(ui, "OK", valid_hex) {
-                close = true;
-            }
-            if dialog_button(ui, "Cancel") {
-                self.colors[self.active_color] = state.original;
-                close = true;
-            }
-        });
+        ui.add_space(6.0);
+        ui.allocate_ui_with_layout(
+            vec2(ui.available_width(), 28.0),
+            Layout::right_to_left(Align::Center),
+            |ui| {
+                ui.spacing_mut().interact_size = vec2(76.0, 28.0);
+                if dialog_button(ui, "Cancel") {
+                    self.colors[self.active_color] = state.original;
+                    close = true;
+                }
+                if default_button(ui, "OK", valid_hex) {
+                    close = true;
+                }
+            },
+        );
+
+        if self.colors[self.active_color] != c {
+            // Palette and Hex edits occur after the RGB/HSL controls are drawn.
+            // Repaint once so every preview and channel reflects the new color.
+            ui.ctx().request_repaint();
+        }
 
         close
     }
@@ -1109,6 +1344,168 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn color_dialog_fits_500_pixels_and_cancel_restores_the_original_rgba() {
+        let ctx = Context::default();
+        ctx.enable_accesskit();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let original = [40, 80, 120, 128];
+        app.colors[0] = original;
+        app.hex = "285078".into();
+        app.dialog = Some(Dialog::Colors);
+        let frame = |app: &mut PaintApp, events: Vec<Event>| {
+            let mut input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(500.0, 500.0))),
+                time: Some(ctx.cumulative_pass_nr() as f64 / 30.0),
+                events,
+                ..Default::default()
+            };
+            eframe::App::raw_input_hook(app, &ctx, &mut input);
+            ctx.run(input, |ctx| app.dialogs(ctx))
+        };
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        let output = frame(&mut app, vec![]);
+        let nodes = &output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes;
+        let visible_controls: Vec<_> = nodes
+            .iter()
+            .filter_map(|(_, node)| Some((node.label().or(node.value())?, node.bounds()?)))
+            .collect();
+        for label in [
+            "Hue and saturation",
+            "Luminosity",
+            "Basic colors",
+            "Custom colors",
+            "OK",
+            "Cancel",
+        ] {
+            let bounds = nodes
+                .iter()
+                .find_map(|(_, node)| {
+                    (node.label() == Some(label) || node.value() == Some(label))
+                        .then(|| node.bounds())
+                        .flatten()
+                })
+                .unwrap_or_else(|| panic!("missing {label}"));
+            assert!(
+                bounds.x0 >= 0.0 && bounds.x1 <= 500.0,
+                "{label}: {bounds:?}; controls: {visible_controls:?}"
+            );
+            assert!(
+                bounds.y0 >= 0.0 && bounds.y1 <= 500.0,
+                "{label}: {bounds:?}"
+            );
+        }
+        let bounds = nodes
+            .iter()
+            .find_map(|(_, node)| {
+                (node.label() == Some("Hue and saturation"))
+                    .then(|| node.bounds())
+                    .flatten()
+            })
+            .unwrap();
+        let point = pos2(
+            (bounds.x0 + (bounds.x1 - bounds.x0) * 0.25) as f32,
+            (bounds.y0 + 10.0) as f32,
+        );
+        frame(
+            &mut app,
+            vec![
+                Event::PointerMoved(point),
+                Event::PointerButton {
+                    pos: point,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+        frame(
+            &mut app,
+            vec![Event::PointerButton {
+                pos: point,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        assert_ne!(app.colors[0], original);
+        assert_eq!(app.colors[0][3], 255);
+        frame(
+            &mut app,
+            vec![Event::Key {
+                key: Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        assert_eq!(app.colors[0], original);
+        assert!(app.dialog.is_none());
+        assert!(!app.doc.dirty() && !app.doc.can_undo());
+    }
+
+    #[test]
+    fn anchored_color_dialog_settles_before_repaints_become_idle() {
+        let ctx = Context::default();
+        ctx.enable_accesskit();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.dialog = Some(Dialog::Colors);
+
+        for error in [
+            None,
+            Some("Choose a color.\nChoose a color.\nChoose a color."),
+        ] {
+            app.dialog_error = error.map(str::to_owned);
+            let mut previous = None;
+            let mut settled = false;
+            for _ in 0..12 {
+                let mut input = RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 700.0))),
+                    time: Some(ctx.cumulative_pass_nr() as f64 / 30.0),
+                    ..Default::default()
+                };
+                eframe::App::raw_input_hook(&mut app, &ctx, &mut input);
+                let output = ctx.run(input, |ctx| app.dialogs(ctx));
+                let bounds = output
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .find_map(|(_, node)| {
+                        (node.label() == Some("Hue and saturation"))
+                            .then(|| node.bounds())
+                            .flatten()
+                    })
+                    .expect("The real color controls must be present");
+                let geometry = (bounds.x0, bounds.y0, bounds.x1, bounds.y1);
+                let repaint = output.viewport_output[&ViewportId::ROOT].repaint_delay;
+                if repaint != std::time::Duration::ZERO {
+                    assert_eq!(
+                        previous,
+                        Some(geometry),
+                        "The dialog must request another repaint while its controls are moving"
+                    );
+                    settled = true;
+                    break;
+                }
+                previous = Some(geometry);
+            }
+            assert!(
+                settled,
+                "A settled dialog must not keep repainting continuously"
+            );
         }
     }
 
