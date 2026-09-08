@@ -234,28 +234,17 @@ pub(super) fn raw_input(ctx: &Context, input: &mut RawInput) {
             }
         )
     };
-    // Each navigation or close/open command changes the scope for what follows.
-    // Keep letter keytip sequences together (keyboard already queues these),
-    // but separate Escape/F10/arrows so their handler cannot swallow later keys.
-    let mut first_key: Option<bool> = None;
-    let boundary = input.events.iter().enumerate().find_map(|(index, event)| {
-        let Event::Key {
-            key,
-            pressed: true,
-            modifiers,
-            ..
-        } = event
-        else {
-            return None;
-        };
-        let letter = key.name().len() == 1 && !modifiers.ctrl && !modifiers.command;
-        if let Some(letters_allowed) = first_key {
-            (!letters_allowed || !letter).then_some(index)
-        } else {
-            first_key = Some(letter || (*key == Key::F10 && state.levels.is_empty()));
-            None
-        }
-    });
+    // Any ribbon key can open a new scope or focus a text field. Keep each key
+    // with its associated text events, then release the following key only
+    // after that activation has been rendered. Collecting all letter keys
+    // first loses digits typed immediately after a numeric-field keytip.
+    let boundary = input
+        .events
+        .iter()
+        .enumerate()
+        .filter(|(_, event)| matches!(event, Event::Key { pressed: true, .. }))
+        .nth(1)
+        .map(|(index, _)| index);
     if let Some(index) = boundary.filter(|_| !editing) {
         state.navigation_tail = input.events.split_off(index);
         ctx.request_repaint();
@@ -1917,7 +1906,12 @@ mod tests {
                 .map(key)
                 .collect(),
         );
-        app_warm(&mut app, &ctx, 1200.0);
+        for _ in 0..16 {
+            if !ctx.has_requested_repaint() {
+                break;
+            }
+            app_frame(&mut app, &ctx, 1200.0, vec![]);
+        }
         assert_eq!(app.doc.image.dimensions(), (20, 40));
         assert!(!active(&ctx));
     }

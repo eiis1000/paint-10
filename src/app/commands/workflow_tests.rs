@@ -102,6 +102,42 @@ fn immediate_custom_size_keytip_overrides_pending_popup_focus() {
 }
 
 #[test]
+fn immediate_custom_size_typing_preserves_text_after_queued_keytips() {
+    for coalesced in [false, true] {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        settle(&mut app, &ctx);
+        let mut batches = vec![];
+        for pressed in [Key::F10, Key::H, Key::W, Key::C] {
+            batches.push(vec![key(pressed, Modifiers::NONE)]);
+        }
+        for (pressed, text) in [(Key::Num1, "1"), (Key::Num3, "3"), (Key::Num7, "7")] {
+            batches.push(vec![
+                key(pressed, Modifiers::NONE),
+                Event::Text(text.into()),
+            ]);
+        }
+        batches.push(vec![key(Key::Enter, Modifiers::NONE)]);
+        if coalesced {
+            frame(&mut app, &ctx, batches.into_iter().flatten().collect());
+        } else {
+            for events in batches {
+                frame(&mut app, &ctx, events);
+            }
+        }
+        for _ in 0..24 {
+            if !ctx.has_requested_repaint() {
+                break;
+            }
+            frame(&mut app, &ctx, vec![]);
+        }
+        assert_eq!(app.size, 137, "coalesced input: {coalesced}");
+        assert!(app.selection.is_none());
+        assert!(!app.doc.dirty());
+    }
+}
+
+#[test]
 fn custom_rotation_cancel_preserves_the_draft_and_apply_targets_only_that_shape() {
     let ctx = Context::default();
     let mut app = shape_app(&ctx);
