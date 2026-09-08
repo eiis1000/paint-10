@@ -57,6 +57,22 @@ the project destination, and Undo restored its original dimensions afterward.
 The enlarged export was visually inspected, and the original project reopened
 correctly in the verified Nix package.
 
+## Landscape study checkpoint
+
+[Project](shape-landscape.p10) · [PNG](shape-landscape.png) ·
+[JPEG](shape-landscape.jpg) · [WebP](shape-landscape.webp)
+
+A 1920 × 1080 alpine lake study, made entirely with Rectangle, Oval, Polygon,
+Line and Curve tools. Linear and radial gradients build the sky, water, sun,
+reflections, haze and stone shading; textured shape fills and outlines supply
+snow and rock detail. No brush strokes, imported pictures or generated images
+were used. The current result is stylized and remains a checkpoint toward the
+requested photorealistic landscape exercise.
+
+The project reopened in the browser. Native Save a copy retained its project
+destination while exporting PNG, JPEG and WebP. PNG and JPEG were visually
+inspected; the project, PNG and lossless WebP have exactly matching RGBA pixels.
+
 ## Findings
 
 - Canvas setup: entering 720 and 560 in Image Properties yielded 7 × 16384.
