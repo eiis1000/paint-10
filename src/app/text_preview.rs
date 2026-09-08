@@ -8,6 +8,13 @@ use std::sync::Arc;
 struct Preview {
     text: String,
     format: TextFormat,
+    max_side: usize,
+    tiles: Vec<PreviewTile>,
+}
+
+#[derive(Clone)]
+struct PreviewTile {
+    offset: Vec2,
     texture: TextureHandle,
 }
 
@@ -22,39 +29,66 @@ pub(super) fn paint(
     zoom: f32,
 ) {
     let id = Id::new("paint10-live-text-preview");
+    let max_side = ui.input(|input| input.max_texture_side).max(1);
     let mut cached = ui.ctx().data(|data| data.get_temp::<Preview>(id));
-    if cached
-        .as_ref()
-        .is_none_or(|cached| cached.text != text || cached.format != *format)
-    {
+    if cached.as_ref().is_none_or(|cached| {
+        cached.text != text || cached.format != *format || cached.max_side != max_side
+    }) {
         let raster = format.render(text);
-        let image = ColorImage::from_rgba_unmultiplied(
-            [raster.width() as usize, raster.height() as usize],
-            raster.as_raw(),
-        );
-        let texture = if let Some(cached) = &mut cached {
-            cached.texture.set(image, TextureOptions::NEAREST);
-            cached.texture.clone()
-        } else {
-            ui.ctx()
-                .load_texture("live-text", image, TextureOptions::NEAREST)
-        };
+        let mut tiles = Vec::new();
+        for y in (0..raster.height()).step_by(max_side) {
+            for x in (0..raster.width()).step_by(max_side) {
+                let width = (raster.width() - x).min(max_side as u32);
+                let height = (raster.height() - y).min(max_side as u32);
+                let tile = image::imageops::crop_imm(&raster, x, y, width, height).to_image();
+                let image = ColorImage::from_rgba_unmultiplied(
+                    [width as usize, height as usize],
+                    tile.as_raw(),
+                );
+                let texture = if let Some(previous) = cached
+                    .as_mut()
+                    .and_then(|cached| cached.tiles.get_mut(tiles.len()))
+                {
+                    previous.texture.set(image, TextureOptions::NEAREST);
+                    previous.texture.clone()
+                } else {
+                    ui.ctx()
+                        .load_texture("live-text", image, TextureOptions::NEAREST)
+                };
+                tiles.push(PreviewTile {
+                    offset: vec2(x as f32, y as f32),
+                    texture,
+                });
+            }
+        }
         cached = Some(Preview {
             text: text.to_owned(),
             format: format.clone(),
-            texture,
+            max_side,
+            tiles,
         });
         ui.ctx()
             .data_mut(|data| data.insert_temp(id, cached.clone().unwrap()));
     }
-    let texture = &cached.expect("initialized preview").texture;
+    let preview = cached.expect("initialized preview");
     ui.painter().set(
         slot,
-        egui::Shape::image(
-            texture.id(),
-            Rect::from_min_size(position, texture.size_vec2() * zoom),
-            Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
-            Color32::WHITE,
+        egui::Shape::Vec(
+            preview
+                .tiles
+                .iter()
+                .map(|tile| {
+                    egui::Shape::image(
+                        tile.texture.id(),
+                        Rect::from_min_size(
+                            position + tile.offset * zoom,
+                            tile.texture.size_vec2() * zoom,
+                        ),
+                        Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
+                        Color32::WHITE,
+                    )
+                })
+                .collect(),
         ),
     );
 }
@@ -114,6 +148,69 @@ pub(super) fn galley(ui: &Ui, text: &str, format: &TextFormat, zoom: f32) -> Arc
 mod tests {
     use super::*;
     use crate::text::{points_to_pixels, TextAlignment};
+
+    #[test]
+    fn large_preview_tiles_reconstruct_the_exact_raster_at_a_small_gpu_limit() {
+        let ctx = Context::default();
+        let format = TextFormat {
+            width: 1180,
+            minimum_height: 1140,
+            ..Default::default()
+        };
+        let expected = format.render("Several lines\nof editable\ntext 😀");
+        let output = ctx.run(
+            RawInput {
+                max_texture_side: Some(1024),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                CentralPanel::default().show(ctx, |ui| {
+                    let slot = ui.painter().add(egui::Shape::Noop);
+                    paint(
+                        ui,
+                        slot,
+                        Pos2::ZERO,
+                        "Several lines\nof editable\ntext 😀",
+                        &format,
+                        1.0,
+                    );
+                });
+            },
+        );
+        let preview = ctx
+            .data(|data| data.get_temp::<Preview>(Id::new("paint10-live-text-preview")))
+            .unwrap();
+        assert!(preview.tiles.len() > 1);
+        let mut actual =
+            vec![Color32::TRANSPARENT; expected.width() as usize * expected.height() as usize];
+        for tile in preview.tiles {
+            let delta = output
+                .textures_delta
+                .set
+                .iter()
+                .find(|(id, _)| *id == tile.texture.id())
+                .unwrap();
+            let egui::ImageData::Color(image) = &delta.1.image else {
+                panic!("color tile")
+            };
+            assert!(image.width() <= 1024 && image.height() <= 1024);
+            for y in 0..image.height() {
+                let target = (tile.offset.y as usize + y) * expected.width() as usize
+                    + tile.offset.x as usize;
+                actual[target..target + image.width()]
+                    .copy_from_slice(&image.pixels[y * image.width()..(y + 1) * image.width()]);
+            }
+        }
+        assert_eq!(
+            actual,
+            ColorImage::from_rgba_unmultiplied(
+                [expected.width() as usize, expected.height() as usize],
+                expected.as_raw()
+            )
+            .pixels
+        );
+    }
 
     fn frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) -> FullOutput {
         ctx.run(
@@ -184,7 +281,7 @@ mod tests {
                 .textures_delta
                 .set
                 .iter()
-                .find(|(id, _)| *id == preview.texture.id())
+                .find(|(id, _)| *id == preview.tiles[0].texture.id())
                 .expect("updated live text texture");
             let egui::ImageData::Color(image) = &delta.1.image else {
                 panic!("color preview")
