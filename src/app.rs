@@ -244,13 +244,7 @@ impl PaintApp {
         if load_environment {
             font_db.load_system_fonts();
         }
-        let mut font_names: Vec<_> = font_db
-            .faces()
-            .filter(|f| f.style == fontdb::Style::Normal && f.weight == fontdb::Weight::NORMAL)
-            .filter_map(|f| f.families.first().map(|n| (n.0.clone(), f.id)))
-            .collect();
-        font_names.sort_by(|a, b| a.0.cmp(&b.0));
-        font_names.dedup_by(|a, b| a.0 == b.0);
+        let font_names = text_editing::font_families(&font_db);
         let rendered = doc.image.clone();
         let mut app = Self {
             doc,
