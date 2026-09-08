@@ -155,6 +155,7 @@
               pkgs.wasm-bindgen-cli
               pkgs.llvmPackages.lld
               pkgs.python3
+              pkgs.nodejs
             ];
           });
         }
