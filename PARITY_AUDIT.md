@@ -25,6 +25,20 @@ presets are inferred from their pixel widths, not quoted from either video.
 UK “Felt tip” and “Colour” in the 2016 recording are localization differences.
 No Windows 11 design changes have been adopted on the basis of this audit.
 
+The follow-up `e5248af` joins the main and dropdown regions of Paste, Select
+and Brushes, and gives File's format rows distinct original picture previews.
+Actual native clicks open the sectioned Select menu and four-column brush
+gallery; choosing Watercolor, switching to Select, and clicking the main
+Brushes region restores Watercolor. Commit `20d12cc` also preserves numbers
+typed immediately after F10, H, W, C. The same 80 ms keytip sequence followed
+by 137 now produces a 137px custom width in the running app.
+
+The shared source passes 316 tests (125 library + 191 app), formatting and
+strict Clippy. Actual active-shape rotation keeps the canvas at 900×600,
+rotates only the 283×213 rectangle to 213×283, and supports Cancel and two-step
+Undo back to the clean blank picture. Unicode, browser clipboard and shared
+font/project verification are recorded in `TESTING.md`.
+
 ## Corrected findings
 
 | Workflow | Concrete failure | Status |

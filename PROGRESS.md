@@ -1,5 +1,33 @@
 # Paint 10 work in progress
 
+## Current September 8 checkpoint, around 19:26 EDT
+
+- Regular commits continue: `f3dc1a2` storage/Unicode docs, `20d12cc` coalesced
+  keytips, `e5248af` connected split controls and distinct format previews.
+  Actual native fast F10/H/W/C plus immediate 137 now succeeds; Select menu,
+  Brushes gallery, remembered Watercolor main action and File previews pass.
+  Active rectangle Rotate Cancel, 90-degree Apply, Undo and Undo to blank pass.
+- Native launcher 46960 is current `e5248af`, private DISPLAY=:1,
+  `/tmp/paint10-desktop.oIsDxe`, controller 31474, log
+  `tmp/native-final-split-replay.log`. Ant project was opened and Ctrl+S saved
+  version 2 at 1,992,405 bytes. Read-only baseline comparison passes all exact
+  pixels/objects/fonts/metadata; actual PNG re-export and project reopen follow.
+  Current GTK Save a copy dialog is overwriting the ant PNG; inspect screenshots.
+- Final native Nix package `/nix/store/wrbqk46x08dxbq96crgvazdjg1vmx0q5-paint-10-0.1.0`
+  passes 316 release tests, host flake checks, all-system evaluation and installed
+  asset/closure/launcher checks. Read `tmp/native-package-e5248af-handoff.md`.
+  It still needs actual private GUI replay; desktop debug replay uses same code.
+- Browser e5248af release and Nix package build pass. Current launcher90300,
+  private DISPLAY=:2/controller38238, loaded the refreshed site. Its F10 also
+  focuses Chromium's three-dot button, losing subsequent letters. Slow F10
+  after Select confirms this; browser_finish owns adapter default cancellation.
+  Native fast input passes. No overall completion claim while this remains.
+- Root alone owns art/Git/docs. Landscape refinements remain saved but their
+  exports are stale. Independent visual review prioritizes breaking broad
+  geometric reflection polygons with irregular water bands, asymmetric rock
+  edges/contact shadows and branching mountain ravines. Continue using only
+  actual GUI shape tools; four other artwork exercises are complete.
+
 ## Current September 8 checkpoint, around 19:15 EDT
 
 - Logical commits `36217df` fixes active-shape rotation/inverse selection and

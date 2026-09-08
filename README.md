@@ -25,6 +25,23 @@ nix build path:.
 
 The flake provides packages and development shells for `x86_64-linux` and `aarch64-linux`. A graphical desktop session and working OpenGL driver are needed to run the application. Printing, wallpaper settings, and email drafts use your desktop's XDG portals; availability depends on the portal backend and installed applications.
 
+To include it in a NixOS configuration, add this checkout or its Git location
+as a flake input named `paint10`, pass your inputs to the module, and use:
+
+```nix
+{ inputs, pkgs, ... }:
+{
+  environment.systemPackages = [
+    inputs.paint10.packages.${pkgs.stdenv.hostPlatform.system}.paint-10
+  ];
+}
+```
+
+Home Manager can put the same package in `home.packages`. The flake also
+exports `overlays.default` if you prefer to install it as `pkgs.paint-10`.
+Adding the package installs the application and launcher; it does not change
+desktop settings or configure scanners, cameras, or portal services.
+
 ## Draw and edit
 
 Use the Home ribbon for brushes, shapes, fill, eraser, text, selections, colors, and image transformations. Color 1 is the foreground; Color 2 is the background. Right-click a palette swatch to choose Color 2. The View ribbon controls zoom, rulers, gridlines, and picture view. Above 100% zoom, enable Thumbnail to navigate the picture through a floating preview.
