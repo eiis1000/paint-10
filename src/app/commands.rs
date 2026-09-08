@@ -116,6 +116,9 @@ impl PaintApp {
                 self.refresh = true;
             }
             Action::Open => {
+                #[cfg(target_arch = "wasm32")]
+                self.choose_browser_file(true);
+                #[cfg(not(target_arch = "wasm32"))]
                 if let Some(path) = self
                     .pending_path
                     .take()
@@ -131,8 +134,16 @@ impl PaintApp {
                 self.save(true);
             }
             Action::Close => {
-                self.allow_close = true;
-                ctx.send_viewport_cmd(ViewportCommand::Close);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.allow_close = true;
+                    ctx.send_viewport_cmd(ViewportCommand::Close);
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    self.message = "Close this browser tab to exit Paint 10.".into();
+                    ctx.request_repaint();
+                }
             }
             Action::Undo => {
                 self.doc.undo();
@@ -160,6 +171,9 @@ impl PaintApp {
             Action::Cut => self.cut(),
             Action::Paste => self.paste_clipboard(),
             Action::PasteFrom => {
+                #[cfg(target_arch = "wasm32")]
+                self.choose_browser_file(false);
+                #[cfg(not(target_arch = "wasm32"))]
                 if let Some(path) = Self::file_dialog().pick_file() {
                     match Self::read_image(&path) {
                         Ok(img) => self.insert_image(img),

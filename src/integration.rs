@@ -122,9 +122,14 @@ pub fn enumerate_devices() -> Result<DeviceList, String> {
     Ok(result)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), not(target_arch = "wasm32")))]
 pub fn enumerate_devices() -> Result<DeviceList, String> {
     Err("Scanner and camera capture currently requires Linux. You can open a picture saved by your device's application.".into())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn enumerate_devices() -> Result<DeviceList, String> {
+    Err("Scanner and camera capture is unavailable in the browser build. Open a picture saved by your device's application.".into())
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -239,13 +244,22 @@ pub fn capture(
     decode_capture(&bytes)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), not(target_arch = "wasm32")))]
 pub fn capture(
     _: &CaptureDevice,
     _: &CaptureSettings,
     _: &AtomicBool,
 ) -> Result<RgbaImage, String> {
     Err("Scanner and camera capture currently requires Linux.".into())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn capture(
+    _: &CaptureDevice,
+    _: &CaptureSettings,
+    _: &AtomicBool,
+) -> Result<RgbaImage, String> {
+    Err("Scanner and camera capture is unavailable in the browser build. Open a picture saved by your device's application.".into())
 }
 
 fn check_size(width: u32, height: u32) -> Result<(), String> {
@@ -509,9 +523,14 @@ pub fn set_wallpaper(
     })
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), not(target_arch = "wasm32")))]
 pub fn set_wallpaper(_: &RgbaImage, _: WallpaperStyle, _: (u32, u32)) -> Result<(), String> {
     Err("Desktop background integration currently requires a Linux desktop portal.".into())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn set_wallpaper(_: &RgbaImage, _: WallpaperStyle, _: (u32, u32)) -> Result<(), String> {
+    Err("A browser cannot change your desktop background. Save a copy, then choose it in your desktop's background settings.".into())
 }
 
 /// Opens a new draft in the user's mail application with the PNG attached.
@@ -532,9 +551,14 @@ pub fn compose_email(image: &RgbaImage) -> Result<(), String> {
     })
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), not(target_arch = "wasm32")))]
 pub fn compose_email(_: &RgbaImage) -> Result<(), String> {
     Err("Email draft integration currently requires a Linux desktop portal. Save your picture and attach it in your mail application.".into())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn compose_email(_: &RgbaImage) -> Result<(), String> {
+    Err("Email draft integration is unavailable in the browser build. Save a copy and attach it in your mail application.".into())
 }
 
 #[cfg(test)]

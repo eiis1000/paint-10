@@ -399,7 +399,7 @@ pub fn print(img: &RgbaImage, settings: &PageSettings) -> Result<(), String> {
     })
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), not(target_arch = "wasm32")))]
 pub fn print(img: &RgbaImage, settings: &PageSettings) -> Result<(), String> {
     let bytes = pdf(img, settings)?;
     let path = rfd::FileDialog::new()
@@ -409,6 +409,13 @@ pub fn print(img: &RgbaImage, settings: &PageSettings) -> Result<(), String> {
         .save_file()
         .ok_or("Print canceled")?;
     crate::project::atomic_write(&path, &bytes)
+}
+
+/// Browser printing uses the same paginated PDF as the native preview.
+#[cfg(target_arch = "wasm32")]
+pub fn print(img: &RgbaImage, settings: &PageSettings) -> Result<(), String> {
+    let bytes = pdf(img, settings)?;
+    crate::web::download("Paint10.pdf", "application/pdf", &bytes)
 }
 
 #[cfg(test)]

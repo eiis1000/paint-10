@@ -275,13 +275,18 @@ impl PaintApp {
             self.dialog = Some(Dialog::Print);
             ui.close_menu();
         }
+        let scanner_tip = concat!(
+            "Scanner and camera drivers require the native app. ",
+            "In a browser, import a captured picture with Open or Paste from."
+        );
         if command(
             ui,
             "From scanner or camera…",
             "",
             "C",
-            self.job.is_none(),
+            self.job.is_none() && !cfg!(target_arch = "wasm32"),
         )
+        .on_hover_text(scanner_tip)
         .clicked()
         {
             self.dialog = Some(Dialog::Import);
@@ -295,8 +300,9 @@ impl PaintApp {
             "Send in email…",
             "",
             "E",
-            self.job.is_none(),
+            self.job.is_none() && !cfg!(target_arch = "wasm32"),
         )
+        .on_hover_text("Download the picture and attach it in your email app.")
         .clicked()
         {
             self.finish_editing();
@@ -313,8 +319,9 @@ impl PaintApp {
             "Set as desktop background…",
             "",
             "B",
-            true,
+            !cfg!(target_arch = "wasm32"),
         )
+        .on_hover_text("Desktop wallpaper access requires the native app.")
         .clicked()
         {
             self.finish_editing();

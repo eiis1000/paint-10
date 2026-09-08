@@ -3,6 +3,7 @@ mod chrome;
 mod commands;
 mod dialogs;
 mod file_menu;
+#[cfg_attr(target_arch = "wasm32", path = "app/web_files.rs")]
 mod files;
 mod gestures;
 mod jobs;
@@ -33,7 +34,9 @@ use crate::document::{
 use crate::icons::{self, Icon};
 use eframe::egui::{self, *};
 use image::{imageops, Rgba, RgbaImage};
-use std::{borrow::Cow, path::PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
+use std::borrow::Cow;
+use std::path::PathBuf;
 
 const RIBBON: Color32 = Color32::from_rgb(245, 246, 247);
 const BLUE: Color32 = Color32::from_rgb(25, 121, 202);
@@ -192,7 +195,10 @@ pub struct PaintApp {
     file: Option<PathBuf>,
     message: String,
     cursor: Option<Point>,
+    #[cfg(not(target_arch = "wasm32"))]
     clipboard: Option<arboard::Clipboard>,
+    #[cfg(target_arch = "wasm32")]
+    web: files::BrowserState,
     copied: Option<RgbaImage>,
     mask: Option<image::GrayImage>,
     recent: Vec<PathBuf>,
@@ -243,8 +249,15 @@ impl PaintApp {
         theme::install(ctx);
         let doc = Document::new(900, 600);
         let mut font_db = fontdb::Database::new();
+        #[cfg(not(target_arch = "wasm32"))]
         if load_environment {
             font_db.load_system_fonts();
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            font_db.load_font_data(epaint_default_fonts::UBUNTU_LIGHT.to_vec());
+            font_db.load_font_data(epaint_default_fonts::HACK_REGULAR.to_vec());
+            font_db.load_font_data(epaint_default_fonts::NOTO_EMOJI_REGULAR.to_vec());
         }
         let font_names = text_editing::font_families(&font_db);
         let rendered = doc.image.clone();
@@ -290,6 +303,9 @@ impl PaintApp {
             file: None,
             message: "For Help, click ? or press F1".into(),
             cursor: None,
+            #[cfg(target_arch = "wasm32")]
+            web: files::BrowserState::new(ctx.clone()),
+            #[cfg(not(target_arch = "wasm32"))]
             clipboard: if load_environment {
                 arboard::Clipboard::new().ok()
             } else {
@@ -343,10 +359,15 @@ impl PaintApp {
             wallpaper_style: Default::default(),
             wallpaper_size: (1920, 1080),
         };
+        #[cfg(not(target_arch = "wasm32"))]
         if load_environment {
             if let Some(path) = std::env::args_os().nth(1) {
                 app.load(PathBuf::from(path));
             }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            app.message = "Paint 10 in your browser. Open imports a file; Save downloads it. Your pictures stay on this device.".into();
         }
         app
     }
@@ -360,12 +381,15 @@ impl eframe::App for PaintApp {
             && self.pending.is_none()
             && self.print_preview.is_none()
             && !self.preview
+            && !self.browser_dialog_open()
         {
             keytips::raw_input(ctx, raw_input);
         }
     }
 
     fn update(&mut self, ctx: &Context, _: &mut eframe::Frame) {
+        #[cfg(target_arch = "wasm32")]
+        self.poll_browser(ctx);
         self.poll_job();
         self.page
             .set_resolution(self.doc.resolution.x, self.doc.resolution.y);
@@ -382,11 +406,15 @@ impl eframe::App for PaintApp {
             }
         }
         if self.print_preview.is_none() && !self.preview {
-            if !self.ribbon_keyboard(ctx) {
+            if !self.browser_dialog_open() && !self.ribbon_keyboard(ctx) {
                 self.shortcut(ctx);
             }
             if self.dialog.is_none() && self.pending.is_none() {
                 for file in ctx.input(|i| i.raw.dropped_files.clone()) {
+                    #[cfg(target_arch = "wasm32")]
+                    if let Some(bytes) = file.bytes {
+                        self.import_browser_bytes(&file.name, &bytes, false);
+                    }
                     if let Some(path) = file.path {
                         match Self::read_image(&path) {
                             Ok(img) => self.insert_image(img),
@@ -456,8 +484,26 @@ impl eframe::App for PaintApp {
         }
         self.keyboard_menu(ctx);
         self.dialogs(ctx);
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.browser_save_dialog(ctx);
+            self.sync_browser_unsaved();
+        }
         if self.refresh && self.print_preview.is_none() {
             ctx.request_repaint();
+        }
+    }
+}
+
+impl PaintApp {
+    fn browser_dialog_open(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.web.save.is_some()
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            false
         }
     }
 }

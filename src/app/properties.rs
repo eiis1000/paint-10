@@ -8,6 +8,11 @@ impl PaintApp {
             .file
             .as_ref()
             .and_then(|path| std::fs::metadata(path).ok());
+        let unavailable_metadata = if cfg!(target_arch = "wasm32") {
+            "Unavailable in browser"
+        } else {
+            "Not saved"
+        };
         Grid::new("image_file_properties")
             .num_columns(2)
             .show(ui, |ui| {
@@ -24,7 +29,7 @@ impl PaintApp {
                 ui.end_row();
                 ui.label("Size on disk:");
                 ui.label(file_metadata.as_ref().map_or_else(
-                    || "Not saved".into(),
+                    || unavailable_metadata.into(),
                     |metadata| {
                         format!(
                             "{} bytes ({:.1} KiB)",
@@ -39,7 +44,7 @@ impl PaintApp {
                     file_metadata
                         .as_ref()
                         .and_then(|metadata| metadata.modified().ok())
-                        .map_or_else(|| "Not saved".into(), format_file_date),
+                        .map_or_else(|| unavailable_metadata.into(), format_file_date),
                 );
                 ui.end_row();
                 ui.label("Resolution:");

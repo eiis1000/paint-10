@@ -554,6 +554,14 @@ impl PaintApp {
                         ui.close_menu();
                         self.action(Action::PasteFrom, ctx);
                     }
+                    #[cfg(target_arch = "wasm32")]
+                    if ui.add_enabled(self.copied.is_some(), Button::new("Paste copied selection"))
+                        .on_hover_text("Paste the last image copied within this Paint 10 tab, without reading the system clipboard.")
+                        .clicked()
+                    {
+                        if let Some(image) = self.copied.clone() { self.insert_image(image); }
+                        ui.close_menu();
+                    }
                 });
                 menu.response
                     .widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Paste options"));

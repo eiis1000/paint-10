@@ -104,7 +104,14 @@ impl PaintApp {
                 }
                 Event::Cut => self.cut(),
                 Event::Paste(_) => {
+                    #[cfg(not(target_arch = "wasm32"))]
                     self.paste_clipboard();
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        self.message =
+                            "Clipboard contains text. Create or edit a text box to paste it."
+                                .into();
+                    }
                 }
                 _ => {}
             }

@@ -14,11 +14,17 @@ impl PaintApp {
         self.job_cancel
             .store(false, std::sync::atomic::Ordering::Relaxed);
         let ctx = ctx.clone();
-        std::thread::spawn(move || {
+        let run = move || {
             let result = job();
             let _ = tx.send(result);
             ctx.request_repaint();
-        });
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(run);
+        // Browser integration jobs return capability messages synchronously;
+        // file/clipboard I/O uses asynchronous browser promises instead.
+        #[cfg(target_arch = "wasm32")]
+        run();
     }
 
     pub(in crate::app) fn poll_job(&mut self) {
