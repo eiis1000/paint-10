@@ -1,5 +1,99 @@
 # Paint 10 verification log
 
+## September 8: shared native and browser verification
+
+The source checkpoint through browser commit `f0c68b4` passes **264 native
+tests (97 library + 167 application)**, formatting, strict Clippy and the native
+debug build. The named Nix release package also passes all 264 tests:
+`/nix/store/c59jksasbd08gh7nir2d81i6d2vwr4xh-paint-10-0.1.0`. Logs are
+`tmp/native-menu-clean-gate.log` and `tmp/nix-native-final-committed.log`.
+`nix flake check .` passes on x86_64-linux
+(`tmp/nix-flake-final-committed.log`); incompatible aarch64 outputs were omitted
+from that host check.
+
+The browser target compiles the same Rust application. Strict WASM Clippy and
+the release build pass in the pinned `.#web` shell, with Rust 1.97.1 and
+wasm-bindgen 0.2.127. Logs: `tmp/wasm-final-clippy.log` and
+`tmp/browser-final-release.log`. Its Nix static package also builds successfully:
+`/nix/store/33n46jimrdnk4l9d95pa101slsvpqqqr-paint-10-web-0.1.0`. The packaged
+HTML matches source, every generated JavaScript import exists, and the WASM
+header is valid (`tmp/nix-browser-final.log`,
+`tmp/nix-browser-final-static-check.log`). This package includes the final
+browser production fixes; native-only debug tracing was removed afterward and
+does not affect the WASM runtime.
+
+The application regressions cover consecutive and batched File arrows, entering
+the PNG format row, menu-to-editor shortcut focus, reversible shape-style
+previews, exact custom brush sizes, compact Edit Colors geometry and no-op
+rotated text edits. The **23 focused text tests**, included in the 264-test
+total, also verify Unicode Clipboard/history at wide and 500px widths, compact
+font galleries, scrolling to the last family, and registering project fonts
+without changing encoded project bytes or pixels
+(`tmp/font-gallery-project-fonts.log`).
+
+Actual browser tests used private Chromium on Xvfb with a private profile,
+loading the release site at `http://127.0.0.1:8080/`. Mouse/keyboard actions and
+download dialogs ran inside that private desktop. The final screenshots and
+rendered PDF below were visually inspected.
+
+- **Theme and rulers:** a late browser system-theme event originally replaced
+  Paint's square menu styling with egui defaults. The refreshed build retains
+  the intended styling; the actual-button regression passes late Light/Dark/Light
+  events. Ctrl+R now toggles rulers without also reloading the page
+  (`/tmp/paint10-browser-ctrl-r-fixed.png`). F5 remains available for reload.
+- **Downloads and discard protection:** an actual pencil stroke was downloaded
+  as PNG. Canceling the first destination dialog retained the modified state
+  and the browser's reload warning
+  (`/tmp/paint10-browser-canceled-download-guard.png`). Subsequent Ctrl+S correctly
+  opened the destination dialog directly after the filename was retained.
+  Successful exports `/tmp/paint10-browser-first-download.png` and
+  `/tmp/browser-pencil-september8.png` were visually inspected and byte-identical.
+  File → New after opening a `.p10` project reset Save to PNG
+  (`/tmp/paint10-browser-menu-new-png.png`).
+- **Fonts and retained text:** importing `DejaVuSans.ttf` succeeded. Reopening
+  the Mona Lisa project exposed its embedded DejaVu Serif family in the compact
+  font gallery, with the final Load font row visible and no large blank area
+  below it (`/tmp/paint10-browser-final-font-gallery.png`). Escape followed by
+  Ctrl+Enter closed the gallery and committed the rotated title without
+  reopening the menu or marking the unchanged project dirty
+  (`/tmp/paint10-browser-final-font-commit.png`).
+- **Clipboard permissions and keyboard paste:** blocking the ribbon Paste
+  permission request left the document unchanged and displayed the denial
+  explanation. Paste options → Paste copied selection explicitly inserted the
+  locally copied image (`/tmp/paint10-browser-paste-local-fallback.png`). The
+  initial silent Ctrl+V failure came from eframe stopping paste propagation at
+  its document text listener. With image capture handled before that listener,
+  actual Ctrl+C/Ctrl+V pasted the selected title even while Clipboard API access
+  remained blocked (`/tmp/paint10-browser-final-capture-paste.png`). One Undo
+  removed the pasted image and returned the project to its clean state
+  (`/tmp/paint10-browser-final-paste-undo.png`).
+- **Browser PDF:** Page setup, landscape orientation and print preview rendered
+  the actual shape landscape. Download PDF produced
+  `/tmp/paint10-browser-landscape.pdf`: one landscape Letter page, **792 × 612
+  points**. Its rendered page `/tmp/paint10-browser-landscape-page.png` was
+  inspected for content, orientation and placement. This verifies the export
+  workflow; it does not certify the landscape's separate artwork acceptance
+  requirement.
+
+These results remain bounded. Browser downloads cannot confirm completion of
+the destination dialog, so they retain the unsaved-work guard. Chrome reserves
+Ctrl+N for a browser window and Ctrl+Page Up/Down for tab navigation; use File →
+New and the View/status zoom controls for the picture. The
+[browser guide](web/README.md) records these limits and the local font/file and
+clipboard workflows. This pass does not claim manual browser coverage of every
+export format or every drawing-tool combination.
+
+Windows/MSVC and Apple/Darwin dependency trees resolve with `--locked --offline`
+(`tmp/native-dependencies-windows-resumed.txt`,
+`tmp/native-dependencies-macos-resumed.txt`), but neither target was compiled or
+executed on this Linux host. The native CI matrix is configured; no external CI
+run is claimed. Physical hardware integrations remain untested. Artwork
+acceptance is tracked separately in `artworks/README.md` and `PROGRESS.md`.
+After this checkpoint, manual Edit Colors reopening exposed a stale Red numeric
+field when switching from an edited Color 1 to white Color 2. That draft-state
+follow-up is under repair and is not covered by the successful gates above.
+Earlier results below retain their original source snapshots and scope.
+
 ## Responsive ribbon, captions, transparency and portability pass
 
 Ordinary verification for source commit `32ff8ec` passes **197 tests (84 library + 113 application)** in both the native suite and the named Nix release package. Strict Clippy, formatting, the native build and x86_64-linux flake check pass. The two vendored clipboard tests also pass when run explicitly; CI now includes that command. Windows/macOS native execution remains unverified locally. The five final artwork acceptance exercises have begun as a separate pass and are not counted in these results.

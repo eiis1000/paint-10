@@ -2,6 +2,29 @@
 
 The original requirement is a Windows 10 Paint replacement with no missing functionality. The earlier completion claim was premature: feature presence and 76 passing tests did not establish that ordinary editing workflows worked correctly. The concrete failures below have now been corrected. Complete Windows equivalence remains unverified, and the remaining differences are explicit below.
 
+## Period-video review, September 7
+
+The current visual pass uses actual decoded menu interactions from [Hintling's
+2016 Windows 10 Paint tutorial](https://www.youtube.com/watch?v=ObYvtATkrJM) and
+[TutorTube's April 2021 Line Size lesson](https://www.youtube.com/watch?v=oOsQuk8Muzg).
+Exact frames and timestamped sequences are recorded in
+`tmp/paint-reference-video/audit.md`. These revealed a compact four-column brush
+gallery at19:30, sectioned Select options at06:08, Clipboard in the contextual
+Text ribbon at24:30, live Fill hover preview at34:01, and a two-column File menu
+with a Save as format pane at42:04–42:07. The 2021 lesson also demonstrates live
+line-width hover preview at00:33.
+
+Those differences are implemented in `1f16473` and `e0e9c59`: the four-column
+brush gallery, sectioned Select options, contextual Text Clipboard, two-column
+File menu, and reversible Fill/Outline/Size hover previews. The combined native
+suite passes 264 tests through `f0c68b4`; actual native File hover and browser
+text/font/clipboard replay pass. The final shape-menu interaction pass continues
+alongside the remaining artwork exercises. The four Size rows are visually
+established; exact numeric
+presets are inferred from their pixel widths, not quoted from either video.
+UK “Felt tip” and “Colour” in the 2016 recording are localization differences.
+No Windows 11 design changes have been adopted on the basis of this audit.
+
 ## Corrected findings
 
 | Workflow | Concrete failure | Status |
