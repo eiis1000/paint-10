@@ -3,6 +3,12 @@ use ab_glyph::{point, Font, FontRef, GlyphId, ScaleFont};
 use image::{Rgba, RgbaImage};
 use std::ops::Range;
 
+mod editor_layout;
+mod shaping;
+#[cfg(test)]
+mod shaping_tests;
+pub use editor_layout::{EditorCaret, EditorSelectionRect};
+
 const MAX_TEXT_CHARS: usize = 1024 * 1024;
 const MAX_SPANS: usize = 4096;
 pub const MAX_FONT_BYTES: usize = 32 * 1024 * 1024;
@@ -15,6 +21,9 @@ pub const MAX_FONT_FACES: usize = 128;
 /// Whether the outline renderer can display a character from this face.
 /// Color/bitmap-only glyph IDs do not count as a drawable outline.
 pub fn font_supports_outline(font: &impl Font, character: char) -> bool {
+    if shaping::default_ignorable(character) {
+        return true;
+    }
     let id = font.glyph_id(character);
     id.0 != 0 && (character.is_whitespace() || character.is_control() || font.outline(id).is_some())
 }
@@ -69,6 +78,10 @@ pub struct EditorLayout {
 #[derive(Clone, Debug)]
 pub struct EditorRow {
     pub glyphs: Vec<EditorGlyph>,
+    pub source_range: Range<usize>,
+    /// Grapheme boundaries ordered from the visual left edge to the right edge.
+    pub visual_carets: Vec<EditorCaret>,
+    pub right_to_left: bool,
     pub left: f32,
     pub top: f32,
     pub width: f32,
@@ -78,7 +91,8 @@ pub struct EditorRow {
     pub ends_with_newline: bool,
 }
 
-/// One logical glyph for each original character, including invisible whitespace.
+/// One logical character cell, including invisible whitespace. Shaped glyphs
+/// may span several cells. `x` is the leading edge; RTL advances are negative.
 #[derive(Clone, Debug)]
 pub struct EditorGlyph {
     pub character: char,
@@ -123,7 +137,7 @@ pub struct TextSpan {
     pub style: TextStyle,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextStyleRef<'a> {
     pub font_name: &'a str,
     pub font: &'a [u8],
@@ -229,6 +243,10 @@ impl TextStyle {
 }
 
 impl TextFormat {
+    pub fn needs_visual_layout(text: &str) -> bool {
+        text.chars().any(shaping::required)
+    }
+
     /// Insets shared by the editor and raster layout, including stroke antialiasing.
     pub fn text_padding(&self) -> (u32, u32) {
         let outline = self.outline_width.min(MAX_TEXT_OUTLINE);
@@ -584,7 +602,7 @@ impl TextFormat {
         let mut rows = Vec::with_capacity(layout.lines.len());
         for line in &layout.lines {
             let mut glyphs = Vec::with_capacity(line.source_range.len());
-            let mut rendered = line.glyphs.iter().peekable();
+            let mut rendered = line.cells.iter().peekable();
             let mut cursor_x = line.left;
             for character_index in line.source_range.clone() {
                 let character = characters[character_index];
@@ -615,7 +633,7 @@ impl TextFormat {
                     character,
                     character_index,
                     x: x - padding_x as f32,
-                    advance: (end - x).max(0.0),
+                    advance: end - x,
                     baseline: line.baseline - padding_y as f32,
                     ascent: style.ascent,
                     height: style.ascent + style.descent + style.gap,
@@ -624,21 +642,26 @@ impl TextFormat {
             }
             rows.push(EditorRow {
                 glyphs,
+                source_range: line.source_range.clone(),
+                visual_carets: Vec::new(),
+                right_to_left: line.right_to_left,
                 left: line.left - padding_x as f32,
                 top: line.top - padding_y as f32,
-                width: (cursor_x - line.left).max(0.0),
+                width: line.advance,
                 height: line.height,
                 baseline: line.baseline - padding_y as f32,
                 ascent: line.baseline - line.top,
                 ends_with_newline: line.ends_with_newline,
             });
         }
-        EditorLayout {
+        let mut editor = EditorLayout {
             width: self.content_width() as f32,
             height: (layout.height as f32 - 2.0 * padding_y as f32).max(0.0),
             rows,
             elided: layout.elided,
-        }
+        };
+        editor.populate_carets(text);
+        editor
     }
 
     fn layout(&self, text: &str) -> TextLayout<'_> {
@@ -687,6 +710,7 @@ impl TextFormat {
             } else {
                 let resolved = if !character.is_control()
                     && !character.is_whitespace()
+                    && !shaping::default_ignorable(character)
                     && !font_supports_outline(&styles[base_style].font, character)
                 {
                     let source = styles[base_style].source;
@@ -747,16 +771,6 @@ impl TextFormat {
                     source_index: index,
                 }));
             } else {
-                let character = if !character.is_control()
-                    && !character.is_whitespace()
-                    && styles[style].font.glyph_id(character).0 == 0
-                {
-                    // Preserve the original scalar in editor geometry, while
-                    // displaying an explicit replacement instead of blank ink.
-                    '?'
-                } else {
-                    character
-                };
                 chars.push(StyledChar {
                     character,
                     style,
@@ -765,6 +779,7 @@ impl TextFormat {
             }
         }
         let width = self.width.clamp(10, MAX_TEXT_WIDTH);
+        shaping::unify_grapheme_fonts(&mut chars, &mut styles, &available_faces, &self.font_faces);
         let (padding_x, padding_y) = self.text_padding();
         let content_width = self.content_width() as f32;
         let max_height = (MAX_PIXELS / width as u64).min(16384) as u32;
@@ -778,6 +793,9 @@ impl TextFormat {
                 .position(|c| c.character == '\n')
                 .map_or(chars.len(), |offset| start + offset);
             let blank_style = chars.get(start).map_or(0, |c| c.style);
+            let paragraph_start = start;
+            let shaped = shaping::required_chars(&chars[start..paragraph_end])
+                .then(|| shaping::Paragraph::new(&chars[start..paragraph_end], &styles));
             if start == paragraph_end {
                 let mut line = layout_line(&[], &styles, blank_style, top);
                 let source_end = chars
@@ -790,7 +808,13 @@ impl TextFormat {
                 lines.push(line);
             } else {
                 while start < paragraph_end && top + 4.0 < max_height as f32 {
-                    let end = wrap_end(&chars, start, paragraph_end, &styles, content_width);
+                    let end = shaped.as_ref().map_or_else(
+                        || wrap_end(&chars, start, paragraph_end, &styles, content_width),
+                        |paragraph| {
+                            paragraph.wrap_end(start - paragraph_start, content_width, &styles)
+                                + paragraph_start
+                        },
+                    );
                     let mut visible_end = end;
                     if end < paragraph_end {
                         while visible_end > start
@@ -799,8 +823,17 @@ impl TextFormat {
                             visible_end -= 1;
                         }
                     }
-                    let mut line =
-                        layout_line(&chars[start..visible_end], &styles, blank_style, top);
+                    let mut line = shaped.as_ref().map_or_else(
+                        || layout_line(&chars[start..visible_end], &styles, blank_style, top),
+                        |paragraph| {
+                            paragraph.line(
+                                start - paragraph_start..visible_end - paragraph_start,
+                                &styles,
+                                blank_style,
+                                top,
+                            )
+                        },
+                    );
                     top += line.height;
                     start = end;
                     if start < paragraph_end {
@@ -830,6 +863,9 @@ impl TextFormat {
             line.left += offset;
             for glyph in &mut line.glyphs {
                 glyph.x += offset;
+            }
+            for cell in &mut line.cells {
+                cell.x += offset;
             }
         }
         TextLayout {
@@ -882,11 +918,12 @@ impl TextFormat {
         for line in &layout.lines {
             for glyph in &line.glyphs {
                 let style = &layout.styles[glyph.style];
-                if let Some(outline) = style.font.outline_glyph(
-                    glyph
-                        .id
-                        .with_scale_and_position(style.size, point(glyph.x, line.baseline)),
-                ) {
+                if let Some(outline) =
+                    style.font.outline_glyph(glyph.id.with_scale_and_position(
+                        style.size,
+                        point(glyph.x, line.baseline + glyph.y),
+                    ))
+                {
                     let bounds = outline.px_bounds();
                     outline.draw(|x, y, coverage| {
                         let y = y as i32 + bounds.min.y as i32;
@@ -1150,12 +1187,26 @@ struct PositionedGlyph {
     id: GlyphId,
     style: usize,
     x: f32,
+    y: f32,
     advance: f32,
     source_index: usize,
 }
 
+/// Logical character edges, independent of the number/order of shaped glyphs.
+#[derive(Clone)]
+struct CharacterCell {
+    source_index: usize,
+    style: usize,
+    x: f32,
+    advance: f32,
+    wrap_cluster: Range<usize>,
+}
+
 struct TextLine {
     glyphs: Vec<PositionedGlyph>,
+    cells: Vec<CharacterCell>,
+    advance: f32,
+    right_to_left: bool,
     baseline: f32,
     height: f32,
     width: f32,
@@ -1180,7 +1231,7 @@ fn advance(
 ) -> (GlyphId, f32, f32) {
     let style = &styles[character.style];
     let scaled = style.font.as_scaled(style.size);
-    let id = scaled.glyph_id(character.character);
+    let id = scaled.glyph_id(render_character(character.character, style));
     let kern = previous.map_or(0.0, |(previous, previous_style)| {
         let prior = &styles[previous_style];
         if prior.size == style.size
@@ -1194,6 +1245,20 @@ fn advance(
         }
     });
     (id, scaled.h_advance(id), kern)
+}
+
+/// Missing glyphs have visible fallback ink, but bidi/grapheme analysis must
+/// still see the original Unicode character rather than a replacement '?'.
+fn render_character(character: char, style: &RenderStyle<'_>) -> char {
+    if !character.is_control()
+        && !character.is_whitespace()
+        && !shaping::default_ignorable(character)
+        && style.font.glyph_id(character).0 == 0
+    {
+        '?'
+    } else {
+        character
+    }
 }
 
 fn wrap_end(
@@ -1257,6 +1322,7 @@ fn layout_line(
                 id,
                 style: character.style,
                 x,
+                y: 0.0,
                 advance: step,
                 source_index: character.source_index,
             };
@@ -1264,9 +1330,22 @@ fn layout_line(
             previous = Some((id, character.style));
             glyph
         })
+        .collect::<Vec<_>>();
+    let cells = glyphs
+        .iter()
+        .map(|glyph| CharacterCell {
+            source_index: glyph.source_index,
+            style: glyph.style,
+            x: glyph.x,
+            advance: glyph.advance,
+            wrap_cluster: glyph.source_index..glyph.source_index + 1,
+        })
         .collect();
     TextLine {
         glyphs,
+        cells,
+        advance: x - 1.0,
+        right_to_left: false,
         baseline: top + ascent,
         height: ascent + descent + gap,
         left: 1.0,
