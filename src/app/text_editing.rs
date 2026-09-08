@@ -1,6 +1,8 @@
 use super::*;
-use crate::text::TextStyle as DocumentTextStyle;
+use crate::text::{FontBytes, FontMemory, TextStyle as DocumentTextStyle};
 use egui::text::{CCursor, CCursorRange};
+#[cfg(test)]
+mod history_tests;
 mod unicode_input;
 
 pub(in crate::app) use unicode_input::word_selection;
@@ -62,13 +64,12 @@ impl TextSnapshot {
         state.focus = true;
     }
 
-    fn bytes(&self) -> usize {
+    fn bytes_with_fonts(&self, fonts: &mut FontMemory) -> usize {
         self.text.len()
-            + self.format.memory_bytes()
-            + self
-                .insertion_style
-                .as_ref()
-                .map_or(0, |style| style.font.len())
+            + self.format.memory_bytes_with_fonts(fonts)
+            + self.insertion_style.as_ref().map_or(0, |style| {
+                style.font_name.len() + fonts.include(&style.font)
+            })
     }
 }
 
@@ -77,9 +78,14 @@ impl TextHistory {
         let grouped = typing && self.last_typing.is_some_and(|last| time - last < 0.75);
         if !grouped {
             self.undo.push(before);
-            let mut bytes: usize = self.undo.iter().map(TextSnapshot::bytes).sum();
-            while bytes > 32 * 1024 * 1024 && self.undo.len() > 1 {
-                bytes -= self.undo.remove(0).bytes();
+            let mut fonts = FontMemory::default();
+            let mut bytes = 0usize;
+            for index in (0..self.undo.len()).rev() {
+                bytes = bytes.saturating_add(self.undo[index].bytes_with_fonts(&mut fonts));
+                if bytes > 32 * 1024 * 1024 && index + 1 < self.undo.len() {
+                    self.undo.drain(..=index);
+                    break;
+                }
             }
         }
         self.redo.clear();
@@ -745,7 +751,7 @@ impl PaintApp {
         }
         let lower = query.to_lowercase();
         if "sans serif".starts_with(&lower) {
-            style.font.clear();
+            style.font = FontBytes::default();
             style.font_name = "Sans serif".into();
             style.font_index = 0;
             return true;
@@ -764,7 +770,7 @@ impl PaintApp {
         };
         let Some((data, index)) = self
             .font_db
-            .with_face_data(*id, |data, index| (data.to_vec(), index))
+            .with_face_data(*id, |data, index| (FontBytes::from(data), index))
         else {
             return false;
         };
@@ -784,10 +790,7 @@ impl PaintApp {
             let ObjectKind::Text { format, .. } = &object.kind else {
                 continue;
             };
-            let sources = std::iter::once(format.font.as_slice())
-                .chain(format.spans.iter().map(|span| span.style.font.as_slice()))
-                .chain(format.font_faces.iter().map(|face| face.data.as_slice()));
-            for data in sources {
+            for data in format.font_assets().map(FontBytes::as_slice) {
                 if data.is_empty() || visited.contains(&data) {
                     continue;
                 }
@@ -1112,9 +1115,9 @@ fn font_choice(
             size: 17.0,
             ..Default::default()
         };
-        if let Some((data, index)) =
-            face.and_then(|id| database.with_face_data(id, |data, index| (data.to_vec(), index)))
-        {
+        if let Some((data, index)) = face.and_then(|id| {
+            database.with_face_data(id, |data, index| (FontBytes::from(data), index))
+        }) {
             format.font = data;
             format.font_index = index;
         }
@@ -1179,13 +1182,13 @@ fn prepare_text_fonts(
             if format
                 .font_faces
                 .iter()
-                .any(|face| face.index == style.font_index && face.data == data)
+                .any(|face| face.index == style.font_index && face.data.as_ref() == data)
             {
                 return None;
             }
             Some(crate::text::EmbeddedFont {
                 family: style.font_name.to_owned(),
-                data: data.to_vec(),
+                data: data.into(),
                 index: style.font_index,
                 bold: false,
                 italic: false,
@@ -1198,7 +1201,7 @@ fn prepare_text_fonts(
                 .font_faces
                 .iter()
                 .any(|stored| stored.index == face.index && stored.data == face.data)
-            && format.memory_bytes().saturating_add(face.data.len()) < crate::text::MAX_FORMAT_BYTES
+            && can_embed_font(format, &face)
             && face.validate().is_ok()
         {
             format.font_faces.push(face);
@@ -1299,7 +1302,7 @@ fn embed_font_face(
         if format.font_faces.iter().any(|face| {
             face.family == family
                 && face.index == index
-                && face.data == data
+                && face.data.as_ref() == data
                 && face.bold == bold
                 && face.italic == italic
         }) {
@@ -1307,7 +1310,7 @@ fn embed_font_face(
         }
         Some(crate::text::EmbeddedFont {
             family: family.into(),
-            data: data.to_vec(),
+            data: data.into(),
             index,
             bold,
             italic,
@@ -1318,13 +1321,20 @@ fn embed_font_face(
     let Some(embedded) = embedded else {
         return true;
     };
-    if embedded.validate().is_err()
-        || format.memory_bytes().saturating_add(embedded.data.len()) > crate::text::MAX_FORMAT_BYTES
-    {
+    if embedded.validate().is_err() || !can_embed_font(format, &embedded) {
         return false;
     }
     format.font_faces.push(embedded);
     true
+}
+
+fn can_embed_font(format: &crate::text::TextFormat, face: &crate::text::EmbeddedFont) -> bool {
+    let mut fonts = FontMemory::default();
+    let current = format.memory_bytes_with_fonts(&mut fonts);
+    let additional = std::mem::size_of::<crate::text::EmbeddedFont>()
+        + face.family.len()
+        + fonts.include(&face.data);
+    current.saturating_add(additional) <= crate::text::MAX_FORMAT_BYTES
 }
 
 fn text_control(ui: &Ui, response: &Response, name: &'static str, selected: bool) {
@@ -1606,7 +1616,7 @@ mod tests {
     fn rtl_editing_app(ctx: &Context, text: &str) -> PaintApp {
         let mut app = editing_app(ctx, text);
         let state = app.text_edit.as_mut().unwrap();
-        state.format.font = include_bytes!("../../assets/test-fonts/DejaVuSans.ttf").to_vec();
+        state.format.font = include_bytes!("../../assets/test-fonts/DejaVuSans.ttf").into();
         state.format.font_name = "DejaVu Sans".into();
         state.format.size = 40.0;
         state.selection = 0..0;
@@ -2251,7 +2261,7 @@ mod tests {
             .format
             .font_faces
             .iter()
-            .any(|face| face.data == epaint_default_fonts::NOTO_EMOJI_REGULAR));
+            .any(|face| face.data.as_ref() == epaint_default_fonts::NOTO_EMOJI_REGULAR));
         let rendered = state.format.render("😀");
         let mut without_fallback = state.format.clone();
         without_fallback.font_faces.clear();
@@ -2373,11 +2383,11 @@ mod tests {
         ]);
         let mut format = crate::text::TextFormat {
             font_name: "Hack".into(),
-            font: collection.clone(),
+            font: collection.clone().into(),
             font_index: 1,
             font_faces: vec![crate::text::EmbeddedFont {
                 family: "Noto Emoji".into(),
-                data: epaint_default_fonts::NOTO_EMOJI_REGULAR.to_vec(),
+                data: epaint_default_fonts::NOTO_EMOJI_REGULAR.into(),
                 index: 0,
                 bold: false,
                 italic: false,
@@ -2408,7 +2418,7 @@ mod tests {
         }
         let mut style = crate::text::TextFormat::default().default_style();
         assert!(app.apply_font_name("Hack", &mut style));
-        assert_eq!(style.font, collection);
+        assert_eq!(style.font.as_ref(), collection.as_slice());
         assert_eq!(style.font_index, 1);
         app.register_document_fonts();
         assert_eq!(app.font_db.faces().count(), count);
@@ -2556,13 +2566,16 @@ mod tests {
         let state = app.text_edit.as_ref().unwrap();
         assert_eq!(state.text, "First second");
         assert_eq!(state.format.style_at(0).font_name, "Hack");
-        assert_eq!(state.format.style_at(0).font, collection);
+        assert_eq!(
+            state.format.style_at(0).font.as_ref(),
+            collection.as_slice()
+        );
         assert_eq!(state.format.style_at(0).font_index, 1);
         assert!(state.format.style_at(7).font.is_empty());
         let mut single_face = state.format.clone();
         single_face
             .modify_style(0..5, |style| {
-                style.font = epaint_default_fonts::HACK_REGULAR.to_vec();
+                style.font = epaint_default_fonts::HACK_REGULAR.into();
                 style.font_index = 0;
             })
             .unwrap();
