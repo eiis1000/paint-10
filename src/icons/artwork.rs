@@ -294,6 +294,9 @@ pub(super) fn command(canvas: &Canvas<'_>, icon: Icon) {
             canvas.line((8.0, 16.0), (17.0, 16.0), LIGHT_BLUE, 1.0);
             canvas.line((8.0, 19.0), (17.0, 19.0), LIGHT_BLUE, 1.0);
         }
+        Icon::Png | Icon::Jpeg | Icon::Bitmap | Icon::Gif | Icon::OtherFormats => {
+            picture_format(canvas, icon);
+        }
         Icon::Undo | Icon::Redo => {
             let flip = |x| {
                 if matches!(icon, Icon::Redo) {
@@ -379,6 +382,98 @@ pub(super) fn command(canvas: &Canvas<'_>, icon: Icon) {
         Icon::Tool(_) | Icon::Brush(_) => {
             unreachable!("tool and brush artwork is dispatched separately")
         }
+    }
+}
+
+/// Small original picture thumbnails distinguish the file-format rows without
+/// relying on installed fonts or introducing another raster asset system.
+fn picture_format(canvas: &Canvas<'_>, icon: Icon) {
+    if matches!(icon, Icon::OtherFormats) {
+        canvas.rect((1.0, 1.0), (19.0, 18.0), SILVER, INK);
+        canvas.rect((4.0, 4.0), (22.0, 21.0), Color32::WHITE, INK);
+        canvas.rect((6.0, 6.0), (20.0, 17.0), LIGHT_BLUE, CLEAR);
+        canvas.polygon(&[(6.0, 17.0), (12.0, 9.0), (20.0, 17.0)], BLUE, CLEAR);
+        for x in [10.0, 14.0, 18.0] {
+            canvas.circle((x, 20.0), 0.6, INK, CLEAR);
+        }
+        return;
+    }
+
+    canvas.rect((1.0, 3.0), (23.0, 22.0), Color32::WHITE, INK);
+    match icon {
+        Icon::Png => {
+            for row in 0..4 {
+                for column in 0..5 {
+                    let x = 2.0 + column as f32 * 4.0;
+                    let y = 4.0 + row as f32 * 4.0;
+                    let shade = if (row + column) % 2 == 0 { 235 } else { 255 };
+                    canvas.rect((x, y), (x + 4.0, y + 4.0), Color32::from_gray(shade), CLEAR);
+                }
+            }
+            canvas.line(
+                (12.0, 11.0),
+                (12.0, 20.0),
+                Color32::from_rgb(54, 137, 73),
+                1.5,
+            );
+            for center in [(9.0, 8.0), (14.0, 7.0), (16.0, 12.0), (10.0, 13.0)] {
+                canvas.circle(center, 3.2, Color32::from_rgb(226, 72, 78), CLEAR);
+            }
+            canvas.circle((12.5, 10.0), 2.1, GOLD, CLEAR);
+        }
+        Icon::Jpeg => {
+            for row in 0..8 {
+                let color = Color32::from_rgb(112 + row * 12, 173 + row * 7, 231 + row * 2);
+                let y = 4.0 + f32::from(row) * 2.0;
+                canvas.rect((2.0, y), (22.0, y + 2.0), color, CLEAR);
+            }
+            canvas.circle((17.0, 8.0), 2.4, Color32::from_rgb(255, 224, 132), CLEAR);
+            canvas.polygon(
+                &[(2.0, 20.0), (8.0, 9.0), (17.0, 20.0)],
+                Color32::from_rgb(75, 139, 120),
+                CLEAR,
+            );
+            canvas.polygon(
+                &[(8.0, 20.0), (15.0, 12.0), (22.0, 17.0), (22.0, 20.0)],
+                Color32::from_rgb(43, 105, 86),
+                CLEAR,
+            );
+        }
+        Icon::Bitmap => {
+            let colors = [BLUE, LIGHT_BLUE, Color32::from_rgb(68, 153, 101), GOLD];
+            for row in 0..4 {
+                for column in 0..5 {
+                    let color = colors[match (row, column) {
+                        (0, 3) => 3,
+                        (0..=1, _) => 1,
+                        (_, 0..=1) => 0,
+                        _ => 2,
+                    }];
+                    let x = 2.0 + column as f32 * 4.0;
+                    let y = 4.0 + row as f32 * 4.0;
+                    canvas.rect((x, y), (x + 3.5, y + 3.5), color, CLEAR);
+                }
+            }
+        }
+        Icon::Gif => {
+            canvas.rect(
+                (2.0, 4.0),
+                (22.0, 20.0),
+                Color32::from_rgb(255, 241, 160),
+                CLEAR,
+            );
+            canvas.line(
+                (12.0, 11.0),
+                (12.0, 20.0),
+                Color32::from_rgb(45, 141, 88),
+                1.8,
+            );
+            for center in [(8.0, 8.0), (15.0, 8.0), (8.0, 14.0), (15.0, 14.0)] {
+                canvas.circle(center, 3.3, BLUE, CLEAR);
+            }
+            canvas.circle((11.5, 11.0), 2.2, GOLD, CLEAR);
+        }
+        _ => unreachable!("only picture-format icons use this painter"),
     }
 }
 
