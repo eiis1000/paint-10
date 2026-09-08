@@ -24,6 +24,7 @@ The target is Windows 10's ribbon-based Paint. A checked feature means implement
 - [x] Shared WebAssembly browser target, Nix static package, local image/project imports, downloads and font loading
 - [x] Image properties units, DPI metadata and monochrome conversion
 - [x] Zoom, rulers, pixel grid, image-only view and live Thumbnail navigation
+- [x] Non-destructive distance measurement, adjustable pixel endpoints, delta/angle readout and DPI-based physical units
 - [x] Page setup with 19 paper presets/custom dimensions, multi-page print preview, PDF export and system print dialog
 - [x] Scanner/camera import, email drafts and desktop background integration where supported
 - [x] Context menus, keyboard command navigation and Paint keyboard shortcuts
