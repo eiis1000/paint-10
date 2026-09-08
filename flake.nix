@@ -144,6 +144,7 @@
                 xorg-server
                 dbus
                 xdotool
+                xclip
                 imagemagick
                 openbox
               ]);
