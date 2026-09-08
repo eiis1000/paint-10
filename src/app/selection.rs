@@ -250,6 +250,9 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn invert_selection(&mut self) {
+        if let Some(bounds) = self.finish_editing() {
+            self.selection = Some(bounds);
+        }
         if let Some(selected) = self.selected_image() {
             let origin = self
                 .object

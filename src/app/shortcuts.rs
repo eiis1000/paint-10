@@ -145,7 +145,7 @@ impl PaintApp {
                 || consume_shortcut(i, Modifiers::CTRL | Modifiers::SHIFT, Key::Plus)
                 || consume_shortcut(i, Modifiers::CTRL, Key::Equals)
         }) {
-            self.size = (self.size + 1).min(100);
+            self.size = (self.size + 1).min(500);
         }
         if ctx.input_mut(|i| consume_shortcut(i, Modifiers::CTRL, Key::Minus)) {
             self.size = self.size.saturating_sub(1).max(1);

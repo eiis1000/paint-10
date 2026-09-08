@@ -364,6 +364,11 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn rotate_picture(&mut self, angle: f32, absolute: bool) -> bool {
+        // The custom-angle dialog can open over an unfinished shape or text
+        // box. Apply consumes that edit; Cancel leaves it adjustable.
+        if let Some(bounds) = self.finish_editing() {
+            self.selection = Some(bounds);
+        }
         if let Some(index) = self.object {
             let object = &self.doc.objects[index];
             let requested = if absolute {
@@ -413,6 +418,9 @@ impl PaintApp {
         self.start_shape_draft(ShapeGeometry::Polygon(points), self.polygon_color_slot);
     }
 }
+
+#[cfg(test)]
+mod workflow_tests;
 
 #[cfg(test)]
 mod tests {

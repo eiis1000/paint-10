@@ -387,6 +387,9 @@ fn activate(ctx: &Context, state: &mut State, target: &Target, descend: bool) {
     }
     focus(ctx, target);
     if target.kind.is_text_input() {
+        // An explicit field keytip supersedes the popup's pending initial
+        // focus, including when it arrives immediately after its sizing pass.
+        state.focus_first = false;
         state.tips = false;
         let mut editor = TextEdit::load_state(ctx, target.id).unwrap_or_default();
         editor
