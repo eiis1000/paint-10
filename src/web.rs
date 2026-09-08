@@ -34,6 +34,14 @@ export function installBrowserEvents(notify, canvas) {
     // eframe handles text at document level and stops the event from bubbling.
     // Capture image data before that listener, leaving text-only paste to it.
     window.addEventListener('paste', async event => {
+        const target = event.target;
+        const textTarget = target?.tagName === 'INPUT'
+            || target?.tagName === 'TEXTAREA'
+            || target?.isContentEditable;
+        if (textTarget && event.clipboardData?.getData('text/plain')) {
+            return;
+        }
+
         const item = [...(event.clipboardData?.items || [])]
             .find(item => item.type.startsWith('image/'));
         if (!item) {
@@ -111,12 +119,23 @@ export function chooseFile(accept) {
     });
 }
 
-export async function readClipboard() {
+async function clipboardText(item) {
+    const text = await (await item.getType('text/plain')).text();
+    // Match eframe's keyboard-paste line endings.
+    return { text: text.replace(/\r\n/g, '\n') };
+}
+
+export async function readClipboard(preferText = false) {
     if (!navigator.clipboard?.read) {
         throw new Error('Use Ctrl+V / Command+V, or Paste from, to grant clipboard access.');
     }
 
     const items = await navigator.clipboard.read();
+    const textItem = preferText && items.find(item => item.types.includes('text/plain'));
+    if (textItem) {
+        return clipboardText(textItem);
+    }
+
     for (const item of items) {
         const type = item.types.find(type => type.startsWith('image/'));
         if (type) {
@@ -128,7 +147,7 @@ export async function readClipboard() {
         }
 
         if (item.types.includes('text/plain')) {
-            return { text: await (await item.getType('text/plain')).text() };
+            return clipboardText(item);
         }
     }
 
@@ -159,7 +178,7 @@ extern "C" {
     #[wasm_bindgen(catch, js_name = chooseFile)]
     pub(crate) async fn choose_file(accept: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(catch, js_name = readClipboard)]
-    pub(crate) async fn read_clipboard() -> Result<JsValue, JsValue>;
+    pub(crate) async fn read_clipboard(prefer_text: bool) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(catch, js_name = writeClipboard)]
     pub(crate) async fn write_clipboard(bytes: &[u8]) -> Result<(), JsValue>;
 }

@@ -310,8 +310,9 @@ impl PaintApp {
     pub(in crate::app) fn paste_browser_clipboard(&mut self) {
         let events = self.web.events.clone();
         let ctx = self.web.ctx.clone();
+        let prefer_text = self.text_edit.is_some();
         wasm_bindgen_futures::spawn_local(async move {
-            let result = match crate::web::read_clipboard().await {
+            let result = match crate::web::read_clipboard(prefer_text).await {
                 Ok(value) => BrowserResult::Clipboard(value),
                 Err(error) => BrowserResult::Message(format!(
                     "Clipboard access: {} Use Ctrl+V / Command+V, Paste from, or Paste options → Paste copied selection.",
@@ -358,8 +359,15 @@ impl PaintApp {
                 BrowserResult::Message(message) => self.message = message,
                 BrowserResult::Clipboard(value) => {
                     if let Some(text) = property(&value, "text").as_string() {
-                        if self.text_edit.is_some() {
-                            ctx.input_mut(|input| input.events.push(Event::Paste(text)));
+                        if let Some(state) = self.text_edit.as_mut() {
+                            if let Err(error) = text_editing::apply_text_clipboard(
+                                state,
+                                Action::Paste,
+                                Some(&text),
+                                ctx,
+                            ) {
+                                self.message = error;
+                            }
                         } else {
                             self.message =
                                 "Clipboard contains text. Create or edit a text box to paste it."
