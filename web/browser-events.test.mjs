@@ -181,3 +181,31 @@ test('ruler shortcut suppresses reload without taking over F5 or hard reload', a
         assert.equal(key.prevented, expected);
     }
 });
+
+test('F10 stays with Paint keytips while context-menu and IME shortcuts keep their defaults', async () => {
+    const windowTarget = new Target();
+    globalThis.window = windowTarget;
+    const canvas = new Target();
+    let pageFocused = true;
+    canvas.ownerDocument = { hasFocus: () => pageFocused };
+    adapter.installBrowserEvents(() => {}, canvas);
+
+    for (const [properties, expected] of [
+        [{ key: 'F10', target: { tagName: 'CANVAS' } }, true],
+        [{ key: 'F10', target: { tagName: 'INPUT' } }, true],
+        [{ key: 'F10', shiftKey: true }, false],
+        [{ key: 'F10', ctrlKey: true }, false],
+        [{ key: 'F10', altKey: true }, false],
+        [{ key: 'F10', metaKey: true }, false],
+        [{ key: 'F10', isComposing: true }, false],
+        [{ key: 'F10', keyCode: 229 }, false],
+        [{ key: 'F10', pageFocused: false }, false],
+        [{ key: 'F5' }, false],
+    ]) {
+        pageFocused = properties.pageFocused ?? true;
+        const key = event(properties);
+        await windowTarget.dispatch('keydown', key, true);
+        assert.equal(key.prevented, expected, JSON.stringify(properties));
+        assert.equal(key.stopped, false, 'eframe must still receive the key event');
+    }
+});

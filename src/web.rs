@@ -24,6 +24,23 @@ export function installBrowserEvents(notify, canvas) {
         }
     }, { capture: true });
 
+    // F10 must open Paint's keytips without moving focus to the browser menu.
+    // Listen above both the canvas and eframe's hidden text-input element.
+    window.addEventListener('keydown', event => {
+        if (
+            event.key === 'F10'
+            && !event.shiftKey
+            && !event.ctrlKey
+            && !event.altKey
+            && !event.metaKey
+            && !event.isComposing
+            && event.keyCode !== 229
+            && canvas.ownerDocument.hasFocus()
+        ) {
+            event.preventDefault();
+        }
+    }, { capture: true });
+
     window.addEventListener('beforeunload', event => {
         if (unsaved) {
             event.preventDefault();
