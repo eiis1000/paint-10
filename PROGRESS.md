@@ -1,5 +1,42 @@
 # Paint 10 work in progress
 
+## Current September 8 checkpoint, around 18:00 EDT
+
+- Additional logical commits: `e0e9c59` text/fonts, `d181ffe` measurement,
+  `f0c68b4` browser port, `651dbba` reference/verification records, and `ce9fa9f`
+  numeric modal drafts. The last fix was discovered during actual slide work:
+  reopening Edit Colors showed Red text 0 while the color and numeric value were
+  white/255. Actual-widget regression and private GUI replay now pass.
+- Native package after that fix:
+  `/nix/store/64a87iz71vf7wr3xxsqmipxrsywv7mxg-paint-10-0.1.0`, 97 library and
+  168 app release tests; flake/asset/closure/launcher checks pass. Browser package:
+  `/nix/store/jsgw1a4xm6sqv6ym33x36i0yy729jk01-paint-10-web-0.1.0`.
+  WASM strict Clippy, release and static checks pass; server86539 is current.
+- Ant-colony slide is actively being painted. Saved project
+  `artworks/ant-colony-simulation.p10` has a dark gradient, two retained text
+  headings, branching trails, nest/food markers and a manually drawn ant.
+  Latest process44307, private DISPLAY=:1, control31474, log
+  `tmp/native-ant-slide-color-fixed.log`. Detailed hand-chosen geometry and the
+  pending UI step are in `tmp/ant-artwork-ledger.txt`; continue from screenshots.
+  The explanatory right column and node labels are now drawn; the footer,
+  final export/PPTX/render remain unfinished.
+- Browser narrow-window Home/View ribbons fit. Actual measurement A9,9 to12,13
+  gives5.00px; nudging B to23,13 gives14.56px/15.95degrees/3.852mm. The readout fits.
+  Captures `/tmp/paint10-browser-final-measure-*500.png` were visually inspected.
+  Browser launcher33259 terminated with SIGTERM/X shutdown at17:57; its controller
+  67878 is closed. The clean project was not modified. Fresh launcher86661 uses
+  private DISPLAY=:2 and controller38238. It reopened Mona Lisa and downloaded
+  `/tmp/paint10-browser-mona-roundtrip.p10`; semantic comparison preserves every
+  project value except newly explicit empty font-face defaults.
+- The standard text audit confirmed broken grapheme deletion, unshaped RTL/Indic
+  text and non-atomic IME history/cancellation. Its actual-frame evidence is in
+  `tmp/text-standard-functionality-audit.md`. ribbon_finish now owns grapheme/IME
+  editor corrections; file_finish owns RustyBuzz/bidi layout and shared caret
+  geometry plus dependency edits. browser_finish audits the browser input adapter.
+  These active changes are not covered by the preceding package checks.
+- Landscape remains a saved stylized checkpoint and needs refinement for the
+  requested photorealism. Do not claim all artwork gates complete.
+
 ## Current September 8 checkpoint, around 17:45 EDT
 
 - Logical native commits are complete: `1f16473` menus/ribbon, `e0e9c59`

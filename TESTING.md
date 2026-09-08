@@ -90,8 +90,35 @@ executed on this Linux host. The native CI matrix is configured; no external CI
 run is claimed. Physical hardware integrations remain untested. Artwork
 acceptance is tracked separately in `artworks/README.md` and `PROGRESS.md`.
 After this checkpoint, manual Edit Colors reopening exposed a stale Red numeric
-field when switching from an edited Color 1 to white Color 2. That draft-state
-follow-up is under repair and is not covered by the successful gates above.
+field when switching from an edited Color 1 to white Color 2. Commit `ce9fa9f`
+clears the prior numeric draft before initial modal focus is assigned. The
+regression reproduced displayed Red `0` alongside numeric value 255, then
+verified all reopened RGB/HSL fields, Hex, subsequent editing and Cancel.
+All 11 dialog and 12 Properties tests, strict Clippy and the refreshed native
+build pass (`tmp/color-reopen-fixed-gate.log`). Actual native replay now shows
+Red/Green/Blue 255 and Hex FFFFFF after editing Color 1, with the project clean
+(`/tmp/paint10-ant-fixed-color-reopened.png`).
+
+The refreshed native Nix package after `ce9fa9f` is
+`/nix/store/64a87iz71vf7wr3xxsqmipxrsywv7mxg-paint-10-0.1.0`; all **265 release
+tests (97 library + 168 app)** and flake checks pass. The matching refreshed web
+package is `/nix/store/jsgw1a4xm6sqv6ym33x36i0yy729jk01-paint-10-web-0.1.0`;
+WASM strict Clippy, release and static checks pass.
+
+Additional actual browser checks:
+
+- At a narrow window, Home/View groups and their menus fit. Measuring A(9,9)
+  to B(12,13) gives 5.00px and 53.13 degrees. Right then Shift+Right moves B to
+  (23,13): 14.56px, 15.95 degrees and 3.852mm at 96dpi. All readout fields fit,
+  and the project stays clean. Captures use
+  `/tmp/paint10-browser-final-measure-five500.png` and `-measure-mm500.png`.
+- The Mona Lisa project was opened and actually downloaded again as `.p10`.
+  Read-only comparison with `tmp/check-browser-project.py` verifies identical
+  image bytes, objects, transforms, fonts and other project values. The newer
+  serializer explicitly writes three empty `font_faces` defaults omitted by the
+  older source project, so the compressed files are not byte-identical.
+  Download: `/tmp/paint10-browser-mona-roundtrip.p10`.
+
 Earlier results below retain their original source snapshots and scope.
 
 ## Responsive ribbon, captions, transparency and portability pass
