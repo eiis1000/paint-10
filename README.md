@@ -55,6 +55,12 @@ or undo history.
 
 Save as a **Paint 10 project (`.p10`)** to retain editable text, image objects, and their transforms. Saving PNG, JPEG, BMP, GIF, or TIFF exports the visible raster picture; reopening those formats gives a flattened image. Undo history is kept for the current session and is not stored in project files. Destructive raster operations, including lifting a raster selection or transforming the whole canvas, can merge editable objects; undo can restore the previous state while it remains in history.
 
+Projects embed the fonts used by their captions, so those captions remain
+editable on another computer or in the browser. Version 2 projects store each
+font once, even when many captions use it; older version 1 projects still open.
+Text editing supports mixed writing directions, shaped scripts, Unicode word
+selection, and deletion of complete characters including combining marks.
+
 The Save As format selector updates the filename extension and supports monochrome, 16-color, 256-color, and 24-bit BMP files, as well as PNG, JPEG, GIF, TIFF, WebP, icons, and editable projects. JPEG aliases such as `.jpe` and bitmap files named `.dib` are accepted. Indexed BMP export reduces the picture to the selected number of colors.
 
 Page Setup offers Letter, Legal, Tabloid, Executive, Statement, A0–A6, ISO B4/B5, photo and envelope presets, plus custom dimensions in millimeters. Orientation, individual margins, centering, actual-size scaling, and fitting across multiple pages apply to both print preview and PDF export. Actual size uses the image's DPI. Invalid dimensions or margins disable printing and export until corrected.
