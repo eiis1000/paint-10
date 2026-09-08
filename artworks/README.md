@@ -87,6 +87,12 @@ made through the actual Paint interface. The project reopened with the same
 composition; double-clicking its title restored the 72-point bold DejaVu Sans
 editor.
 
+Reopening this artwork and saving it with the version 2 project format reduced
+the project from 39,341,235 bytes to 1,992,405 bytes. The repeated captions now
+share their embedded fonts. Reopening restores the same editable title, and
+the fresh PNG export is byte-identical to the original; all project pixels,
+objects, transforms, styles, font faces and resolution are unchanged.
+
 Save a copy exported an opaque PNG while retaining the `.p10` destination.
 Inspection caught an unpainted bottom row and right column, which were corrected
 with Rectangle tools and re-exported. The PowerPoint contains one 16:9 slide

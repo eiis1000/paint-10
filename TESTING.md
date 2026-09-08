@@ -1,5 +1,46 @@
 # Paint 10 verification log
 
+## September 8: ribbon package and actual version 2 saves
+
+Source `e5248af` passes **316 native tests (125 library + 191 app)**,
+formatting and strict Clippy. The Nix native package
+`/nix/store/wrbqk46x08dxbq96crgvazdjg1vmx0q5-paint-10-0.1.0` passes those
+same release tests, host flake checks, all-system evaluation and installed
+asset/closure/launcher checks. ARM outputs were evaluated, not built;
+Windows/macOS execution remains unverified. Exact source and evidence are in
+`tmp/native-package-e5248af-handoff.md`.
+
+Actual native mouse and keyboard replay confirms:
+
+- Fast F10, H, W, C followed immediately by 137 and Enter preserves 137px.
+  Ctrl+Plus increases 137px to 138px, within the expanded supported range.
+- Select's connected dropdown opens the sectioned menu, with unavailable
+  Invert/Delete disabled. Brushes opens the four-column gallery. After choosing
+  Watercolor and switching to Select, clicking the main Brushes region restores
+  Watercolor without opening the gallery.
+- File hover shows the five distinct format previews with readable descriptions.
+- Canceling custom rotation keeps the adjustable rectangle. Applying 90 degrees
+  changes its bounds from 283×213 to 213×283 while the canvas remains 900×600.
+  One Undo restores the rectangle and the next restores the clean blank canvas.
+
+Captures use `/tmp/paint10-native-final-{fast137,connected-select,
+connected-brushes,main-retains-watercolor,format-previews}.png` and
+`/tmp/paint10-native-active-rotate*.png`. Root visually inspected these outputs.
+
+The actual native Open and Ctrl+S workflow rewrote the ant slide as version 2.
+Save a copy then re-exported its PNG to the existing destination while keeping
+the project filename. Read-only comparison against the preserved version 1
+project confirms exact base/composite pixels, editable objects, transforms,
+styles, font faces, DPI and monochrome state. The fresh PNG is byte-identical
+to the previous PNG and actual project encoder output. The project is now
+1,992,405 bytes instead of 39,341,235. Evidence:
+`tmp/ant-v2-gui-export-check.log` and `/tmp/paint10-native-ant-v2-saved.png`.
+
+The matching browser release/package build passes, but actual F10 replay found
+Chromium also focuses its own menu and loses following keytip letters. A narrow
+browser event cancellation fix is underway; these package results do not
+certify that interaction. Final browser verification follows the correction.
+
 ## September 8: shared fonts and version 2 projects
 
 Commit `b9257b8` passes **313 native tests (125 library + 188 application)**,
