@@ -1344,8 +1344,15 @@ impl PaintApp {
                 keys: "ZD",
                 popup: "view_display",
             },
+            Group {
+                label: "Measure",
+                width: 190.0,
+                icon: Icon::Tool(Tool::Line),
+                keys: "ZM",
+                popup: "view_measure",
+            },
         ];
-        let widths = ribbon_layout::widths(&groups, ui.max_rect().right() - o.x, &[2, 1, 0]);
+        let widths = ribbon_layout::widths(&groups, ui.max_rect().right() - o.x, &[3, 2, 1, 0]);
         let mut x = o.x;
         for (index, (group, width)) in groups.into_iter().zip(widths).enumerate() {
             ribbon_layout::show(
@@ -1357,7 +1364,8 @@ impl PaintApp {
                 |ui, origin| match index {
                     0 => self.zoom_group(ui, origin),
                     1 => self.visibility_group(ui, origin - vec2(229.0, 0.0)),
-                    _ => self.display_group(ui, origin - vec2(410.0, 0.0), ctx),
+                    2 => self.display_group(ui, origin - vec2(410.0, 0.0), ctx),
+                    _ => self.measure_group(ui, origin, ctx),
                 },
             );
             x += width;

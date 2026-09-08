@@ -8,6 +8,7 @@ mod gestures;
 mod jobs;
 mod keyboard;
 mod keytips;
+mod measure;
 mod properties;
 mod ribbon;
 mod ribbon_controls;
@@ -172,6 +173,7 @@ pub struct PaintApp {
     zoom: f32,
     grid: bool,
     rulers: bool,
+    measure: measure::Measurement,
     status_bar: bool,
     view_tab: bool,
     text_tab: bool,
@@ -269,6 +271,7 @@ impl PaintApp {
             zoom: 1.,
             grid: false,
             rulers: false,
+            measure: Default::default(),
             status_bar: true,
             view_tab: false,
             text_tab: false,

@@ -61,11 +61,17 @@ impl PaintApp {
         if ctx.input_mut(|i| consume_shortcut(i, Modifiers::CTRL, Key::F1)) {
             self.collapsed = !self.collapsed;
         }
-        self.text_shortcuts(ctx);
-        if self.text_edit.is_some() {
+        if self.measure_shortcuts(ctx) {
             return;
         }
-        if self.shape_draft.is_some()
+        if !self.measure.enabled {
+            self.text_shortcuts(ctx);
+        }
+        if self.text_edit.is_some() && !self.measure.enabled {
+            return;
+        }
+        if !self.measure.enabled
+            && self.shape_draft.is_some()
             && self.gesture.is_none()
             && ctx
                 .memory(|memory| memory.focused().is_none() || memory.has_focus(Id::new("canvas")))

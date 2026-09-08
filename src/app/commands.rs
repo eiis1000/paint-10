@@ -27,6 +27,7 @@ impl PaintApp {
         if self.dialog.is_some() || self.pending.is_some() {
             return;
         }
+        self.measure.enabled = false;
         self.finish_editing();
         if tool == Tool::Picker {
             self.previous_tool = self.tool;

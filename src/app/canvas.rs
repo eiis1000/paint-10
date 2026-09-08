@@ -60,6 +60,7 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn canvas(&mut self, ctx: &Context) {
+        self.measure_readout(ctx);
         // Requests created by canvas input are applied next frame, when the
         // canvas dimensions already reflect any change in zoom.
         let center_request =
@@ -118,11 +119,15 @@ impl PaintApp {
                         let response = ui
                             .interact(rect, Id::new("canvas"), Sense::click_and_drag())
                             .on_hover_cursor(match self.tool {
+                                _ if self.measure.enabled => CursorIcon::Crosshair,
                                 Tool::Text => CursorIcon::Text,
                                 Tool::Select if self.object.is_some() => CursorIcon::Move,
                                 _ => CursorIcon::Crosshair,
                             });
-                        if self.tool == Tool::Select && self.text_edit.is_none() {
+                        if !self.measure.enabled
+                            && self.tool == Tool::Select
+                            && self.text_edit.is_none()
+                        {
                             response.context_menu(|ui| self.selection_menu(ui, ctx));
                         }
                         if self.grid && self.zoom >= 4. {
@@ -191,6 +196,9 @@ impl PaintApp {
                                     Stroke::new(1.0_f32, BLUE),
                                     StrokeKind::Inside,
                                 );
+                                if self.measure.enabled {
+                                    continue;
+                                }
                                 ui.interact(
                                     Rect::from_center_size(pos, vec2(9., 9.)),
                                     Id::new(("selection_handle", handle)),
@@ -216,6 +224,7 @@ impl PaintApp {
                                 );
                                 if let Some(press) = press.filter(|_| {
                                     self.text_edit.is_none()
+                                        && !self.measure.enabled
                                         && self.dialog.is_none()
                                         && self.pending.is_none()
                                 }) {
@@ -251,10 +260,13 @@ impl PaintApp {
                                 }
                             }
                         }
-                        self.text_geometry_handles(ui, ctx, rect);
+                        if !self.measure.enabled {
+                            self.text_geometry_handles(ui, ctx, rect);
+                        }
                         let blocked = self.dialog.is_some()
                             || self.pending.is_some()
                             || self.text_edit.is_some();
+                        let blocked = blocked || self.measure.enabled;
                         for (axis, pos) in [
                             (1, rect.right_center()),
                             (2, rect.center_bottom()),
@@ -268,6 +280,9 @@ impl PaintApp {
                                 Stroke::new(1.0_f32, Color32::from_gray(96)),
                                 StrokeKind::Inside,
                             );
+                            if self.measure.enabled {
+                                continue;
+                            }
                             ui.interact(
                                 handle.expand(2.),
                                 Id::new(("canvas_handle", axis)),
@@ -310,6 +325,9 @@ impl PaintApp {
                         }
                         if !blocked {
                             self.canvas_input(ui, &response, rect, ctx);
+                        }
+                        if self.measure.enabled {
+                            self.measure_canvas(ui, &response, rect, ctx);
                         }
                     });
                 ctx.data_mut(|data| {
