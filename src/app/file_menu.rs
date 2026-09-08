@@ -377,42 +377,47 @@ impl PaintApp {
     fn save_formats(&mut self, ui: &mut Ui, ctx: &Context) {
         ui.label(RichText::new("Save as").strong());
         ui.separator();
-        for (label, description, key, format) in [
+        for (label, description, key, format, icon) in [
             (
                 "PNG picture",
                 "Sharp detail and full transparency.",
                 "G",
                 Some(RasterFormat::Png),
+                Icon::Png,
             ),
             (
                 "JPEG picture",
                 "Smaller files for photographs.",
                 "J",
                 Some(RasterFormat::Jpeg),
+                Icon::Jpeg,
             ),
             (
                 "BMP picture",
                 "An uncompressed Windows bitmap.",
                 "M",
                 Some(RasterFormat::Bmp24),
+                Icon::Bitmap,
             ),
             (
                 "GIF picture",
                 "Up to 256 colors for simple drawings.",
                 "I",
                 Some(RasterFormat::Gif),
+                Icon::Gif,
             ),
             (
                 "Other formats",
                 "Choose TIFF, WebP, icons, BMP depth, or an editable Paint 10 project.",
                 "F",
                 None,
+                Icon::OtherFormats,
             ),
         ] {
             let response = ui.add(FileItem {
                 label,
                 description: Some(description),
-                icon: Some(Icon::Save),
+                icon: Some(icon),
                 compact: false,
                 selected: false,
                 width: ui.available_width(),

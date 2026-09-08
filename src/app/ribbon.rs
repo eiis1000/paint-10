@@ -532,42 +532,41 @@ impl PaintApp {
             |state| !state.selection.is_empty(),
         );
         Self::group(ui, o, 0., 119., "Clipboard");
-        if controls::button(
+        let paste = controls::split_button(
             ui,
-            "paste",
-            Rect::from_min_size(o + vec2(3., 4.), vec2(46., 63.)),
-            Icon::Paste,
-            "Paste",
-            false,
-            true,
-        )
-        .on_hover_text("Paste (Ctrl+V)")
-        .clicked()
-        {
-            self.action(Action::Paste, ctx);
-        }
-        ui.scope_builder(
-            UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(12., 69.), vec2(32., 20.))),
+            controls::SplitButton {
+                id: "paste",
+                rect: Rect::from_min_size(o + vec2(3.0, 4.0), vec2(46.0, 83.0)),
+                icon: Icon::Paste,
+                label: "Paste",
+                selected: false,
+                menu: controls::SplitMenu {
+                    label: "Paste options",
+                    keys: "ZV",
+                    scope: "paste",
+                },
+            },
             |ui| {
-                let menu = ribbon_menu_button(ui, "", "ZV", "paste", None, |ui| {
-                    if controls::command(ui, "Paste from…").clicked() {
-                        ui.close_menu();
-                        self.action(Action::PasteFrom, ctx);
+                if controls::command(ui, "Paste from…").clicked() {
+                    ui.close_menu();
+                    self.action(Action::PasteFrom, ctx);
+                }
+                #[cfg(target_arch = "wasm32")]
+                if ui
+                    .add_enabled(self.copied.is_some(), Button::new("Paste copied selection"))
+                    .on_hover_text("Paste the last image copied within this Paint 10 tab, without reading the system clipboard.")
+                    .clicked()
+                {
+                    if let Some(image) = self.copied.clone() {
+                        self.insert_image(image);
                     }
-                    #[cfg(target_arch = "wasm32")]
-                    if ui.add_enabled(self.copied.is_some(), Button::new("Paste copied selection"))
-                        .on_hover_text("Paste the last image copied within this Paint 10 tab, without reading the system clipboard.")
-                        .clicked()
-                    {
-                        if let Some(image) = self.copied.clone() { self.insert_image(image); }
-                        ui.close_menu();
-                    }
-                });
-                menu.response
-                    .widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Paste options"));
-                ribbon_focus(ui, &menu.response);
+                    ui.close_menu();
+                }
             },
         );
+        if paste.on_hover_text("Paste (Ctrl+V)").clicked() {
+            self.action(Action::Paste, ctx);
+        }
         self.small_action(
             ui,
             o + vec2(49., 7.),
@@ -589,86 +588,82 @@ impl PaintApp {
     fn image_group(&mut self, ui: &mut Ui, o: Pos2, ctx: &Context) {
         let has_selection = self.selected_region().is_some();
         Self::group(ui, o, 120., 160., "Image");
-        if controls::button(
+        let select = controls::split_button(
             ui,
-            "select",
-            Rect::from_min_size(o + vec2(125., 4.), vec2(55., 63.)),
-            Icon::Tool(Tool::Select),
-            "Select",
-            self.tool == Tool::Select,
-            true,
-        )
-        .clicked()
-        {
-            self.set_tool(Tool::Select);
-        }
-        ui.scope_builder(
-            UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(142., 68.), vec2(35., 20.))),
+            controls::SplitButton {
+                id: "select",
+                rect: Rect::from_min_size(o + vec2(125.0, 4.0), vec2(55.0, 83.0)),
+                icon: Icon::Tool(Tool::Select),
+                label: "Select",
+                selected: self.tool == Tool::Select,
+                menu: controls::SplitMenu {
+                    label: "Selection options",
+                    keys: "ZS",
+                    scope: "select",
+                },
+            },
             |ui| {
-                let menu = ribbon_menu_button(ui, "", "ZS", "select", None, |ui| {
-                    theme::menu_heading(ui, "Selection shapes", 245.0);
-                    for (free, label, key) in [
-                        (false, "Rectangular selection", "1"),
-                        (true, "Free-form selection", "2"),
-                    ] {
-                        let choice = ui.add(
-                            theme::MenuItem::new(label)
-                                .selected(self.free_select == free)
-                                .width(245.0),
-                        );
-                        controls::register(ui, &choice, key, keytips::Kind::Button);
-                        if choice.clicked() {
-                            self.free_select = free;
-                            self.set_tool(Tool::Select);
-                            ui.close_menu();
-                        }
-                    }
-                    theme::menu_heading(ui, "Selection options", 245.0);
-                    let all = ui.add(
-                        theme::MenuItem::new("Select all")
-                            .shortcut("Ctrl+A")
+                theme::menu_heading(ui, "Selection shapes", 245.0);
+                for (free, label, key) in [
+                    (false, "Rectangular selection", "1"),
+                    (true, "Free-form selection", "2"),
+                ] {
+                    let choice = ui.add(
+                        theme::MenuItem::new(label)
+                            .selected(self.free_select == free)
                             .width(245.0),
                     );
-                    controls::register(ui, &all, "3", keytips::Kind::Button);
-                    if all.clicked() {
-                        self.action(Action::SelectAll, ctx);
+                    controls::register(ui, &choice, key, keytips::Kind::Button);
+                    if choice.clicked() {
+                        self.free_select = free;
+                        self.set_tool(Tool::Select);
                         ui.close_menu();
                     }
-                    let invert = ui.add_enabled(
-                        has_selection,
-                        theme::MenuItem::new("Invert selection").width(245.0),
-                    );
-                    controls::register(ui, &invert, "4", keytips::Kind::Button);
-                    if invert.clicked() {
-                        self.invert_selection();
-                        ui.close_menu();
-                    }
-                    let delete = ui.add_enabled(
-                        has_selection,
-                        theme::MenuItem::new("Delete").shortcut("Del").width(245.0),
-                    );
-                    controls::register(ui, &delete, "5", keytips::Kind::Button);
-                    if delete.clicked() {
-                        self.delete_selection();
-                        ui.close_menu();
-                    }
-                    let transparent = ui.add(
-                        theme::MenuItem::new("Transparent selection")
-                            .selected(self.transparent)
-                            .width(245.0),
-                    );
-                    controls::register(ui, &transparent, "6", keytips::Kind::Button);
-                    if transparent.clicked() {
-                        self.transparent = !self.transparent;
-                        ui.close_menu();
-                    }
-                });
-                menu.response.widget_info(|| {
-                    WidgetInfo::labeled(WidgetType::Button, true, "Selection options")
-                });
-                ribbon_focus(ui, &menu.response);
+                }
+                theme::menu_heading(ui, "Selection options", 245.0);
+                let all = ui.add(
+                    theme::MenuItem::new("Select all")
+                        .shortcut("Ctrl+A")
+                        .width(245.0),
+                );
+                controls::register(ui, &all, "3", keytips::Kind::Button);
+                if all.clicked() {
+                    self.action(Action::SelectAll, ctx);
+                    ui.close_menu();
+                }
+                let invert = ui.add_enabled(
+                    has_selection,
+                    theme::MenuItem::new("Invert selection").width(245.0),
+                );
+                controls::register(ui, &invert, "4", keytips::Kind::Button);
+                if invert.clicked() {
+                    self.invert_selection();
+                    ui.close_menu();
+                }
+                let delete = ui.add_enabled(
+                    has_selection,
+                    theme::MenuItem::new("Delete").shortcut("Del").width(245.0),
+                );
+                controls::register(ui, &delete, "5", keytips::Kind::Button);
+                if delete.clicked() {
+                    self.delete_selection();
+                    ui.close_menu();
+                }
+                let transparent = ui.add(
+                    theme::MenuItem::new("Transparent selection")
+                        .selected(self.transparent)
+                        .width(245.0),
+                );
+                controls::register(ui, &transparent, "6", keytips::Kind::Button);
+                if transparent.clicked() {
+                    self.transparent = !self.transparent;
+                    ui.close_menu();
+                }
             },
         );
+        if select.on_hover_text("Select part of the picture").clicked() {
+            self.set_tool(Tool::Select);
+        }
         self.small_action(
             ui,
             o + vec2(187., 5.),
@@ -754,73 +749,65 @@ impl PaintApp {
 
     fn brushes_group(&mut self, ui: &mut Ui, o: Pos2) {
         Self::group(ui, o, 373., 70., " ");
-        if controls::button(
+        let brush = controls::split_button(
             ui,
-            "brush",
-            Rect::from_min_size(o + vec2(379., 5.), vec2(59., 62.)),
-            Icon::Brush(self.brush),
-            "Brushes",
-            self.tool == Tool::Brush,
-            true,
-        )
-        .clicked()
-        {
-            self.set_tool(Tool::Brush);
-        }
-        ui.scope_builder(
-            UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(395., 69.), vec2(38., 20.))),
+            controls::SplitButton {
+                id: "brush",
+                rect: Rect::from_min_size(o + vec2(379.0, 5.0), vec2(59.0, 82.0)),
+                icon: Icon::Brush(self.brush),
+                label: "Brushes",
+                selected: self.tool == Tool::Brush,
+                menu: controls::SplitMenu {
+                    label: "Choose a brush",
+                    keys: "ZB",
+                    scope: "brushes",
+                },
+            },
             |ui| {
-                let menu = ribbon_menu_button(ui, "", "ZB", "brushes", None, |ui| {
-                    let mut preview = self.brush;
-                    ui.set_min_width(184.0);
-                    egui::Grid::new("brush_gallery")
-                        .num_columns(4)
-                        .spacing(vec2(2.0, 2.0))
-                        .show(ui, |ui| {
-                            for (index, brush) in Brush::ALL.into_iter().enumerate() {
-                                let choice = ui.add_sized(
-                                    vec2(44.0, 44.0),
-                                    Button::new("").selected(self.brush == brush),
-                                );
-                                icons::draw(
-                                    ui.painter(),
-                                    choice.rect.shrink(5.0),
-                                    Icon::Brush(brush),
-                                );
-                                choice.widget_info(|| {
-                                    WidgetInfo::selected(
-                                        WidgetType::Button,
-                                        true,
-                                        self.brush == brush,
-                                        brush.name(),
-                                    )
-                                });
-                                controls::named(ui, &choice, brush.name());
-                                if choice.hovered() || choice.has_focus() {
-                                    preview = brush;
-                                }
-                                if choice.clicked() {
-                                    self.brush = brush;
-                                    self.set_tool(Tool::Brush);
-                                    ui.close_menu();
-                                }
-                                choice.on_hover_text(brush.name());
-                                if index % 4 == 3 {
-                                    ui.end_row();
-                                }
+                let mut preview = self.brush;
+                ui.set_min_width(184.0);
+                egui::Grid::new("brush_gallery")
+                    .num_columns(4)
+                    .spacing(vec2(2.0, 2.0))
+                    .show(ui, |ui| {
+                        for (index, brush) in Brush::ALL.into_iter().enumerate() {
+                            let choice = ui.add_sized(
+                                vec2(44.0, 44.0),
+                                Button::new("").selected(self.brush == brush),
+                            );
+                            icons::draw(ui.painter(), choice.rect.shrink(5.0), Icon::Brush(brush));
+                            choice.widget_info(|| {
+                                WidgetInfo::selected(
+                                    WidgetType::Button,
+                                    true,
+                                    self.brush == brush,
+                                    brush.name(),
+                                )
+                            });
+                            controls::named(ui, &choice, brush.name());
+                            if choice.hovered() || choice.has_focus() {
+                                preview = brush;
                             }
-                        });
-                    ui.separator();
-                    ui.label(preview.name());
-                    let (sample, _) = ui.allocate_exact_size(vec2(184.0, 30.0), Sense::hover());
-                    icons::brush_preview(ui.painter(), sample.shrink2(vec2(8.0, 2.0)), preview);
-                });
-                menu.response.widget_info(|| {
-                    WidgetInfo::labeled(WidgetType::Button, true, "Choose a brush")
-                });
-                ribbon_focus(ui, &menu.response);
+                            if choice.clicked() {
+                                self.brush = brush;
+                                self.set_tool(Tool::Brush);
+                                ui.close_menu();
+                            }
+                            choice.on_hover_text(brush.name());
+                            if index % 4 == 3 {
+                                ui.end_row();
+                            }
+                        }
+                    });
+                ui.separator();
+                ui.label(preview.name());
+                let (sample, _) = ui.allocate_exact_size(vec2(184.0, 30.0), Sense::hover());
+                icons::brush_preview(ui.painter(), sample.shrink2(vec2(8.0, 2.0)), preview);
             },
         );
+        if brush.on_hover_text(self.brush.name()).clicked() {
+            self.set_tool(Tool::Brush);
+        }
     }
 
     fn shapes_group(&mut self, ui: &mut Ui, o: Pos2) {

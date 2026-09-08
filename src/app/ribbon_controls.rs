@@ -3,6 +3,9 @@
 
 use super::*;
 
+#[cfg(test)]
+mod split_tests;
+
 #[derive(Clone, Copy)]
 pub(super) struct Scope {
     pub name: &'static str,
@@ -155,6 +158,95 @@ pub(super) fn button(
         ui.close_menu();
     }
     response
+}
+
+pub(super) struct SplitMenu<'a> {
+    pub label: &'a str,
+    pub keys: &'static str,
+    pub scope: &'static str,
+}
+
+pub(super) struct SplitButton<'a> {
+    pub id: &'static str,
+    pub rect: Rect,
+    pub icon: Icon,
+    pub label: &'a str,
+    pub selected: bool,
+    pub menu: SplitMenu<'a>,
+}
+
+/// A connected ribbon tile with independent main-action and dropdown targets.
+/// Both regions keep their ordinary widget responses and keytip registration.
+pub(super) fn split_button(
+    ui: &mut Ui,
+    split: SplitButton<'_>,
+    contents: impl FnOnce(&mut Ui),
+) -> Response {
+    let divider = split.rect.bottom() - 20.0;
+    let main_rect = Rect::from_min_max(split.rect.min, pos2(split.rect.right(), divider));
+    let menu_rect = Rect::from_min_max(pos2(split.rect.left(), divider), split.rect.max);
+    let background = ui.painter().add(egui::Shape::Noop);
+    let main = button(
+        ui,
+        split.id,
+        main_rect,
+        split.icon,
+        split.label,
+        split.selected,
+        true,
+    );
+    let mut menu_ui = ui.new_child(
+        UiBuilder::new()
+            .id_salt((split.id, "split-menu"))
+            .max_rect(menu_rect),
+    );
+    menu_ui.spacing_mut().button_padding = Vec2::ZERO;
+    menu_ui.spacing_mut().interact_size.y = menu_rect.height();
+    let group = current(ui).map_or("Menu", |scope| scope.group);
+    let menu = egui::menu::menu_custom_button(
+        &mut menu_ui,
+        Button::new("").frame(false).min_size(menu_rect.size()),
+        |ui| {
+            theme::menu(ui);
+            scope(ui, Scope::new(split.menu.scope, group), contents);
+        },
+    );
+    register(
+        &menu_ui,
+        &menu.response,
+        split.menu.keys,
+        keytips::Kind::Menu {
+            scope: split.menu.scope,
+        },
+    );
+    menu.response
+        .widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), split.menu.label));
+    icons::draw(
+        ui.painter(),
+        Rect::from_center_size(menu.response.rect.center(), Vec2::splat(12.0)),
+        Icon::ChevronDown,
+    );
+    if split.selected
+        || main.hovered()
+        || main.has_focus()
+        || menu.response.hovered()
+        || menu.response.has_focus()
+        || menu.inner.is_some()
+    {
+        let border = Stroke::new(1.0_f32, Color32::from_rgb(125, 181, 224));
+        let fill = if split.selected || menu.inner.is_some() {
+            Color32::from_rgb(206, 231, 252)
+        } else {
+            Color32::from_rgb(229, 243, 255)
+        };
+        ui.painter()
+            .set(background, egui::Shape::rect_filled(split.rect, 0.0, fill));
+        ui.painter()
+            .rect_stroke(split.rect, 0.0, border, StrokeKind::Inside);
+        ui.painter().hline(split.rect.x_range(), divider, border);
+    }
+    menu.response.on_hover_text(split.menu.label);
+    main
 }
 
 pub(super) fn command(ui: &mut Ui, label: &str) -> Response {
