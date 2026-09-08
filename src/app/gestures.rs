@@ -8,7 +8,7 @@ struct CanvasPointer {
 }
 
 impl PaintApp {
-    /// Complete a pointer interaction before a subsequent toolbar or keyboard
+    /// Complete a canvas interaction before a subsequent toolbar or keyboard
     /// action is resolved. egui visits the ribbon before the canvas, regardless
     /// of the order in which the operating system delivered their input events.
     pub(in crate::app) fn canvas_raw_input(&self, ctx: &Context, input: &mut RawInput) {
@@ -24,12 +24,16 @@ impl PaintApp {
                 .into_iter()
                 .map(|event| (event, time)),
         );
+        let shape_keys = self.canvas_owns_shape_keys(ctx);
         let boundary = if self.dialog.is_some() || self.pending.is_some() {
             events.len()
         } else {
             events
                 .iter()
-                .position(|(event, _)| is_drawing_button_release(event))
+                .position(|(event, _)| {
+                    is_drawing_button_release(event)
+                        || (shape_keys && is_shape_completion_key(event))
+                })
                 .map_or(events.len(), |index| index + 1)
         };
         let deferred = events.split_off(boundary);
@@ -38,7 +42,8 @@ impl PaintApp {
             // separate single clicks. Advance time to the last processed event.
             input.time = Some(*time);
             if !deferred.is_empty() {
-                if let Event::PointerButton { modifiers, .. } = event {
+                if let Event::PointerButton { modifiers, .. } | Event::Key { modifiers, .. } = event
+                {
                     input.modifiers = *modifiers;
                 }
             }
@@ -48,6 +53,22 @@ impl PaintApp {
             ctx.data_mut(|data| data.insert_temp(pending, deferred));
             ctx.request_repaint();
         }
+    }
+
+    fn canvas_owns_shape_keys(&self, ctx: &Context) -> bool {
+        (!self.polygon.is_empty() || self.curve.is_some() || self.shape_draft.is_some())
+            && self.gesture.is_none()
+            && self.text_edit.is_none()
+            && self.dialog.is_none()
+            && self.pending.is_none()
+            && self.print_preview.is_none()
+            && !self.preview
+            && !self.measure.enabled
+            && !self.browser_dialog_open()
+            && !keytips::active(ctx)
+            && !keytips::popup_open(ctx)
+            && ctx
+                .memory(|memory| memory.focused().is_none() || memory.has_focus(Id::new("canvas")))
     }
 
     pub(in crate::app) fn text_geometry_gesture(&self) -> bool {
@@ -833,6 +854,15 @@ fn is_drawing_button_release(event: &Event) -> bool {
     )
 }
 
+fn is_shape_completion_key(event: &Event) -> bool {
+    matches!(event, Event::Key {
+        key: Key::Enter | Key::Escape,
+        pressed: true,
+        modifiers,
+        ..
+    } if modifiers.matches_exact(Modifiers::NONE))
+}
+
 /// A frame may contain hover motion after release. That motion updates the
 /// cursor, but must not change the endpoint of the completed canvas gesture.
 fn gesture_pointer_position(ctx: &Context, press: Option<Pos2>) -> Option<Pos2> {
@@ -937,6 +967,8 @@ pub(in crate::app) fn pointer_press_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod key_order_tests;
 
     fn pointer_app_frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) -> FullOutput {
         pointer_app_frame_at(app, ctx, events, ctx.cumulative_pass_nr() as f64 / 30.0)
