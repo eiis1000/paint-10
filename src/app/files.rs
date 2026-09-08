@@ -51,12 +51,33 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn save(&mut self, save_as: bool) -> bool {
+        self.save_with_format(save_as, None)
+    }
+
+    pub(in crate::app) fn save_as_format(&mut self, format: RasterFormat) -> bool {
+        self.finish_editing();
+        self.save_with_format(true, Some(format))
+    }
+
+    fn save_with_format(&mut self, save_as: bool, preferred: Option<RasterFormat>) -> bool {
+        self.save_with_dialog(save_as, preferred, crate::file_dialogs::save_dialog)
+    }
+
+    fn save_with_dialog(
+        &mut self,
+        save_as: bool,
+        preferred: Option<RasterFormat>,
+        choose: impl FnOnce(
+            Option<&std::path::Path>,
+            RasterFormat,
+        ) -> Result<Option<SaveChoice>, String>,
+    ) -> bool {
         self.commit_shape();
-        let initial_format = self
-            .file
-            .as_deref()
-            .and_then(|path| {
-                crate::raster_io::detect_format(path).or_else(|| RasterFormat::from_path(path))
+        let initial_format = preferred
+            .or_else(|| {
+                self.file.as_deref().and_then(|path| {
+                    crate::raster_io::detect_format(path).or_else(|| RasterFormat::from_path(path))
+                })
             })
             .unwrap_or(if self.doc.mono {
                 RasterFormat::BmpMono
@@ -64,7 +85,7 @@ impl PaintApp {
                 RasterFormat::Png
             });
         let choice = if save_as || self.file.is_none() {
-            match crate::file_dialogs::save_dialog(self.file.as_deref(), initial_format) {
+            match choose(self.file.as_deref(), initial_format) {
                 Ok(Some(choice)) => choice,
                 Ok(None) => return false,
                 Err(error) => {
@@ -209,6 +230,33 @@ fn read_document(path: &std::path::Path, format: Option<RasterFormat>) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_save_as_formats_reach_the_chooser_without_changing_the_open_file() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let path = PathBuf::from("/tmp/paint10-open-project.p10");
+        app.file = Some(path.clone());
+        app.doc.mark_saved();
+        for format in RasterFormat::ALL {
+            let mut called = false;
+            assert!(
+                !app.save_with_dialog(true, Some(format), |initial_path, initial_format| {
+                    called = true;
+                    assert_eq!(initial_path, Some(path.as_path()));
+                    assert_eq!(initial_format, format);
+                    Ok(None)
+                })
+            );
+            assert!(called);
+            assert_eq!(app.file.as_ref(), Some(&path));
+            assert!(!app.doc.dirty());
+        }
+        app.save_with_dialog(true, None, |_, initial_format| {
+            assert_eq!(initial_format, RasterFormat::Project);
+            Ok(None)
+        });
+    }
 
     #[test]
     fn exported_copies_preserve_the_source_file_layers_and_saved_revision() {

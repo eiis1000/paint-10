@@ -37,12 +37,12 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn refresh_texture(&mut self, ctx: &Context) {
+        self.refresh_shape_hover(ctx);
         if !self.refresh {
             return;
         }
-        self.rendered = self
-            .doc
-            .composite_without(self.text_edit.as_ref().and_then(|s| s.index));
+        self.rendered =
+            self.shape_display_image(ctx, self.text_edit.as_ref().and_then(|s| s.index));
         self.canvas_alpha = self.rendered.pixels().any(|pixel| pixel[3] != 255);
         let image = ColorImage::from_rgba_unmultiplied(
             [

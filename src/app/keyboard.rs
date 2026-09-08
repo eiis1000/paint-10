@@ -148,6 +148,7 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn selection_menu(&mut self, ui: &mut Ui, ctx: &Context) {
+        theme::menu(ui);
         if self.text_edit.is_some() {
             let selected = self
                 .text_edit
@@ -160,7 +161,7 @@ impl PaintApp {
                 ("Delete", Action::Clear, selected),
                 ("Select all", Action::SelectAll, true),
             ] {
-                let response = ui.add_enabled(enabled, Button::new(label));
+                let response = ui.add_enabled(enabled, theme::MenuItem::new(label));
                 self.focus_keyboard_context(ui, &response);
                 if response.clicked() {
                     if matches!(action, Action::Clear | Action::SelectAll) {
@@ -185,7 +186,7 @@ impl PaintApp {
             ("Invert colors", Action::Invert, true),
             ("Resize and skew…", Action::Resize, true),
         ] {
-            let response = ui.add_enabled(enabled, Button::new(label));
+            let response = ui.add_enabled(enabled, theme::MenuItem::new(label));
             self.focus_keyboard_context(ui, &response);
             if response.clicked() {
                 self.action(action, ctx);
@@ -193,7 +194,7 @@ impl PaintApp {
                 ui.close_menu();
             }
         }
-        if selected && ui.button("Invert selection").clicked() {
+        if selected && ui.add(theme::MenuItem::new("Invert selection")).clicked() {
             self.invert_selection();
             self.keyboard_context_menu = false;
             ui.close_menu();

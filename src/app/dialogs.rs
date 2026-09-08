@@ -336,7 +336,7 @@ fn register_button(ui: &Ui, response: &Response) {
 }
 
 pub(in crate::app) fn dialog_button(ui: &mut Ui, label: &str) -> bool {
-    let response = ui.button(label);
+    let response = ui.add(Button::new(label).min_size(ui.spacing().interact_size));
     register_button(ui, &response);
     if response.enabled() && take_initial_focus(ui) {
         response.request_focus();
@@ -345,7 +345,10 @@ pub(in crate::app) fn dialog_button(ui: &mut Ui, label: &str) -> bool {
 }
 
 pub(in crate::app) fn default_button(ui: &mut Ui, label: &str, enabled: bool) -> bool {
-    let response = ui.add_enabled(enabled, Button::new(label));
+    let response = ui.add_enabled(
+        enabled,
+        Button::new(label).min_size(ui.spacing().interact_size),
+    );
     register_button(ui, &response);
     if response.enabled() && take_initial_focus(ui) {
         response.request_focus();
