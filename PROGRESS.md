@@ -1,5 +1,72 @@
 # Paint 10 work in progress
 
+## Current September 8 checkpoint, around 18:55 EDT
+
+- Regular logical commits: `20b6fc5` adds multilingual shaping, grapheme-safe
+  editing, visual selections and atomic IME history; `fde8102` anchors native
+  IME candidates to the caret; `a0fb6b7` fixes browser ribbon text Paste and
+  adds five actual JavaScript adapter tests plus the Node CI/dev-shell setup.
+  The combined source passes 110 library + 182 app tests, two explicit vendor
+  tests, strict native/WASM Clippy and both builds. Logs and qualifications are
+  in `tmp/text-unicode-input-handoff.md` and `tmp/text-shaping-handoff.md`.
+- Fresh native launcher 9865 uses private DISPLAY=:1, directory
+  `/tmp/paint10-desktop.PZSplX`, controller 31474. Its log is
+  `tmp/native-unicode-replay.log`. The old landscape process was saved and
+  closed through its caption. The new process has a scratch blank document
+  for actual Unicode and active-shape menu tests.
+- Actual rapid F10, F, Down three times, Right reaches PNG correctly:
+  `/tmp/paint10-native-final-complete-rapid.png`. The first four-second capture
+  was premature; the final capture waits for all software-rendered frames.
+- The previous private browser terminated at 18:32. Fresh launcher 20342 uses
+  private DISPLAY=:2, directory `/tmp/paint10-desktop.8vGHew`, controller 38238,
+  log `tmp/browser-unicode-replay.log`. It serves the new Unicode WASM and has
+  a scratch text box with an imported DejaVu Sans font for manual editing tests.
+- The ant slide exposed repeated font storage: 96 payloads contain only five
+  unique fonts, expanding its 39 MB project into 184 MB of JSON and roughly
+  80 MB document history states. file_finish now owns shared immutable font
+  bytes and history accounting; browser_finish owns a bounded version 2 font
+  table codec with version 1 load compatibility. No artwork is rewritten by
+  agents. ribbon_finish audits remaining menu/workflow edge cases separately.
+- Landscape refinements are saved, including rock texture and pine branches.
+  Read `tmp/landscape-refinement-ledger.txt`; PNG/JPEG/WebP exports are stale.
+  The requested photorealism exercise remains unfinished. All other four
+  artworks, including the ant P10/PNG/PPTX, are complete and committed.
+
+## Current September 8 checkpoint, around 18:30 EDT
+
+- Logical commits continue: `64befb0` records modal/browser checks; `44c95b1`
+  documents Measure; `9c95b64` adds the finished ant-colony P10/PNG/PPTX artwork.
+  The ant slide was painted entirely through native GUI controls. Its 16 text
+  objects remain editable; reopening the title restores 72pt bold DejaVu Sans.
+  The PPTX contains the exact PNG, and its reimported render matches every RGBA
+  pixel. Root inspected both full-size images. Evidence:
+  `tmp/ant-artwork-export-check.log`, `tmp/paint10-slide/slide-1.png`,
+  `/tmp/paint10-ant-reopened-complete.png`, `-title-text-context.png`.
+- Native launcher 44307 and controller 31474 still use private DISPLAY=:1.
+  The ant project is closed cleanly; `artworks/shape-landscape.p10` is now open
+  at 50%, canvas origin58,234. A new vertical-gradient rock facet is being drawn
+  with Polygon only; pending screenshot `/tmp/paint10-landscape-new-rock-face.png`.
+  The landscape's photorealism requirement is still unfinished.
+- Unicode correction ownership: file_finish owns RustyBuzz/bidi layout and
+  visual caret mapping; ribbon_finish owns grapheme editing, IME history and
+  ordered event handling. Root reviewed the main renderer/bridge/helper code
+  and visually inspected the Arabic, Hebrew, Indic, combining and mixed renders.
+  Review found a wrapped Left-cursor trap and IME Enabled/preceding-text loss
+  cases, now being corrected with actual-frame regressions. Source is not final.
+- browser_finish corrected async ribbon text paste after focus loss, CRLF
+  normalization and mixed text/image clipboard preference. Its five Node tests
+  pass against the actual inline adapter; three fail against the old source.
+  Root added the Node command to browser CI and Node to the Nix web shell.
+  It is also auditing the ant project's large repeated font payload, read-only.
+- Root corrected the native IME candidate anchor to use the caret rectangle
+  instead of the entire text box; pinned egui/winit contracts support it.
+  Final native/vendor/WASM/Nix gates await the remaining shared text corrections.
+  New source and font fixtures are intent-added for flake visibility; they are
+  not committed. Root owns Git, artwork, docs, vendor anchor and CI/flake edits.
+- Browser launcher86661, private DISPLAY=:2, controller38238 remains on the
+  ce9fa9f site with a clean Mona project. Server86539 is unchanged. Rebuild/reload
+  and actual browser text-paste/Unicode replay remain required.
+
 ## Current September 8 checkpoint, around 18:00 EDT
 
 - Additional logical commits: `e0e9c59` text/fonts, `d181ffe` measurement,

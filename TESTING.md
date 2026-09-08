@@ -1,5 +1,32 @@
 # Paint 10 verification log
 
+## September 8: Unicode and browser clipboard checkpoint
+
+Commits `20b6fc5`, `fde8102` and `a0fb6b7` pass **292 native tests
+(110 library + 182 application)**, two explicit vendor clipboard tests,
+formatting, strict native/WASM Clippy and native/browser builds. The browser
+adapter's five Node tests also pass inside the advertised `.#web` shell.
+Source-specific logs: `tmp/text-unicode-word-selection-gate.log`,
+`tmp/text-unicode-final-native-gate.log`, and
+`tmp/browser-unicode-{node,clippy,release,static}-gate.log`.
+
+The regressions exercise Arabic/Indic shaping, bidi caret and selection
+geometry, complete grapheme deletion, Unicode word selection, ordered input,
+composition cancellation and atomic undo. Actual app frames reproduce the
+previous IME mode-Enabled deletion failure and confirmed-prefix loss before
+their fixes. Root visually inspected Arabic, Hebrew, Indic, combining and
+mixed-direction renders against the saved independent reference evidence.
+Existing portrait, Mona Lisa and ant slide projects still render exactly the
+same pixels as their PNG exports (`tmp/text-shaped-artwork-recheck.log`).
+Native OS candidate panels have not been driven; the vendor change follows
+the caret-area contract and does not claim platform input-method verification.
+
+Fresh private native replay confirms F10, F, Down three times, Right reaches
+the first PNG format row with 80 ms between keys. The final screenshot
+`/tmp/paint10-native-final-complete-rapid.png` was visually inspected after
+all software-rendered frames settled. Manual complex-text and shape-preview
+replay is ongoing. Nix release packages below precede this newer source.
+
 ## September 8: shared native and browser verification
 
 The source checkpoint through browser commit `f0c68b4` passes **264 native
