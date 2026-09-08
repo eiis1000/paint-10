@@ -577,7 +577,10 @@ pub(super) fn keyboard(ctx: &Context, origin: Id) -> bool {
     state.alt_used |= alt && other;
     let alt_released = state.alt_down && !alt && !state.alt_used;
     state.alt_down = alt;
-    if alt_released || consume(ctx, Key::F10, Modifiers::NONE) {
+    // The browser may translate a standalone Alt release into F10. Consume
+    // that key even if an earlier pass already observed the Alt-down state.
+    let f10 = consume(ctx, Key::F10, Modifiers::NONE);
+    if alt_released || f10 {
         if state.levels.is_empty() {
             enter(&mut state, origin, true);
         } else {
@@ -1366,6 +1369,35 @@ mod tests {
             Some(Id::new("text_input"))
         );
         assert_eq!(fixture.text, "Keep this");
+    }
+
+    #[test]
+    fn alt_release_with_browser_f10_consumes_the_toggle_once() {
+        for alt_was_rendered in [false, true] {
+            let ctx = Context::default();
+            let mut fixture = Fixture {
+                text: "Keep this".into(),
+                ..Default::default()
+            };
+            warm(&ctx, &mut fixture);
+            if alt_was_rendered {
+                frame_with_modifiers(&ctx, &mut fixture, vec![], Modifiers::ALT);
+            }
+            let released = frame(&ctx, &mut fixture, vec![key(Key::F10)]);
+            assert!(visible(&released, "H"));
+            assert!(active(&ctx));
+            assert!(
+                !ctx.input(|input| input.key_pressed(Key::F10)),
+                "The Alt release must consume its accompanying browser toggle"
+            );
+            let settled = frame(&ctx, &mut fixture, vec![]);
+            assert!(visible(&settled, "H"));
+            frame(&ctx, &mut fixture, vec![key(Key::H)]);
+            frame(&ctx, &mut fixture, vec![key(Key::P)]);
+            assert!(fixture.pencil);
+            assert!(!active(&ctx));
+            assert_eq!(fixture.text, "Keep this");
+        }
     }
 
     #[test]

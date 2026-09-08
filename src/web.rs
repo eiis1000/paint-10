@@ -41,6 +41,62 @@ export function installBrowserEvents(notify, canvas) {
         }
     }, { capture: true });
 
+    // eframe does not schedule a frame for modifier-only keydown events, so
+    // Alt-up can erase Alt-down before Paint observes it. Route a clean tap
+    // through the existing F10 path synchronously, before the next letter.
+    let altTapTarget = null;
+    const cancelAltTap = () => {
+        altTapTarget = null;
+    };
+    const plainAlt = event => event.key === 'Alt'
+        && !event.shiftKey
+        && !event.ctrlKey
+        && !event.metaKey
+        && !event.isComposing
+        && event.keyCode !== 229
+        && !event.getModifierState?.('AltGraph');
+    const focusedPaintTarget = target => target?.isConnected
+        && target.ownerDocument === canvas.ownerDocument
+        && canvas.ownerDocument.hasFocus()
+        && target === canvas.ownerDocument.activeElement
+        && (target === canvas || (target.tagName === 'INPUT' && target.type === 'text'));
+
+    window.addEventListener('keydown', event => {
+        if (!plainAlt(event) || !focusedPaintTarget(event.target)) {
+            cancelAltTap();
+        } else if (!event.repeat) {
+            altTapTarget = event.target;
+        }
+    }, { capture: true });
+
+    window.addEventListener('keyup', event => {
+        const target = altTapTarget;
+        cancelAltTap();
+        if (
+            !target
+            || event.target !== target
+            || !plainAlt(event)
+            || event.altKey
+            || !focusedPaintTarget(target)
+        ) {
+            return;
+        }
+
+        for (const type of ['keydown', 'keyup']) {
+            target.dispatchEvent(new KeyboardEvent(type, {
+                key: 'F10',
+                code: 'F10',
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+            }));
+        }
+    }, { capture: true });
+
+    for (const type of ['pointerdown', 'blur', 'compositionstart']) {
+        window.addEventListener(type, cancelAltTap, { capture: true });
+    }
+
     window.addEventListener('beforeunload', event => {
         if (unsaved) {
             event.preventDefault();
