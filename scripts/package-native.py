@@ -28,6 +28,15 @@ APP_NAME = "Paint 10"
 BUNDLE_ID = "org.paint10.Paint10"
 
 
+def copy_licenses(destination: Path) -> None:
+    """Keep licenses for the embedded fonts and math renderer in every archive."""
+    destination.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "LICENSE", destination / "LICENSE")
+    shutil.copy2(ROOT / "assets/fonts/DejaVu-LICENSE.txt", destination / "DejaVu-LICENSE.txt")
+    for license_file in sorted((ROOT / "assets/licenses").glob("*.txt")):
+        shutil.copy2(license_file, destination / license_file.name)
+
+
 def png_dimensions(path: Path) -> tuple[int, int]:
     header = path.read_bytes()[:24]
     if header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
@@ -76,6 +85,7 @@ def create_macos_bundle(binary: Path, icon: Path, version: str, work: Path) -> P
     executable.chmod(0o755)
     shutil.copy2(icon, resources / "paint-10.icns")
     shutil.copy2(ROOT / "LICENSE", resources / "LICENSE")
+    copy_licenses(resources / "licenses")
     metadata = {
         "CFBundleName": APP_NAME,
         "CFBundleDisplayName": APP_NAME,
@@ -214,6 +224,7 @@ def main() -> None:
             directory.mkdir()
             shutil.copy2(binary, directory / relative_binary)
             shutil.copy2(ROOT / "LICENSE", directory / "LICENSE")
+            copy_licenses(directory / "licenses")
             if platform == "windows":
                 check_windows_icon(directory / relative_binary, ROOT / "assets/paint-10.ico")
             else:

@@ -202,6 +202,9 @@ impl<'a> TextStyleRef<'a> {
 
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TextFormat {
+    /// Render retained source as a math expression using embedded math fonts.
+    #[serde(default)]
+    pub latex: bool,
     pub font_name: String,
     pub font: FontBytes,
     #[serde(default)]
@@ -233,6 +236,7 @@ pub struct TextFormat {
 impl Default for TextFormat {
     fn default() -> Self {
         Self {
+            latex: false,
             font_name: DEFAULT_FONT_NAME.into(),
             font: DEFAULT_FONT.into(),
             font_index: 0,
@@ -626,10 +630,21 @@ impl TextFormat {
         {
             return Err("Text formatting refers to characters outside its text box.".into());
         }
+        if self.latex {
+            if !self.spans.is_empty() {
+                return Err(
+                    "LaTeX expressions use one text style; remove rich-text spans first.".into(),
+                );
+            }
+            crate::latex::dimensions(text, self)?;
+        }
         Ok(())
     }
 
     pub fn dimensions(&self, text: &str) -> (u32, u32) {
+        if self.latex {
+            return crate::latex::dimensions(text, self).unwrap_or((1, 1));
+        }
         let layout = self.layout(text);
         (layout.width, layout.height)
     }
@@ -931,6 +946,11 @@ impl TextFormat {
     }
 
     pub fn render(&self, text: &str) -> RgbaImage {
+        if self.latex {
+            // Invalid drafts remain in the source dialog; project loading and
+            // Apply validate before a formula becomes a retained object.
+            return crate::latex::render(text, self).unwrap_or_else(|_| RgbaImage::new(1, 1));
+        }
         let background = self.background.unwrap_or([0, 0, 0, 0]);
         if self.outline_width == 0 {
             return self.render_glyphs(text, background);
@@ -1009,7 +1029,12 @@ impl TextFormat {
 }
 
 /// A separable squared-distance transform produces round outlines in linear time.
-fn paint_text_outline(output: &mut RgbaImage, foreground: &RgbaImage, radius: u32, color: Color) {
+pub(crate) fn paint_text_outline(
+    output: &mut RgbaImage,
+    foreground: &RgbaImage,
+    radius: u32,
+    color: Color,
+) {
     if radius == 0 || color[3] == 0 || !foreground.pixels().any(|pixel| pixel[3] > 0) {
         return;
     }

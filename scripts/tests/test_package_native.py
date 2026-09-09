@@ -44,6 +44,10 @@ class NativePackageTests(unittest.TestCase):
                     self.assertEqual(archived.mode, 0o755)
                 self.assertEqual(archive.extractfile(archived).read(), binary.read_bytes())
                 self.assertIn("Paint 10.app/Contents/Resources/LICENSE", archive.getnames())
+                for notice in ("RaTeX-LICENSE.txt", "KaTeX-fonts-NOTICE.txt", "SIL-OFL-1.1.txt"):
+                    self.assertIn(
+                        f"Paint 10.app/Contents/Resources/licenses/{notice}", archive.getnames()
+                    )
 
     def test_windows_archive_preserves_binary_and_license(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -52,6 +56,7 @@ class NativePackageTests(unittest.TestCase):
             directory.mkdir()
             (directory / "paint-10.exe").write_bytes(b"MZ executable fixture")
             (directory / "LICENSE").write_text("license fixture")
+            package.copy_licenses(directory / "licenses")
             output = work / "package.zip"
             package.archive_directory(directory, output)
             with zipfile.ZipFile(output) as archive:
@@ -59,6 +64,11 @@ class NativePackageTests(unittest.TestCase):
                     archive.read("paint-10/paint-10.exe"), b"MZ executable fixture"
                 )
                 self.assertEqual(archive.read("paint-10/LICENSE"), b"license fixture")
+                for notice in ("RaTeX-LICENSE.txt", "KaTeX-fonts-NOTICE.txt", "SIL-OFL-1.1.txt"):
+                    self.assertEqual(
+                        archive.read(f"paint-10/licenses/{notice}"),
+                        (package.ROOT / "assets/licenses" / notice).read_bytes(),
+                    )
 
     def test_icon_sources_include_all_windows_sizes_and_full_macos_resolution(self):
         images = package.ico_images(package.ROOT / "assets/paint-10.ico")

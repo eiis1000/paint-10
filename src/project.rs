@@ -33,8 +33,9 @@ pub fn save(doc: &Document, path: &Path) -> Result<(), String> {
     atomic_write(path, &encode(doc)?)
 }
 
-/// Encode layers and source-preserving objects in the bounded version-4 format.
-/// The loader also accepts the single-layer versions 1, 2, and 3.
+/// Encode layers and source-preserving objects in the bounded project format.
+/// Version 5 adds math text; drawings without math retain version 4. The loader
+/// also accepts the single-layer versions 1, 2, and 3.
 pub fn encode(doc: &Document) -> Result<Vec<u8>, String> {
     doc.resolution.validate()?;
     validate_document(doc)?;
@@ -101,7 +102,7 @@ fn decode_reader(mut file: impl Read) -> Result<Document, String> {
     }
     let version: Version =
         serde_json::from_slice(&bytes).map_err(|e| format!("Invalid project: {e}"))?;
-    if version.version == 4 {
+    if matches!(version.version, 4 | 5) {
         return serde_json::from_slice::<wire::LayerProject>(&bytes)
             .map_err(|e| format!("Invalid project: {e}"))?
             .into_document();
@@ -115,6 +116,13 @@ fn decode_reader(mut file: impl Read) -> Result<Document, String> {
         _ => return Err("Unsupported Paint 10 project version.".into()),
     };
     data.resolution.validate()?;
+    if data
+        .objects
+        .iter()
+        .any(|object| matches!(&object.kind, ObjectKind::Text { format, .. } if format.latex))
+    {
+        return Err("LaTeX text requires project version 5.".into());
+    }
     let mut doc = Document::from_image(data.image);
     doc.objects = data.objects;
     doc.mono = data.mono;

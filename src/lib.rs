@@ -9,6 +9,7 @@ pub mod color;
 pub mod display;
 pub mod document;
 pub mod integration;
+pub mod latex;
 pub mod metadata;
 pub mod preferences;
 pub mod printing;

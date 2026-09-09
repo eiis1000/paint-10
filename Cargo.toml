@@ -23,6 +23,11 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 flate2 = "1"
 fontdb = { version = "0.23", default-features = false, features = ["std"] }
 color_quant = "1.1"
+ratex-parser = "=0.1.14"
+ratex-font = "=0.1.14"
+ratex-layout = "=0.1.14"
+ratex-types = "=0.1.14"
+ratex-render = { version = "=0.1.14", features = ["embed-fonts"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 arboard = "3.6.1"
