@@ -161,10 +161,7 @@ pub fn button(
         job.halign = Align::Center;
         let text = painter.layout_job(job);
         painter.galley(
-            pos2(
-                rect.center().x,
-                rect.bottom() - 4.0 - text.size().y,
-            ),
+            pos2(rect.center().x, rect.bottom() - 4.0 - text.size().y),
             text,
             Color32::from_gray(35),
         );
