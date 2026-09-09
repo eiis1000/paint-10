@@ -365,9 +365,7 @@ impl PaintApp {
         self.tool = Tool::Select;
         self.select_object(i);
         self.refresh = true;
-        self.message =
-            "Drag the picture to move it. Rotate and Resize also work on the selected picture."
-                .into();
+        self.message = "Picture inserted".into();
     }
 
     pub(in crate::app) fn invert_selection(&mut self) {

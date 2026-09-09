@@ -51,8 +51,14 @@ nix develop .#web -c python3 -m http.server 8080 --bind 127.0.0.1 --directory ta
 ```
 
 Open **http://127.0.0.1:8080/** while the server is running. Use a current desktop
-browser with WebGL. The site processes pictures on your device; it does not
-upload them to a server. `nix build .#paint-10-web` produces a packaged static site.
+browser with WebGL. `nix build .#paint-10-web` produces a packaged static site.
+
+**Your pictures stay on your device.** The browser app processes images, projects,
+imported fonts, and LaTeX locally. It does not upload them to a server. Hosting
+serves the app's static files; opening files reads them in the browser, and saving
+creates a local download. There is no analytics or image-processing service.
+Pictures are not automatically saved in browser storage, so download your work
+before closing or reloading the page.
 
 To publish on GitHub Pages, follow the [deployment guide](web/README.md#publish-with-github-pages).
 The checked-in workflow deploys your default branch after all native, Nix, and
@@ -129,6 +135,16 @@ picture use the same text rendering. Rotated or scaled text temporarily uses
 its untransformed layout while typing so the caret stays aligned; finishing
 the edit restores its transform.
 
+**Equations:** create a text box and choose **Text → LaTeX…** to edit math source
+with a live preview. Fractions, roots, sums, integrals, matrices, cases, and common
+math symbols render using bundled math fonts on both desktop and browser.
+Choose a size, color, alignment, background, or outline; **Apply** or Ctrl+Enter
+finishes the equation. Enter inserts a newline in the source. Double-click a
+finished equation with Select to edit its source again; Cancel preserves the previous text.
+Save a `.p10` project to retain the source. This is a math renderer, not a full
+TeX document compiler: external files, packages, custom macros, and arbitrary
+system fonts are unsupported. Invalid or unsupported input shows an error.
+
 **Pixel art:** use a 1-pixel Pencil, enable **View → Gridlines**, and zoom in.
 **Transparent Color 2** lets clear, erase, and fill remove opacity. Select
 **Keep hard pixel edges (pixel art)** in Resize for nearest-neighbor enlargement.
@@ -152,6 +168,13 @@ Undo recovers the edits. Save as `.p10` to keep this source data. With no image
 selected, adjustments create an editable image from the active layer or pixel
 selection. Thumbnail previews approximate full-resolution effects.
 
+**Resize, skew, and rotate:** Ctrl+W opens one dialog for dimensions, horizontal
+and vertical skew, and a rotation angle. Positive angles turn clockwise. Apply
+resizes first, then skews, then rotates, as one Undo step. The operation affects
+the selected object or pixel selection; with nothing selected, it affects the
+whole picture. Right-click rectangular or free-form selections for **Rotate**,
+including custom angles and flips.
+
 **Measurements:** enable **View → Measure distance** and drag between pixel
 centers. Adjust either endpoint with the mouse or arrows (Shift: ten pixels).
 The readout shows distance, horizontal/vertical displacement, and angle;
@@ -162,7 +185,8 @@ tool. Measurements never appear in saved pictures.
 color plane; Slice selects its fixed axis where applicable. Color text accepts
 hex, CSS names, `rgb()`, `hsl()`, `oklab()`, `oklch()`, and `color(srgb …)` /
 `color(srgb-linear …)`. For example, `#66339980` is half-transparent purple.
-RGB edits preserve alpha. The canvas is 8-bit sRGB; **Fit to sRGB** reduces
+RGB edits preserve alpha (0 is transparent; 255 is opaque). The canvas is 8-bit
+sRGB; **Fit to sRGB** reduces
 out-of-gamut chroma while preserving lightness and hue. CMYK is an unprofiled
 selection approximation, not a print proof.
 
@@ -190,9 +214,10 @@ provides paper presets and custom sizes, margins, orientation, centering,
 actual-size scaling, and fitting across multiple pages.
 
 Undo history is limited to the current session and is not stored in `.p10`.
-New projects use format version 4 to preserve layers. Paint 10 still opens
-versions 1–3 as a single Background layer; older releases reject version 4
-instead of silently losing the stack.
+Projects use format version 4 to preserve layers, or version 5 when they contain
+LaTeX equations. Paint 10 still opens versions 1–3 as a single Background layer.
+Older releases reject newer formats they do not support instead of silently
+losing layers or equation sources.
 Raster operations such as lifting a pixel selection, adjusting a composite
 selection, or erasing through objects can merge editable objects into pixels;
 Undo restores them while that operation remains in history.
@@ -215,7 +240,7 @@ browser storage. See [browser file handling](web/README.md#files-text-and-clipbo
 | Undo / Redo | Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z |
 | Cut / Copy / Paste | Ctrl+X / Ctrl+C / Ctrl+V |
 | Paste from a file / Select all | Ctrl+Shift+V / Ctrl+A |
-| Resize and skew / Image properties | Ctrl+W / Ctrl+E |
+| Resize, skew, and rotate / Image properties | Ctrl+W / Ctrl+E |
 | Crop / Invert colors / Clear picture | Ctrl+Shift+X / Ctrl+Shift+I / Ctrl+Shift+N |
 | Print | Ctrl+P |
 | Gridlines / Rulers | Ctrl+G / Ctrl+R |
@@ -352,11 +377,13 @@ history. Complete behavioral or visual equivalence is not claimed.
 | Area | Paint 10 behavior |
 | --- | --- |
 | Editable text | Finished boxes can be reopened, moved, and reformatted. Mixed formatting, paragraph alignment, strikeout, and caption outlines are available. Transformed text uses an upright editor while typing, then restores its transform. |
+| LaTeX equations | Text boxes can render math source locally with a live preview, bundled math fonts, and retained source in projects. This supports math notation rather than full TeX documents. |
 | Editable images | Inserted pictures retain their original pixels for repeated scaling, arbitrary rotation, reversible source crops, color/detail adjustments, and Reset image. |
 | Layers | Optional, initially hidden View pane with explicit layer creation, ordering, visibility, opacity, locking, duplication, and merging. Drawing affects the active layer. |
 | Transparency | Full alpha is supported on the canvas, in colors, and in suitable exports. Erasing a transparent layer reveals the layers beneath it. |
 | Color editor | Adds HSV, linear RGB, approximate CMYK, OKLab/OKLCH, CSS color entry, alpha, and gamut fitting alongside familiar RGB/HSL controls. |
 | Shapes and precision | Adds gradient fills, arbitrary-angle rotation, remembered tool widths, 3200% zoom, nearest-neighbor scaling, and a distance/angle measurement tool. |
+| Transform workflow | Resize, skew, and rotation share one dialog and one Undo step. The selection context menu includes custom rotation and flips. |
 | Projects and exports | `.p10` keeps editable objects, source images, embedded fonts, and layers. Raster saves flatten visible content; Save a copy and Save selection as preserve the working destination. WebP, ICO, and PDF output are also available. |
 | Interface | Adds an Image ribbon and extra Text controls; narrow windows collapse ribbon groups into menus. Icons and keytip mappings are independently implemented. |
 | Rendering | Brush dynamics, textured fills, font rasterization, and native dialogs differ; matching Microsoft's exact pixels is not guaranteed. |
@@ -367,5 +394,8 @@ history. Complete behavioral or visual equivalence is not claimed.
 ## License
 
 Paint 10 is [MIT licensed](LICENSE). Bundled fonts have their own
-[redistribution notices](assets/fonts/DejaVu-LICENSE.txt); the vendored
+[redistribution notices](assets/fonts/DejaVu-LICENSE.txt). Math rendering uses
+[RaTeX](assets/licenses/RaTeX-LICENSE.txt) and bundled
+[KaTeX fonts](assets/licenses/KaTeX-fonts-NOTICE.txt); their code and font notices
+are included in desktop packages and the static site. The vendored
 [egui-winit patch](vendor/egui-winit/PAINT10-PATCH.md) retains its upstream licenses.

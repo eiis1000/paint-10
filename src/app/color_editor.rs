@@ -221,13 +221,6 @@ impl PaintApp {
                             .truncate(),
                     )
                     .on_hover_text(error);
-                } else {
-                    let note = if state.space == Space::Cmyk {
-                        "CMYK is an unprofiled approximation. Canvas: sRGB."
-                    } else {
-                        "Canvas: sRGB · alpha 0 = transparent, 255 = opaque"
-                    };
-                    ui.label(RichText::new(note).small().weak());
                 }
             },
         );

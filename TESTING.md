@@ -1,5 +1,31 @@
 # Paint 10 verification log
 
+## September 9: equations, transform menus, toolbar alignment, and UI copy
+
+The integrated native suite passes 191 library and 294 application tests.
+Strict native and WebAssembly Clippy, formatting, the 11 browser input tests,
+four package tests, and the release browser build pass. Math rendering tests
+cover fractions, roots, sums, matrices, cases, styled alpha/outline output,
+input limits, and project v5 roundtrips. Non-math projects remain v4.
+
+Private native tests created an equation through the Text ribbon, checked its
+preview, applied it, reopened its source, rejected malformed input, canceled
+without changing the original, exported PNG, and reopened the saved project.
+Evidence includes `/tmp/paint10-latex-manual.p10`, the matching PNG, and
+`/tmp/paint10-latex-final-01.png`. The color editor now omits its explanatory
+footer; `/tmp/paint10-copy-color-final.png` records the resulting layout.
+
+Normal and 500×400 ribbon checks cover Quick Access, Help/collapse, Outline/Fill,
+Shapes, Image commands, and text size presets. Shared menu ownership remains
+unchanged so keytips still close and switch menus. Transform testing found and
+fixed closed lassos losing their selection, and compact dialog footer clipping.
+Manual rotation and Undo work on both the whole picture and closed free-form
+selections. Evidence: `/tmp/paint10-transform-audit.md` and
+`/tmp/paint10-ribbon-final-*.png`.
+
+Final GitHub CI, Pages deployment, and live-site replay are still required for
+these changes; previous successful runs do not verify this batch.
+
 ## September 9: optional Layers
 
 The approved layer pane is hidden by default under View. Ordinary pictures

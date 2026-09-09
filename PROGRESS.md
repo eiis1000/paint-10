@@ -1,5 +1,30 @@
 # Paint 10 work in progress
 
+## September 9: LaTeX, transforms, ribbon alignment, and UI copy
+
+- User additionally requests LaTeX compilation in editable text boxes if feasible,
+  a maintained README list of differences from Windows 10 Paint, and a Linux
+  command that runs the GitHub flake directly without a checkout.
+- README comparison and `nix run github:eiis1000/paint-10#paint-10` are committed
+  and pushed in f93f8e7. Its CI run is 34415178339. A previous documentation
+  string missed rustfmt; 4962213 corrects it and local formatting passes.
+- f93f8e7 now passes all six CI jobs, including Pages. New changes below are
+  still local and require their own final CI and deployed-site verification.
+- LaTeX math source uses embedded RaTeX and KaTeX fonts, with a preview editor,
+  retained source, project v5 only for math documents, and bounded inputs.
+  No external math service is used. Root owns UI; layers_model owns engine,
+  serialization, dependencies and bundled license notices.
+- layers_panel owns combined resize/skew/rotation and the selection context
+  Rotate menu; image_editing owns shared ribbon and Quick Access alignment.
+  Root removes explanatory UI banners and verbose status messages, retaining
+  useful labels, tooltips, measurements and errors. README documents local
+  processing, file behavior, math limits and differences from Windows Paint.
+- Current full app suite passes 292 tests before the last layout/copy refinements.
+  Native private desktops are :1 (ribbon), :2 (root), :3 (transforms). Disposable
+  builds remain in /tmp/paint10-layers-target. Final full native/WASM checks,
+  manual equation/project/export workflows, logical commits, CI and public
+  Pages replay remain required. Do not infer completion from older checkpoints.
+
 ## September 9: approved optional Layers
 
 - User approved the proposed hidden-by-default View -> Layers pane, compact
