@@ -1,6 +1,6 @@
 use super::*;
 
-const DEJAVU: &[u8] = include_bytes!("../../assets/test-fonts/DejaVuSans.ttf");
+const DEJAVU: &[u8] = DEFAULT_FONT;
 const DEVANAGARI: &[u8] = include_bytes!("../../assets/test-fonts/NotoSansDevanagari.ttf");
 
 fn format(font: &[u8]) -> TextFormat {
@@ -36,7 +36,7 @@ fn arabic_uses_joined_forms_and_required_lam_alef_ligature() {
     let layout = format.layout("سلام");
     let scale = layout.styles[0]
         .font
-        .as_scaled(format.size)
+        .as_scaled(layout.styles[0].size)
         .h_scale_factor();
     let advances: Vec<_> = layout.lines[0]
         .glyphs
@@ -95,7 +95,7 @@ fn combining_marks_compose_and_receive_real_gpos_offsets() {
     let glyphs = &layout.lines[0].glyphs;
     let scale = layout.styles[0]
         .font
-        .as_scaled(format.size)
+        .as_scaled(layout.styles[0].size)
         .h_scale_factor();
     let mark_offset = (glyphs[1].x - glyphs[0].x - glyphs[0].advance) / scale;
     assert!(

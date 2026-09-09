@@ -3,7 +3,9 @@
 
 use super::*;
 use crate::document::{Color, LinearTransform, Point};
-use crate::text::{EmbeddedFont, FontBytes, TextAlignment, TextFormat, TextSpan, TextStyle};
+use crate::text::{
+    EmbeddedFont, FontBytes, TextAlignment, TextFormat, TextSizeMode, TextSpan, TextStyle,
+};
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -76,6 +78,8 @@ struct WireFace {
 struct WireFormat {
     #[serde(flatten)]
     style: WireStyle,
+    #[serde(default)]
+    size_mode: TextSizeMode,
     background: Option<Color>,
     width: u32,
     minimum_height: u32,
@@ -340,6 +344,7 @@ impl WireFormat {
             .collect::<Result<_, String>>()?;
         Ok(Self {
             style: WireStyle::from_style(format.default_style_ref(), fonts)?,
+            size_mode: format.size_mode,
             background: format.background,
             width: format.width,
             minimum_height: format.minimum_height,
@@ -358,6 +363,7 @@ impl WireFormat {
             font: style.font,
             font_index: style.font_index,
             size: style.size,
+            size_mode: self.size_mode,
             color: style.color,
             bold: style.bold,
             italic: style.italic,

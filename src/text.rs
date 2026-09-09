@@ -10,6 +10,8 @@ mod shaping;
 mod shaping_tests;
 #[cfg(test)]
 mod sharing_tests;
+#[cfg(test)]
+mod size_tests;
 pub use editor_layout::{EditorCaret, EditorSelectionRect};
 pub use font_bytes::{FontBytes, FontMemory};
 
@@ -21,6 +23,9 @@ pub const MAX_TEXT_WIDTH: u32 = 16384;
 pub const MAX_TEXT_OUTLINE: u32 = 32;
 pub const FONT_POINT_RANGE: std::ops::RangeInclusive<f32> = 6.0..=200.0;
 pub const MAX_FONT_FACES: usize = 128;
+pub const DEFAULT_FONT: &[u8] = include_bytes!("../assets/fonts/DejaVuSans.ttf");
+pub const DEFAULT_FONT_NAME: &str = "DejaVu Sans";
+pub const DEFAULT_FONT_LICENSE: &str = include_str!("../assets/fonts/DejaVu-LICENSE.txt");
 
 /// Whether the outline renderer can display a character from this face.
 /// Color/bitmap-only glyph IDs do not count as a drawable outline.
@@ -68,6 +73,27 @@ pub enum TextAlignment {
     Left,
     Center,
     Right,
+}
+
+/// New text uses the standard pixels-per-em interpretation of font sizes.
+/// Older projects stored ab_glyph's ascent-minus-descent height instead, so a
+/// missing serialized field must retain that geometry exactly.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TextSizeMode {
+    #[default]
+    FontHeight,
+    Em,
+}
+
+impl TextSizeMode {
+    fn scale(self, font: &impl Font, size: f32) -> f32 {
+        match self {
+            Self::FontHeight => size,
+            Self::Em => font
+                .units_per_em()
+                .map_or(size, |units| size * font.height_unscaled() / units),
+        }
+    }
 }
 
 /// Logical text geometry in image pixels, relative to the text content inset.
@@ -181,6 +207,8 @@ pub struct TextFormat {
     #[serde(default)]
     pub font_index: u32,
     pub size: f32,
+    #[serde(default)]
+    pub size_mode: TextSizeMode,
     pub color: Color,
     pub bold: bool,
     pub italic: bool,
@@ -205,10 +233,11 @@ pub struct TextFormat {
 impl Default for TextFormat {
     fn default() -> Self {
         Self {
-            font_name: "Sans serif".into(),
-            font: FontBytes::default(),
+            font_name: DEFAULT_FONT_NAME.into(),
+            font: DEFAULT_FONT.into(),
             font_index: 0,
             size: 24.0,
+            size_mode: TextSizeMode::Em,
             color: BLACK,
             bold: false,
             italic: false,
@@ -636,8 +665,11 @@ impl TextFormat {
                 let style = match style {
                     Some(style) => style,
                     None => {
-                        source_style =
-                            RenderStyle::new(self.style_ref_at(character_index), &self.font_faces);
+                        source_style = RenderStyle::new(
+                            self.style_ref_at(character_index),
+                            &self.font_faces,
+                            self.size_mode,
+                        );
                         &source_style
                     }
                 };
@@ -677,12 +709,15 @@ impl TextFormat {
     }
 
     fn layout(&self, text: &str) -> TextLayout<'_> {
-        let mut styles = vec![RenderStyle::new(self.default_style_ref(), &self.font_faces)];
+        let mut styles = vec![RenderStyle::new(
+            self.default_style_ref(),
+            &self.font_faces,
+            self.size_mode,
+        )];
         styles.extend(
-            self.spans
-                .iter()
-                .take(MAX_SPANS)
-                .map(|span| RenderStyle::new(span.style.as_ref(), &self.font_faces)),
+            self.spans.iter().take(MAX_SPANS).map(|span| {
+                RenderStyle::new(span.style.as_ref(), &self.font_faces, self.size_mode)
+            }),
         );
         let base_style_count = styles.len();
         let available_faces: Vec<_> = self
@@ -745,6 +780,7 @@ impl TextFormat {
                                 styles.push(RenderStyle::from_face(
                                     source,
                                     &self.font_faces[*face_index],
+                                    self.size_mode,
                                 ));
                                 index
                             })
@@ -759,6 +795,7 @@ impl TextFormat {
                                     0,
                                     false,
                                     false,
+                                    self.size_mode,
                                 ));
                                 index
                             })
@@ -1094,6 +1131,7 @@ struct RenderStyle<'a> {
     source: TextStyleRef<'a>,
     font: FontRef<'a>,
     size: f32,
+    size_mode: TextSizeMode,
     ascent: f32,
     descent: f32,
     gap: f32,
@@ -1103,7 +1141,7 @@ struct RenderStyle<'a> {
 }
 
 impl<'a> RenderStyle<'a> {
-    fn new(source: TextStyleRef<'a>, faces: &'a [EmbeddedFont]) -> Self {
+    fn new(source: TextStyleRef<'a>, faces: &'a [EmbeddedFont], size_mode: TextSizeMode) -> Self {
         let matching = faces
             .iter()
             .take(MAX_FONT_FACES)
@@ -1122,7 +1160,7 @@ impl<'a> RenderStyle<'a> {
                 )
             });
         if let Some(face) = matching {
-            Self::from_face(source, face)
+            Self::from_face(source, face, size_mode)
         } else {
             Self::from_font(
                 source,
@@ -1130,12 +1168,24 @@ impl<'a> RenderStyle<'a> {
                 source.font_index,
                 false,
                 false,
+                size_mode,
             )
         }
     }
 
-    fn from_face(source: TextStyleRef<'a>, face: &'a EmbeddedFont) -> Self {
-        Self::from_font(source, &face.data, face.index, face.bold, face.italic)
+    fn from_face(
+        source: TextStyleRef<'a>,
+        face: &'a EmbeddedFont,
+        size_mode: TextSizeMode,
+    ) -> Self {
+        Self::from_font(
+            source,
+            &face.data,
+            face.index,
+            face.bold,
+            face.italic,
+            size_mode,
+        )
     }
 
     fn from_font(
@@ -1144,6 +1194,7 @@ impl<'a> RenderStyle<'a> {
         index: u32,
         bold: bool,
         italic: bool,
+        size_mode: TextSizeMode,
     ) -> Self {
         let fallback = || FontRef::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT).unwrap();
         let parsed = FontRef::try_from_slice_and_index(bytes, index);
@@ -1156,11 +1207,12 @@ impl<'a> RenderStyle<'a> {
         } else {
             24.0
         };
-        let scaled = font.as_scaled(size);
+        let scaled = font.as_scaled(size_mode.scale(&font, size));
         if !(1.0..=1000.0).contains(&(scaled.height() + scaled.line_gap())) {
             font = fallback();
             used_fallback = true;
         }
+        let size = size_mode.scale(&font, size);
         let scaled = font.as_scaled(size);
         let (ascent, descent, gap) = (
             scaled.ascent(),
@@ -1171,6 +1223,7 @@ impl<'a> RenderStyle<'a> {
             source,
             font,
             size,
+            size_mode,
             ascent,
             descent,
             gap,
@@ -1428,7 +1481,11 @@ mod tests {
             assert_eq!(actual.advance, expected.advance);
         }
         format.italic = false;
-        let style = RenderStyle::new(format.default_style_ref(), &format.font_faces);
+        let style = RenderStyle::new(
+            format.default_style_ref(),
+            &format.font_faces,
+            format.size_mode,
+        );
         assert!(style.synthetic_bold);
         assert!(!style.synthetic_italic);
         assert_eq!(style.font.font_data(), epaint_default_fonts::UBUNTU_LIGHT);
@@ -1521,16 +1578,20 @@ mod tests {
             )],
             ..Default::default()
         };
-        assert_eq!(format.render("ABC"), TextFormat::default().render("ABC"));
+        let fallback = TextFormat {
+            font: epaint_default_fonts::UBUNTU_LIGHT.into(),
+            ..Default::default()
+        };
+        assert_eq!(format.render("ABC"), fallback.render("ABC"));
         let mut without_supplied_fallback = format.clone();
         without_supplied_fallback.font_faces.clear();
         assert_eq!(
             without_supplied_fallback.render("ABC"),
-            TextFormat::default().render("ABC")
+            fallback.render("ABC")
         );
         assert_eq!(
             without_supplied_fallback.render("\u{10ffff}"),
-            TextFormat::default().render("?")
+            fallback.render("?")
         );
         assert_eq!(
             without_supplied_fallback.editor_layout("\u{10ffff}").rows[0].glyphs[0].character,
@@ -1864,7 +1925,7 @@ mod tests {
     #[test]
     fn wraps_at_words_and_breaks_long_words_without_losing_characters() {
         let font = FontRef::try_from_slice(epaint_default_fonts::HACK_REGULAR).unwrap();
-        let scaled = font.as_scaled(20.0);
+        let scaled = font.as_scaled(TextSizeMode::Em.scale(&font, 20.0));
         let width = (scaled.h_advance(scaled.glyph_id('a')) * 5.0 + 2.5).ceil() as u32;
         let format = TextFormat {
             font: epaint_default_fonts::HACK_REGULAR.into(),

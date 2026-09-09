@@ -787,6 +787,16 @@ impl PaintApp {
         ui.label("Ctrl+Z / Ctrl+Y: undo / redo\nCtrl+C / X / V: copy / cut / paste\nCtrl+W: resize and skew\nCtrl+E: canvas properties\nCtrl+Shift+X: crop\nCtrl+G / Ctrl+R: grid / rulers\nCtrl+mouse wheel: zoom\nEscape: cancel / deselect\nF11: view picture");
         ui.separator();
         ui.label("Save as .p10 to keep text and images editable after reopening. PNG, JPEG, BMP, GIF, and TIFF produce ordinary flattened pictures.");
+        let license = ui.collapsing("Bundled font license", |ui| {
+            ScrollArea::vertical()
+                .id_salt("bundled_font_license")
+                .max_height(180.0)
+                .drag_to_scroll(false)
+                .show(ui, |ui| {
+                    ui.label(crate::text::DEFAULT_FONT_LICENSE);
+                });
+        });
+        register_button(ui, &license.header_response);
         if default_button(ui, "OK", true) {
             close = true;
         }

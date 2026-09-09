@@ -77,6 +77,7 @@ pub(super) fn unify_grapheme_fonts<'a>(
                             styles.push(RenderStyle::from_face(
                                 styles[source_style].source,
                                 &faces[face],
+                                styles[source_style].size_mode,
                             ));
                             index
                         })

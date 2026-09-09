@@ -257,6 +257,7 @@ impl PaintApp {
         if load_environment {
             font_db.load_system_fonts();
         }
+        font_db.load_font_data(crate::text::DEFAULT_FONT.to_vec());
         #[cfg(target_arch = "wasm32")]
         {
             font_db.load_font_data(epaint_default_fonts::UBUNTU_LIGHT.to_vec());

@@ -752,8 +752,8 @@ impl PaintApp {
         }
         let lower = query.to_lowercase();
         if "sans serif".starts_with(&lower) {
-            style.font = FontBytes::default();
-            style.font_name = "Sans serif".into();
+            style.font = crate::text::DEFAULT_FONT.into();
+            style.font_name = crate::text::DEFAULT_FONT_NAME.into();
             style.font_index = 0;
             return true;
         }
@@ -1618,7 +1618,7 @@ mod tests {
     fn rtl_editing_app(ctx: &Context, text: &str) -> PaintApp {
         let mut app = editing_app(ctx, text);
         let state = app.text_edit.as_mut().unwrap();
-        state.format.font = include_bytes!("../../assets/test-fonts/DejaVuSans.ttf").into();
+        state.format.font = crate::text::DEFAULT_FONT.into();
         state.format.font_name = "DejaVu Sans".into();
         state.format.size = 40.0;
         state.selection = 0..0;
@@ -2256,18 +2256,25 @@ mod tests {
             .load_font_data(epaint_default_fonts::NOTO_EMOJI_REGULAR.to_vec());
         app.font_names = font_families(&app.font_db);
         assert!(app.font_names.iter().any(|(name, _)| name == "Ubuntu"));
-        app_frame(&mut app, &ctx, vec![Event::Text("Hello 😀".into())]);
+        // DejaVu covers the grinning face already. Use an emoji absent from
+        // the new regular default so this still exercises actual fallback.
+        let default = ab_glyph::FontRef::try_from_slice(crate::text::DEFAULT_FONT).unwrap();
+        let emoji =
+            ab_glyph::FontRef::try_from_slice(epaint_default_fonts::NOTO_EMOJI_REGULAR).unwrap();
+        assert!(!crate::text::font_supports_outline(&default, '🎨'));
+        assert!(crate::text::font_supports_outline(&emoji, '🎨'));
+        app_frame(&mut app, &ctx, vec![Event::Text("Hello 🎨".into())]);
         let state = app.text_edit.as_ref().unwrap();
-        assert_eq!(state.text, "Hello 😀");
+        assert_eq!(state.text, "Hello 🎨");
         assert!(state
             .format
             .font_faces
             .iter()
             .any(|face| face.data.as_ref() == epaint_default_fonts::NOTO_EMOJI_REGULAR));
-        let rendered = state.format.render("😀");
+        let rendered = state.format.render("🎨");
         let mut without_fallback = state.format.clone();
         without_fallback.font_faces.clear();
-        assert_ne!(rendered, without_fallback.render("😀"));
+        assert_ne!(rendered, without_fallback.render("🎨"));
         state.format.validate_for_text(&state.text).unwrap();
     }
 
@@ -2379,6 +2386,7 @@ mod tests {
     fn project_font_registration_exposes_collections_without_changing_the_document() {
         let ctx = Context::default();
         let mut app = PaintApp::new_with_context(&ctx, false);
+        let initial_font_count = app.font_db.faces().count();
         let collection = font_collection(&[
             epaint_default_fonts::UBUNTU_LIGHT,
             epaint_default_fonts::HACK_REGULAR,
@@ -2414,7 +2422,11 @@ mod tests {
         let pixels = app.doc.composite();
         app.register_document_fonts();
         let count = app.font_db.faces().count();
-        assert_eq!(count, 3, "a repeated collection is loaded once");
+        assert_eq!(
+            count,
+            initial_font_count + 3,
+            "a repeated collection is loaded once"
+        );
         for name in ["Ubuntu", "Hack", "Noto Emoji"] {
             assert!(app.font_names.iter().any(|(family, _)| family == name));
         }
@@ -2573,7 +2585,10 @@ mod tests {
             collection.as_slice()
         );
         assert_eq!(state.format.style_at(0).font_index, 1);
-        assert!(state.format.style_at(7).font.is_empty());
+        assert_eq!(
+            state.format.style_at(7).font.as_ref(),
+            crate::text::DEFAULT_FONT
+        );
         let mut single_face = state.format.clone();
         single_face
             .modify_style(0..5, |style| {
