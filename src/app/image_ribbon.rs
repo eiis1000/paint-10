@@ -54,7 +54,10 @@ impl PaintApp {
 
     fn image_transform_group(&mut self, ui: &mut Ui, o: Pos2, ctx: &Context) {
         let resize = image_tile(ui, o + vec2(4.0, 5.0), "Resize", Icon::Resize, "S", true);
-        if resize.on_hover_text("Resize and skew (Ctrl+W)").clicked() {
+        if resize
+            .on_hover_text("Resize, skew, and rotate (Ctrl+W)")
+            .clicked()
+        {
             // Opening a dialog must not finish a shape or text draft.
             self.execute(Action::Resize, ctx);
         }

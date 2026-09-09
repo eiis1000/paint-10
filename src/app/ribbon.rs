@@ -217,18 +217,34 @@ pub(super) fn ribbon_menu_button<R>(
     icon: Option<Icon>,
     contents: impl FnOnce(&mut Ui) -> R,
 ) -> InnerResponse<Option<R>> {
-    let galley = ui.painter().layout_no_wrap(
+    let arrow_only = label.is_empty() && icon.is_none();
+    let size = if arrow_only {
+        vec2(22.0, 22.0)
+    } else {
+        // Every named ribbon menu has an assigned slot. Intrinsic label widths
+        // make adjacent commands such as Outline and Fill visibly misalign.
+        vec2(ui.available_width().max(22.0), 26.0)
+    };
+    let text_left = if icon.is_some() { 28.0 } else { 6.0 };
+    let mut text = egui::text::LayoutJob::simple(
         label.to_owned(),
         FontId::proportional(12.0),
         Color32::from_gray(35),
+        (size.x - text_left - 20.0).max(1.0),
     );
-    let icon_width = if icon.is_some() { 20.0 } else { 0.0 };
-    let size = vec2((galley.size().x + icon_width + 24.0).max(22.0), 22.0);
+    text.wrap.max_rows = 1;
+    let galley = ui.painter().layout_job(text);
     let group = controls::current(ui).map_or("Menu", |scope| scope.group);
+    // Preserve the owner UI: keytips use its menu manager to close and switch
+    // menus. A cosmetic child scope would give the button a different owner.
+    let previous_style = ui.style().clone();
+    theme::toolbar_button(ui);
+    ui.spacing_mut().interact_size.y = size.y;
     let menu = egui::menu::menu_custom_button(ui, Button::new("").min_size(size), |ui| {
         theme::menu(ui);
         controls::scope(ui, Scope::new(popup_scope, group), contents)
     });
+    ui.set_style(previous_style);
     controls::register(
         ui,
         &menu.response,
@@ -239,13 +255,13 @@ pub(super) fn ribbon_menu_button<R>(
     if let Some(icon) = icon {
         icons::draw(
             ui.painter(),
-            Rect::from_center_size(rect.left_center() + vec2(12.0, 0.0), vec2(16.0, 16.0)),
+            Rect::from_center_size(rect.left_center() + vec2(14.0, 0.0), vec2(18.0, 18.0)),
             icon,
         );
     }
     ui.painter().galley(
         pos2(
-            rect.left() + 5.0 + icon_width,
+            rect.left() + text_left,
             rect.center().y - galley.size().y / 2.0,
         ),
         galley,
@@ -254,10 +270,10 @@ pub(super) fn ribbon_menu_button<R>(
     icons::draw(
         ui.painter(),
         Rect::from_center_size(
-            if label.is_empty() && icon.is_none() {
+            if arrow_only {
                 rect.center()
             } else {
-                rect.right_center() - vec2(9.0, 0.0)
+                rect.right_center() - vec2(10.0, 0.0)
             },
             vec2(12.0, 12.0),
         ),
@@ -361,8 +377,14 @@ impl PaintApp {
                         }
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        theme::toolbar_button(ui);
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.spacing_mut().interact_size.y = 24.0;
                         let help = ui
-                            .button(RichText::new("?").color(BLUE))
+                            .add_sized(
+                                vec2(24.0, 24.0),
+                                Button::new(RichText::new("?").size(15.0).color(BLUE)),
+                            )
                             .on_hover_text("Help (F1)");
                         help.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Help"));
                         if help.clicked() {
@@ -374,11 +396,11 @@ impl PaintApp {
                             "Minimize the ribbon"
                         };
                         let collapse = ui
-                            .add_sized(vec2(20.0, 18.0), Button::new(""))
+                            .add_sized(vec2(24.0, 24.0), Button::new(""))
                             .on_hover_text(format!("{collapse_label} (Ctrl+F1)"));
                         icons::draw(
                             ui.painter(),
-                            collapse.rect.shrink(3.0),
+                            Rect::from_center_size(collapse.rect.center(), vec2(12.0, 12.0)),
                             if self.collapsed {
                                 Icon::ChevronDown
                             } else {
@@ -496,11 +518,11 @@ impl PaintApp {
         }
         icons::draw(
             &painter,
-            Rect::from_min_size(r.min + vec2(2., 4.), vec2(17., 17.)),
+            Rect::from_center_size(r.left_center() + vec2(14.0, 0.0), vec2(18.0, 18.0)),
             icon,
         );
         painter.text(
-            r.min + vec2(24., 13.),
+            r.left_center() + vec2(28.0, 0.0),
             Align2::LEFT_CENTER,
             label,
             FontId::proportional(12.),
@@ -937,6 +959,8 @@ impl PaintApp {
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(580.0, 59.0), vec2(17.0, 25.0))),
             |ui| {
+                theme::toolbar_button(ui);
+                ui.spacing_mut().interact_size.y = 25.0;
                 let more = egui::menu::menu_custom_button(
                     ui,
                     Button::new("").min_size(vec2(17.0, 25.0)),
@@ -952,7 +976,7 @@ impl PaintApp {
                 );
                 icons::draw(
                     ui.painter(),
-                    more.response.rect.shrink(3.0),
+                    Rect::from_center_size(more.response.rect.center(), vec2(12.0, 12.0)),
                     Icon::ChevronDown,
                 );
                 more.response
@@ -967,8 +991,9 @@ impl PaintApp {
             },
         );
         ui.scope_builder(
-            UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(605., 11.), vec2(88., 76.))),
+            UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(603., 9.), vec2(88., 75.))),
             |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
                 let outline =
                     ribbon_menu_button(ui, "Outline", "O", "outline", Some(Icon::Outline), |ui| {
                         for style in PaintStyle::ALL {
@@ -996,7 +1021,6 @@ impl PaintApp {
                     WidgetInfo::labeled(WidgetType::Button, true, "Shape outline style")
                 });
                 ribbon_focus(ui, &outline.response);
-                ui.add_space(7.);
                 let fill = ribbon_menu_button(ui, "Fill", "L", "fill", Some(Icon::Fill), |ui| {
                     for style in PaintStyle::ALL {
                         let choice = paint_style_choice(
@@ -1058,6 +1082,7 @@ impl PaintApp {
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(702., 8.), vec2(53., 85.))),
             |ui| {
+                theme::toolbar_button(ui);
                 let menu = egui::menu::menu_custom_button(
                     ui,
                     Button::new("").min_size(vec2(53.0, 84.0)),
