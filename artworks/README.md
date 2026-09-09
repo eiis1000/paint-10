@@ -91,6 +91,12 @@ Four further Polygon shapes tone down and interrupt the broad snow reflection.
 Color Picker samples from the open water and darker reflected mountain give
 the cuts their colors. The saved project contains these changes; raster
 exports still await the end of the landscape pass.
+The next saved pass replaces a distant summit's straight contour with an
+uneven Polygon edge and adds a low-opacity radial haze Oval. Two broader
+ridge attempts left visible seams and were undone before the narrower contour
+was kept. The haze color also exposed a light-alpha preview bug in the
+application; its numeric color is correct, and the display correction is
+being tested separately.
 
 ## Ant-colony simulation slide
 
