@@ -58,8 +58,22 @@ font/project verification are recorded in `TESTING.md`.
 
 ## Corrected findings
 
+The September 9 text/color pass retains the period Text ribbon's Clipboard,
+Font, Background and Colors groups, with Paragraph, Effects and Editing as
+extensions. Point sizes now use the selected face's em metrics and new boxes
+use bundled regular DejaVu Sans. Existing projects retain their original
+text-size convention. Space and Slice now determine the actual color plane,
+including linear RGB, CMYK and perceptual gamut displays. Focused real-app
+replays and exact verification limits are recorded at the top of `TESTING.md`.
+Detailed artwork is paused at the user's request.
+
 | Workflow | Concrete failure | Status |
 | --- | --- | --- |
+| Successive text boxes | Finishing a caption silently switches Text to Select | Actual-frame tests and native/browser successive-caption replay pass |
+| Retained text double-click | A transient selection's stale handles intercept the second click | Actual-frame regression and native retained-caption reopen/edit pass |
+| Text Undo ordering | Undo overtakes a final typed character and leaves it behind | Four ordered-input regressions and actual native rich-caption Undo/Redo pass |
+| Browser text history | The hidden HTML input's native Undo/Redo reinserts trailing characters | Shortcut-capture regressions and actual installed-browser Undo/Redo pass |
+| Color coordinate plane | Space only changes numeric fields while the visual picker stays independent | Coordinate-plane and actual-widget tests pass; native/browser space and browser CMYK Slice/Black/gamut replay pass |
 | Clipboard replacement | Copying text after an image can paste the stale cached image | Reproduced before the fix; live replay now passes |
 | Transparent selection copy | Copying keyed pixels loses the background permanently; switching pasted selection to Opaque cannot restore it | Copy/paste/opacity regressions pass |
 | Invert colors | A transparent selection retains its old key after colors invert, reversing visible coverage | Coverage and undo regression passes |
@@ -112,6 +126,7 @@ Independent detailed source reports remain under `tmp/selection-parity-audit.md`
 - Home, View, and contextual Text now adapt into compressed groups at narrow widths. Alt/F10 labels are anchored to the real controls and menus, with group Tab traversal, arrow navigation, nested Escape handling, and restoration of text/canvas focus. Actual-frame regressions cover 500px and 1200px layouts, including resizing open menus. Exact Paint key letters and pixel placement remain independently mapped; these follow Microsoft's [ribbon interaction guidance](https://learn.microsoft.com/en-us/windows/win32/uxguide/cmd-ribbons), rather than an exhaustive comparison with a running Windows 10 installation.
 - Brushes and textured fills are independent raster implementations. Controlled Windows 10 samples have not established matching stroke dynamics or pixel output.
 - Reopening transformed text uses an upright editor, then restores its transform on completion. Active vector-line resizing preserves stroke thickness.
+- Native windows have a 500×400 minimum, which the color-dialog layout checks cover. An exploratory 360px browser viewport clips the dialog's left edge; layouts below that native minimum need a separate browser pass.
 - Physical printer/scanner/camera and host email/wallpaper portal operations have not been exercised. The ARM Linux package output evaluates, but was not built or executed on this host.
 - Windows/macOS native builds and native dialogs have not been run locally. The checked-in CI matrix is not evidence of execution; the native Command checks above simulate the relevant input modifiers on Linux. Linux provides the hardware/desktop integrations; Windows/macOS Print currently saves a printable PDF.
 

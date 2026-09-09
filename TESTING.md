@@ -1,5 +1,121 @@
 # Paint 10 verification log
 
+## September 9: text behavior, typography and coordinate-plane polish
+
+Detailed artwork is paused at the user's request. This pass uses two short
+captions and focused color-editor interactions on a private Xvfb desktop.
+
+Production commits `0f648c3`, `2aaaab3`, `251762c` and `6926834` correct
+point-size conversion, bundle regular DejaVu Sans, keep Text selected after
+completion, restore retained-text double-clicks, reorganize the Text ribbon
+and make the selected coordinate space drive the visual color plane.
+Legacy text keeps its original metrics; twelve legacy raster comparisons
+remain byte-identical. The 1180px Text ribbon and 500px collapsed Clipboard
+have actual-frame layout/action coverage. The period reference remains the
+2016 Paint tutorial's contextual Clipboard, Font, Background and Colors groups.
+
+The source gate at `6926834` passes 388 native tests (151 library + 237 app),
+formatting, strict Clippy and a debug build. Strict WASM Clippy, release build,
+actual module validation and eight browser-adapter tests also pass. Stable
+source/binary manifests are in `tmp/polish-final-native/` and the browser gate
+handoff is `tmp/polish-web-handoff.md`. Both immutable Nix packages build and
+pass source/font/license/asset audits; native release tests also pass. Exact
+package handoffs are `tmp/{native,browser}-package-6926834-handoff.md`.
+These gates predate the immediate-Undo correction described below.
+
+Actual native GUI checks pass for regular text at 100%, size presets,
+selected-word 12pt/bold formatting, Ctrl+Enter retaining Text, and drawing
+a second box without selecting Text again. The two retained captions save
+through the native chooser to `/tmp/paint10-text-polish.p10` and reopen.
+Native RGB, linear RGB and OKLab planes visibly differ while preserving
+the literal `33669980` and alpha 128. Visually inspected captures include
+`/tmp/paint10-text-ribbon-polished.png`,
+`/tmp/paint10-font-size-menu-polished.png`,
+`/tmp/paint10-text-done-stays-text.png`,
+`/tmp/paint10-text-successive-box.png`,
+`/tmp/paint10-text-polish-saved.png`, and
+`/tmp/paint10-color-plane-{rgb,linear,oklab}.png`.
+
+Actual Chromium at localhost 8084 shows the regular font and complete Text
+ribbon; finishing two successive captions leaves Text selected. CMYK's
+Yellow-to-Cyan Slice change alters the plane while retaining `33669980`.
+Increasing Black to 72.59% produces `172F4680`, preserving alpha 128. Picking
+outside OKLab's sRGB region retains authored coordinates and shows a warning;
+Fit to sRGB moves the marker into gamut and clears the warning. These captures
+were visually inspected:
+`/tmp/paint10-browser-text-polish.png`,
+`/tmp/paint10-browser-successive-text.png`,
+`/tmp/paint10-browser-cmyk-{slice-menu,cyan-slice,black-adjusted}.png`, and
+`/tmp/paint10-browser-oklab-{plane,outside,fitted}.png`.
+The browser used its own temporary profile, explicit X11/software rendering
+and a private session bus. No input went to the user's desktop.
+
+This replay found two further defects: overlapping numeric captions under
+CMYK's narrow strips, and immediate text Undo leaving only the final `t`.
+The latter occurred after reopening the saved rich caption, selecting all,
+typing `Replacement test` and immediately pressing Ctrl+Z. Escape restored
+the original rich caption and clean saved title. The actual-frame regression
+in `tmp/text-undo-order-before.log` reproduces that exact failure; input
+ordering is corrected in `b22033f` with four new regression scenarios.
+All 392 native tests, formatting, strict Clippy and a debug build pass with
+matching before/after source manifests (`tmp/text-undo-native/`). The actual
+native replay now restores the complete mixed-format selected caption; Redo
+restores the complete `Replacement test`. Settled captures
+`/tmp/paint10-undo-fixed-native-restored.png` and
+`/tmp/paint10-undo-fixed-native-redo-settled.png` were visually inspected.
+The CMYK caption correction is committed as `f078ec5`. All 18 color-editor
+tests pass, including actual glyph bounds for C/M/Y plus K at 0/40 and
+100/100 percent in 1200×800 and 500×400 windows. Final native formatting and
+strict Clippy pass. The refreshed browser build passes strict WASM Clippy,
+release compilation, all eight adapter tests, module validation and 111
+unchanged source fingerprints. Evidence: `tmp/cmyk-caption-handoff.md` and
+`tmp/polish-followup-web-handoff.md`. Actual browser captions now show distinct
+`Y 0.00% · K 40.00%` below the plane without overlapping Alpha, including
+a narrow 500px window. Both `/tmp/paint10-cmyk-footer-fixed.png` and
+`/tmp/paint10-cmyk-footer-narrow.png` were visually inspected.
+
+Both immutable `f078ec5` Nix packages pass their audits. The native package
+passes all 393 release tests (151 library + 242 app), with installed-source,
+font/license/icon, runtime closure and flake verification. Exact handoffs are
+`tmp/{native,browser}-package-f078ec5-handoff.md`. Linux x86-64 was executed;
+ARM was evaluated only; Windows/macOS were not executed locally.
+
+The browser's final Undo restores the original caption, but Redo exposed a
+second history defect. A settled `Check replacement` becomes
+`Check replacementtt` after Ctrl+Z then Ctrl+Y. Captures
+`/tmp/paint10-browser-typing-before-undo.png` and
+`/tmp/paint10-browser-settled-history.png` were visually inspected.
+The pinned eframe browser handler forwards Z/Y to Paint without canceling
+the hidden HTML input's native history. That input's listener then forwards
+restored characters as fresh typing. A separate browser capture correction
+is committed as `cc4131a`. Its separate browser gate passes formatting,
+strict WASM Clippy, release build, all ten adapter tests, module validation
+and 111 unchanged input fingerprints (`tmp/browser-history-default-handoff.md`).
+Native implementation is unchanged by this browser-only follow-up.
+
+The immutable `cc4131a` browser package also passes its 120-file source audit,
+111-input comparison, font/license/assets checks, actual WASM validation and
+ten archived adapter tests. Package:
+`/nix/store/z175l2f2j9qwpb3a2c4wp5m5s4ikd9rl-paint-10-web-0.1.0`.
+Evidence: `tmp/browser-package-cc4131a-handoff.md`. Replay uses a fresh private
+Chromium profile at localhost 8088 to avoid reusing the old inline JS snippet.
+The installed package now passes the exact failing sequence: select all,
+type `Replacement test` with 45ms character intervals, immediately press
+Ctrl+Z, then Ctrl+Y. Undo restores the selected `Browser original caption`;
+Redo restores exactly `Replacement test` with no extra characters. Both
+`/tmp/paint10-browser-history-fixed-undo.png` and
+`/tmp/paint10-browser-history-fixed-redo.png` were visually inspected.
+Ctrl+Shift+Z also restores exactly the replacement text; its settled capture
+`/tmp/paint10-browser-history-fixed-shift-redo-settled.png` was inspected.
+
+The installed native `f078ec5` package reopens the saved mixed-format captions
+and displays the corrected CMYK plane/footer. Captures
+`/tmp/paint10-final-native-package-open.png` and
+`/tmp/paint10-native-package-cmyk-final.png` were visually inspected.
+Scratch browser windows were closed through their Leave confirmation; the
+private desktop/controller and this pass's localhost servers were stopped.
+Saved projects, screenshots, build artifacts and audit logs were preserved.
+
 ## September 9: popup ordering replay and focused polish work
 
 The user paused detailed artwork in favor of interface polish and functionality.

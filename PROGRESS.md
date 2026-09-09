@@ -1,22 +1,45 @@
 # Paint 10 work in progress
 
-## Current September 9 checkpoint: text, color editor and interface polish
+## Current September 9 checkpoint: focused polish pass verified
 
-- The user has paused detailed artwork. Continue short, focused tests of real
-  Paint workflows; prioritize text behavior, the Text ribbon and color editing.
-  Do not resume elaborate artwork as a completion gate unless requested.
-- The coastal project is saved with its wave Curves and subtle pencil grain.
-  The preceding artwork and export checks remain useful evidence; this study
-  is a preserved unfinished checkpoint, not a claim of photorealism.
-- `new_status` owns text-tool persistence and its lifecycle tests;
-  `text_sharpness` owns rendering/sizing investigation; `popup_modal` owns
-  coordinate-dependent color planes. Root owns Text ribbon UI, private GUI
-  replay, integration, documentation and logical local commits.
-- Popup/input correction passed 368 native tests, strict Clippy, formatting
-  and build. Its stable replay executable is `tmp/popup-modal-native/paint-10`.
-  Native launcher 58707/controller 62092 use private DISPLAY=:1. The installed
-  old package has closed cleanly after saving; the stable test binary is open
-  on a blank picture. No host desktop input is used.
+- Detailed artwork remains paused at the user's request. Continue using short,
+  real GUI exercises for polish and functionality work. The saved coastal
+  study is an unfinished checkpoint, not a photorealism claim.
+- Production commits: `0f648c3` fixes point-size metrics and bundles regular
+  DejaVu Sans; `2aaaab3` keeps Text selected and fixes retained-text double-clicks;
+  `251762c` reorganizes the Text ribbon and adds size presets/steps;
+  `6926834` makes Space/Slice control the color plane; `b22033f` preserves
+  immediate Undo ordering; `f078ec5` fixes CMYK label overlap; `cc4131a`
+  prevents browser-native history from injecting trailing characters.
+  Earlier popup input correction: `f842a2f`.
+- Native verification: all 393 release tests, formatting, strict Clippy,
+  immutable Nix build, installed assets/font/license/closure and flake checks
+  pass. The final native package is from `f078ec5`; the later two-file change
+  affects only the browser adapter and its tests. Installed native replay
+  reopens the mixed-format scratch project and shows the corrected CMYK footer.
+- Browser verification: final `cc4131a` strict WASM Clippy, release build,
+  ten adapter tests, actual module validation, exact source/asset audits and
+  immutable Nix package pass. All 111 build inputs match the final source.
+  Installed-browser actual rapid replacement, Undo, Ctrl+Y and Ctrl+Shift+Z
+  restore exact text without duplicated trailing characters.
+- Actual native/browser tests also cover successive editable text boxes,
+  selected-word size/bold, font-size presets, Save/Open, coordinate and slice
+  switching, CMYK Black, alpha/literal preservation, gamut fitting, and legible
+  CMYK labels at a 500px browser width. Exact evidence is at the top of
+  `TESTING.md`; platform and parity limits remain in `PARITY_AUDIT.md`.
+- Final handoffs: `tmp/native-package-f078ec5-handoff.md`,
+  `tmp/browser-package-cc4131a-handoff.md`,
+  `tmp/browser-history-default-handoff.md`, and
+  `tmp/cmyk-caption-handoff.md`. Earlier build artifacts and evidence are
+  preserved. Windows/macOS were not executed; ARM Linux was evaluated only.
+- GUI work used private DISPLAY=:1, launcher 58707/controller 62092,
+  `/tmp/paint10-desktop.ZV79Sn`, and private Chromium profiles. No host
+  desktop input. Native scratch project: `/tmp/paint10-text-polish.p10`.
+  Browser scratch windows, private desktop/controller and temporary servers
+  8084–8088 are now closed. Logs and saved scratch files remain available.
+  All implementation/package tasks and focused replay are complete. Keep the
+  next pass focused on polish/functionality, with the documented platform and
+  parity limits, and continue making logical local commits.
 
 ## Earlier September 9 checkpoint: coastal painting and menu input correction
 
