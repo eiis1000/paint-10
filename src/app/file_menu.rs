@@ -189,6 +189,7 @@ impl PaintApp {
                     ui.set_width(left_width);
                     ScrollArea::vertical()
                         .id_salt("file_menu_scroll")
+                        .drag_to_scroll(false)
                         .max_height(height)
                         .auto_shrink([false, false])
                         .show(ui, |ui| self.file_menu_contents(ui, ctx));
@@ -206,6 +207,7 @@ impl PaintApp {
                     ui.set_width(right_width);
                     ScrollArea::vertical()
                         .id_salt("file_menu_details")
+                        .drag_to_scroll(false)
                         .max_height(height - 83.0)
                         .auto_shrink([false, false])
                         .show(ui, |ui| match pane(ctx) {
@@ -467,6 +469,8 @@ impl PaintApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod picker_scroll_tests;
 
     fn frame(app: &mut PaintApp, ctx: &Context, key: Option<Key>) -> FullOutput {
         frame_at_size(app, ctx, key, vec2(640.0, 600.0))
