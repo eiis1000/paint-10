@@ -1004,6 +1004,7 @@ mod tests {
     use super::*;
 
     mod key_order_tests;
+    mod reopen_text_tests;
 
     fn pointer_app_frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) -> FullOutput {
         pointer_app_frame_at(app, ctx, events, ctx.cumulative_pass_nr() as f64 / 30.0)
