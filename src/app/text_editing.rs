@@ -208,6 +208,11 @@ impl PaintApp {
         if !self.ensure_active_layer_editable() {
             return;
         }
+        if matches!(&self.doc.objects[index].kind, ObjectKind::Text { format, .. } if format.latex)
+        {
+            self.edit_latex_object(index);
+            return;
+        }
         if let ObjectKind::Text { text, format } = &self.doc.objects[index].kind {
             self.colors[0] = format.style_at(0).color;
             if let Some(background) = format.background {
@@ -243,6 +248,7 @@ impl PaintApp {
             self.text_format.size_mode = crate::text::TextSizeMode::Em;
             // A new box inherits the current font controls, not the previous box's spans.
             self.text_format.spans.clear();
+            self.text_format.latex = false;
             if !state.text.is_empty() {
                 self.doc.begin();
                 let kind = ObjectKind::Text {

@@ -36,12 +36,6 @@ pub(in crate::app) fn browser_download_controls(
             } else {
                 "Save picture"
             });
-            ui.add_space(4.0);
-            let download_note = concat!(
-                "The browser downloads a file; ",
-                "it cannot replace the original automatically."
-            );
-            ui.add(Label::new(RichText::new(download_note).weak()).wrap());
             ui.add_space(12.0);
             if *initial_focus {
                 if ui.is_enabled() && !ui.is_sizing_pass() {
@@ -113,18 +107,6 @@ pub(in crate::app) fn browser_download_controls(
                 })
                 .response
                 .labelled_by(format_label.id);
-            if *format == crate::raster_io::RasterFormat::Project {
-                ui.add_space(4.0);
-                ui.add(
-                    Label::new(
-                        RichText::new(
-                            "Keeps layers, text, original images, and editable transforms.",
-                        )
-                        .weak(),
-                    )
-                    .wrap(),
-                );
-            }
             if let Some(error) = error {
                 ui.add_space(8.0);
                 ui.add(Label::new(RichText::new(error).color(ui.visuals().error_fg_color)).wrap());
@@ -549,6 +531,7 @@ impl PaintApp {
                 Dialog::Rotate => "Rotate",
                 Dialog::ImageAdjustments => "Edit Image",
                 Dialog::ImageCrop => "Crop Image",
+                Dialog::Latex => "LaTeX equation",
                 Dialog::Colors => "Edit Colors",
                 Dialog::Properties => "Image Properties",
                 Dialog::About => "About Paint 10",
@@ -559,6 +542,9 @@ impl PaintApp {
         };
         if let Some(kind) = kind {
             if prepare_modal(ctx, kind) {
+                if self.dialog == Some(Dialog::Latex) {
+                    self.cancel_latex();
+                }
                 if self.dialog == Some(Dialog::Colors) {
                     color_editor::restore(self, ctx);
                 }
@@ -632,6 +618,7 @@ impl PaintApp {
                     Dialog::Print => 400.0,
                     Dialog::Rotate => 380.0,
                     Dialog::ImageAdjustments => 620.0,
+                    Dialog::Latex => 620.0,
                     Dialog::ImageCrop => 430.0,
                     _ => 340.0,
                 })
@@ -661,6 +648,7 @@ impl PaintApp {
                         Dialog::Rotate => self.rotation_dialog(ui),
                         Dialog::ImageAdjustments => self.image_adjustments_dialog(ui),
                         Dialog::ImageCrop => self.image_crop_dialog(ui),
+                        Dialog::Latex => self.latex_dialog(ui),
                         Dialog::Colors => self.colors_dialog(ui),
                         Dialog::About => self.about_dialog(ui),
                         Dialog::Print => self.print_dialog(ui),
@@ -695,6 +683,9 @@ impl PaintApp {
                 ctx.memory_mut(|memory| memory.set_modal_layer(shown.response.layer_id));
             }
             if !open || close {
+                if !open && dialog == Dialog::Latex {
+                    self.cancel_latex();
+                }
                 if !open && dialog == Dialog::Import {
                     self.job_cancel
                         .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -854,13 +845,9 @@ impl PaintApp {
     fn rotation_dialog(&mut self, ui: &mut Ui) -> bool {
         let mut close = false;
 
-        ui.label(if self.object.is_some() {
-            "Rotate the selected object. Text remains editable."
-        } else {
-            "Rotate the selection or the whole picture."
-        });
         ui.horizontal(|ui| {
-            ui.label("Angle:");
+            ui.label("Angle:")
+                .on_hover_text("Positive angles turn clockwise.");
             let angle = numeric_input(
                 ui,
                 DragValue::new(&mut self.angle)
@@ -870,11 +857,6 @@ impl PaintApp {
             initial_focus(ui, &angle);
             ui.add(Slider::new(&mut self.angle, -180.0..=180.0).show_value(false));
         });
-        ui.label(
-            RichText::new("Positive angles turn clockwise.")
-                .small()
-                .weak(),
-        );
         ui.horizontal(|ui| {
             ui.label("Presets:");
             for angle in [-90.0, -45.0, 0.0, 45.0, 90.0, 180.0] {
@@ -917,14 +899,7 @@ impl PaintApp {
             });
         });
         ui.add_space(8.0);
-        ui.label("The familiar Paint experience, with editable text and images.");
-        ui.separator();
-        ui.strong("Getting started");
-        ui.label("Draw with Color 1 using the left mouse button, or Color 2 using the right button. Hold Shift for straight lines, circles, and squares.");
-        ui.label("Drag a selection to move or crop it. Click a pasted image to select it; double-click text to edit it again.");
-        ui.add_space(8.0);
-        ui.strong("Save your work");
-        ui.label("Use a Paint 10 project (.p10) to keep text, original images, and transforms editable. Export PNG, JPEG, BMP, GIF, TIFF, WebP, or ICO to share a picture.");
+        ui.hyperlink_to("User guide", "https://github.com/eiis1000/paint-10#readme");
         ui.add_space(8.0);
         let shortcuts = ui.collapsing("Keyboard shortcuts", |ui| {
             Grid::new("about_shortcuts")
@@ -934,7 +909,7 @@ impl PaintApp {
                     for (keys, action) in [
                         ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
                         ("Ctrl+C / Ctrl+X / Ctrl+V", "Copy / cut / paste"),
-                        ("Ctrl+W", "Resize and skew"),
+                        ("Ctrl+W", "Resize, skew, and rotate"),
                         ("Ctrl+E", "Canvas properties"),
                         ("Ctrl+Shift+X", "Crop to selection"),
                         ("Ctrl+G / Ctrl+R", "Grid / rulers"),
@@ -1037,7 +1012,6 @@ impl PaintApp {
                         .speed(0.5),
                 );
             });
-            ui.small("Landscape swaps width and height.");
         } else {
             let (width, height) = self.page.paper.dimensions_mm();
             ui.label(format!("{width:.2} × {height:.2} mm"));
@@ -1289,7 +1263,6 @@ impl PaintApp {
     fn wallpaper_dialog(&mut self, ui: &mut Ui, ctx: &Context) -> bool {
         let mut close = false;
 
-        ui.label("Choose how the picture should fit your screen.");
         use crate::integration::WallpaperStyle;
         ui.horizontal_wrapped(|ui| {
             for (style, name) in [

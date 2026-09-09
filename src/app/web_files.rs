@@ -87,7 +87,7 @@ impl PaintApp {
         }
         self.font_db.load_font_data(bytes);
         self.font_names = text_editing::font_families(&self.font_db);
-        self.message = format!("Loaded {name}. Choose its family in the Font list. Used fonts are embedded when you save a Paint 10 project.");
+        self.message = format!("Loaded font: {name}");
     }
 
     pub(in crate::app) fn read_image(_path: &std::path::Path) -> Result<RgbaImage, String> {
@@ -141,8 +141,7 @@ impl PaintApp {
                 self.web.format = format.unwrap_or_default();
                 self.clear_selection();
                 self.refresh = true;
-                self.message =
-                    "Opened in the browser. Save downloads a copy to your device.".into();
+                self.message = format!("Opened {name}");
             }
             Ok(document) => self.insert_image(document.composite()),
             Err(error) => self.message = error,
@@ -158,7 +157,7 @@ impl PaintApp {
                 path.to_string_lossy().as_ref(),
             ) {
                 Ok(name) => {
-                    self.message = format!("Download started: {name}. Confirm the file was saved; browsers cannot report download completion.");
+                    self.message = format!("Download started: {name}");
                     false
                 }
                 Err(error) => {
@@ -291,11 +290,9 @@ impl PaintApp {
                         self.file = Some(PathBuf::from(&name));
                         self.web.format = dialog.format;
                     }
-                    self.message = format!("Download started: {name}. Confirm the file was saved; browsers cannot report download completion.");
+                    self.message = format!("Download started: {name}");
                     if let Some(action) = dialog.resume {
                         self.pending = Some(action);
-                        self.message
-                            .push_str(" After confirming it, choose Don't save to continue.");
                     }
                     return;
                 }
@@ -390,6 +387,7 @@ impl PaintApp {
     pub(in crate::app) fn sync_browser_unsaved(&self) {
         crate::web::set_unsaved(
             self.doc.dirty()
+                || self.latex_has_unsaved_changes()
                 || self
                     .text_edit
                     .as_ref()

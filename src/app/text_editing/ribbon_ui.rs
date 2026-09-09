@@ -81,6 +81,7 @@ impl PaintApp {
         let mut style = original_style.clone();
         let mut done = false;
         let mut cancel = false;
+        let mut latex = false;
         let mut x = origin.x + widths[0];
         for (index, (group, width)) in groups.into_iter().zip(widths).enumerate().skip(1) {
             ribbon_layout::show(ui, pos2(x, origin.y), width, "text", group, |ui, origin| {
@@ -103,6 +104,7 @@ impl PaintApp {
                             4 => Self::text_paragraph_group(ui, &mut state),
                             5 => self.text_effects_group(ui, &mut state),
                             _ => {
+                                ui.spacing_mut().item_spacing.y = 3.0;
                                 let response = ui.add_sized([66.0, 25.0], Button::new("Done"));
                                 ribbon_controls::named(ui, &response, "Done");
                                 done = response.clicked();
@@ -116,6 +118,17 @@ impl PaintApp {
                                 );
                                 cancel = response.clicked();
                                 response.on_hover_text("Discard changes to this text box (Escape)");
+                                let response = ui.add_sized([66.0, 25.0], Button::new("LaTeX…"));
+                                ribbon_controls::register(
+                                    ui,
+                                    &response,
+                                    "LX",
+                                    keytips::Kind::Button,
+                                );
+                                latex = response.clicked();
+                                response.on_hover_text(
+                                    "Compile this box as an editable LaTeX equation",
+                                );
                             }
                         }
                     },
@@ -165,6 +178,8 @@ impl PaintApp {
             self.text_edit = Some(state);
             if done {
                 self.commit_text();
+            } else if latex {
+                self.open_latex_editor();
             }
         }
     }
