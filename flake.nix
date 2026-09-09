@@ -100,6 +100,7 @@
             mkdir -p "$out/pkg"
             wasm-bindgen --target web --out-dir "$out/pkg" --out-name paint_10 target/wasm32-unknown-unknown/release/paint_10.wasm
             cp web/index.html "$out/index.html"
+            cp assets/paint-10.svg assets/paint-10.png assets/paint-10.ico "$out/"
             runHook postInstall
           '';
           meta = {
