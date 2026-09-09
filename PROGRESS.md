@@ -1,5 +1,30 @@
 # Paint 10 work in progress
 
+## Current September 9 checkpoint after session reset, around 02:25 EDT
+
+- The user's continuation followed termination of both private test desktops.
+  Host-side process inspection confirms the old GUI/server processes are gone.
+  Fresh native launcher58707/controller62092 now use private DISPLAY=:1,
+  `/tmp/paint10-desktop.ZV79Sn`, running the installed `a292591` Nix package.
+  Log: `tmp/native-after-session-reset.log`. The saved landscape reopens.
+- Latest production remains `a292591`; acceptance docs are `546c462` and the
+  seven-Oval cloud pass is saved/committed as `d812d6f`. No artwork was unsaved
+  at termination. The smaller pine refinement has not begun. Root is setting
+  Polygon/No outline/Solid fill at 50% for that pass. Raster exports are stale;
+  the landscape still needs stronger naturalism and completion review.
+- Both immutable Nix package handoffs are complete and were read in full:
+  `tmp/{native,browser}-package-a292591-handoff.md`. Native365 release tests,
+  all113 source files, assets/closure/helper and flake checks pass. Browser8
+  archived Node tests, source/asset mapping and actual WASM validation pass.
+- Actual installed native landscape reopen and installed browser alpha PNG,
+  F10/H/D and transparent custom-color Add pass. The later browser Cancel/F5
+  recall attempt never ran after the display terminated; do not count it.
+  The earlier debug/browser persistence tests remain valid. No browser is
+  currently running. Old launcher/controller/server IDs below are historical.
+- TESTING.md has uncommitted package/replay notes. Root owns all Git and art.
+  All agents' implementation/package tasks are complete. Continue painting,
+  actual export/reopen checks, logical commits and the completion audit.
+
 ## Current September 9 checkpoint: corrected alpha display and measurements
 
 - Production `a292591` corrects the display alpha mismatch. Earlier source

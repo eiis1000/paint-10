@@ -1,5 +1,43 @@
 # Paint 10 verification log
 
+## September 9: immutable packages after display and measurement fixes
+
+Both Nix packages build from production commit `a292591`, using captured source
+`/nix/store/rgxs4h7sbzwf9l97bpj4srnymlkxmxl0-paint-10-source`.
+All 113 captured files match the commit exactly.
+
+- Native: `/nix/store/h8pjvjnzp6w4fv6iz63rgxp51l6xhkiy-paint-10-0.1.0`.
+  All 365 release tests pass, along with host flake checks, both-system
+  evaluation, icon regeneration/embedding, installed assets, the 179-path
+  runtime closure and headless file-helper startup.
+- Browser: `/nix/store/r7s2kc557bc077v104ljkgvb84rkbz40-paint-10-web-0.1.0`.
+  Eight adapter tests pass against the archived commit. HTML, inline JavaScript,
+  icons and actual WebAssembly validation pass. Its WASM is 10,088,749 bytes,
+  SHA-256 `4e4bf5790c9d2e3fe21b19279143391a2b8c069668230a09b9891d24908d33e3`.
+
+Exact evidence and limitations are in
+`tmp/{native,browser}-package-a292591-handoff.md`. ARM Linux was evaluated
+only; Windows/macOS were not executed. The browser derivation disables its
+native test phase; shared native and archived adapter tests are separate gates.
+
+The installed native executable actually reopens the saved cloud-refined
+landscape at 50%. The installed browser at port8083 actually opens the alpha
+fixture with correct translucency, and F10 → H → D opens Edit Colors.
+Captures were visually inspected:
+`/tmp/paint10-native-package-a292591-landscape.png`,
+`/tmp/paint10-browser-package-alpha-fixed.png` and
+`/tmp/paint10-browser-package-color-keytips.png`.
+
+The installed browser's Add to custom colors also stores exact C0C4B960 in
+slot one with a matching alpha preview; its capture
+`/tmp/paint10-browser-package-alpha-custom.png` was visually inspected.
+Both private desktop sessions were subsequently terminated while the landscape
+was saved and committed. The queued browser Cancel/F5 recall did not execute
+and is not passing evidence. A fresh private native desktop reopened the same
+saved project in the installed package, confirmed visually in
+`/tmp/paint10-after-session-reset.png` and
+`/tmp/paint10-recovered-polygon-settings.png`.
+
 ## September 9: reopened measurement and Paste from findings
 
 The read-only completion audit reproduced three defects in the current app:
