@@ -2,6 +2,8 @@ use crate::text::FontMemory;
 use image::{imageops, Rgba, RgbaImage};
 use std::collections::VecDeque;
 
+mod shape_texture;
+
 pub type Color = [u8; 4];
 pub type Point = (i32, i32);
 pub const WHITE: Color = [255, 255, 255, 255];
@@ -1117,15 +1119,9 @@ fn texture_color(mut color: Color, style: PaintStyle, x: i32, y: i32) -> Color {
             }
         }
         PaintStyle::Marker => 128,
-        PaintStyle::Oil => {
-            let streak = (noise_at(x / 3, y / 18, 1) % 30) as u8;
-            for v in &mut color[..3] {
-                *v = v.saturating_add(streak);
-            }
-            220
-        }
+        PaintStyle::Oil => shape_texture::oil(&mut color, x, y),
         PaintStyle::Pencil => (35 + noise % 160) as u8,
-        PaintStyle::Watercolor => (35 + noise_at(x / 8, y / 8, 2) % 65 + noise % 20) as u8,
+        PaintStyle::Watercolor => shape_texture::watercolor(x, y),
     };
     color[3] = (color[3] as u32 * alpha as u32 / 255) as u8;
     color
@@ -1228,12 +1224,17 @@ pub fn styled_polygon(
                 }
             }
             intersections.sort_by(f64::total_cmp);
+            let mut filled_until = -1;
             for pair in intersections.as_chunks::<2>().0 {
-                for x in (pair[0].ceil() as i32).max(0)
-                    ..=(pair[1].floor() as i32).min(img.width() as i32 - 1)
-                {
+                // Adjacent spans can share a pixel at a concave vertex (for
+                // example a star). Composite their union once, otherwise a
+                // translucent fill acquires dark seams at those vertices.
+                let start = (pair[0].ceil() as i32).max(filled_until + 1);
+                let end = (pair[1].floor() as i32).min(img.width() as i32 - 1);
+                for x in start..=end {
                     blend(img, x, y, fill.color_at((x, y), bounds));
                 }
+                filled_until = filled_until.max(end);
             }
         }
     }
