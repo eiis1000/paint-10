@@ -134,6 +134,7 @@ impl PaintApp {
         match result {
             Ok(document) if open => {
                 self.doc = document;
+                self.reset_layer_panel_state();
                 self.measure.reset();
                 self.register_document_fonts();
                 self.file = Some(path);
@@ -184,7 +185,7 @@ impl PaintApp {
         let selection = if selection_only {
             match self
                 .selected_image()
-                .or_else(|| shape.map(|bounds| bounds.extract(&self.doc.composite())))
+                .or_else(|| shape.map(|bounds| bounds.extract(&self.doc.active_composite())))
             {
                 Some(image) => Some(image),
                 None => {

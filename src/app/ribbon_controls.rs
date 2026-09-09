@@ -85,6 +85,7 @@ pub(super) fn named(ui: &Ui, response: &Response, label: &str) {
         "Rulers" => "R",
         "Gridlines" => "G",
         "Status bar" => "S",
+        "Layers" => "L",
         "Full screen     F11" => "F",
         "Thumbnail" => "T",
         "Fit to window" => "W",

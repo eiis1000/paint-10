@@ -5,6 +5,9 @@ impl PaintApp {
         if self.dialog.is_some() || self.pending.is_some() {
             return;
         }
+        if self.layer_panel_owns_keyboard(ctx) {
+            return;
+        }
         // Menus own Escape and arrow keys. Closing a menu must not discard the
         // shape or text currently being edited underneath it.
         if keytips::popup_open(ctx) {

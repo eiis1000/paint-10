@@ -4,7 +4,7 @@ impl PaintApp {
     /// The source image and current adjustment settings, without committing an
     /// active shape or text draft merely because a dialog was opened.
     pub(in crate::app) fn image_edit_target(&self) -> Option<(d::ImageEdits, (u32, u32))> {
-        if self.text_edit.is_some() {
+        if self.text_edit.is_some() || !self.active_layer_editable() {
             return None;
         }
         if let Some(object) = self.object.and_then(|index| self.doc.objects.get(index)) {
@@ -35,11 +35,14 @@ impl PaintApp {
             .unwrap_or((0, 0));
         let source = self
             .selected_image()
-            .unwrap_or_else(|| self.doc.composite());
+            .unwrap_or_else(|| self.doc.active_composite());
         Ok(Object::new(ObjectKind::Image(source), position))
     }
 
     pub(in crate::app) fn apply_image_edits(&mut self, edits: d::ImageEdits) -> Result<(), String> {
+        if !self.ensure_active_layer_editable() {
+            return Err(self.message.clone());
+        }
         let mut object = self.image_edit_object()?;
         object.set_image_edits(edits)?;
         if let Some(index) = self.object {
@@ -74,6 +77,9 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn reset_image_edits(&mut self) -> Result<(), String> {
+        if !self.ensure_active_layer_editable() {
+            return Err(self.message.clone());
+        }
         let Some(index) = self.object else {
             return Ok(());
         };
@@ -108,7 +114,8 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn clear_selected_pixels(&mut self, region: Region, selected: &RgbaImage) {
-        clear_covered_pixels(&mut self.doc.image, region, selected, self.colors[1]);
+        let background = self.editing_background();
+        clear_covered_pixels(&mut self.doc.image, region, selected, background);
     }
 
     pub(in crate::app) fn clear_selection(&mut self) {
@@ -150,13 +157,13 @@ impl PaintApp {
         if let Some(shape) = &self.shape_draft {
             return shape
                 .bounds(&self.doc.image)
-                .map(|bounds| bounds.extract(&self.doc.composite()));
+                .map(|bounds| bounds.extract(&self.doc.active_composite()));
         }
         if let Some(obj) = self.object.and_then(|i| self.doc.objects.get(i)) {
             return Some(obj.render());
         }
         self.selection.map(|r| {
-            let mut img = r.extract(&self.doc.composite());
+            let mut img = r.extract(&self.doc.active_composite());
             if let Some(mask) = &self.mask {
                 for (x, y, p) in img.enumerate_pixels_mut() {
                     if !mask
@@ -222,12 +229,19 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn cut(&mut self) {
+        if !self.ensure_active_layer_editable() {
+            return;
+        }
         if self.copy() {
             self.delete_selection();
         }
     }
 
     pub(in crate::app) fn delete_selection(&mut self) {
+        if !self.ensure_active_layer_editable() {
+            return;
+        }
+        let background = self.editing_background();
         if self.shape_draft.take().is_some() {
             self.doc.cancel();
             self.refresh = true;
@@ -241,18 +255,16 @@ impl PaintApp {
             if let Some(mask) = &self.mask {
                 for (x, y, p) in mask.enumerate_pixels() {
                     if p[0] > 0 {
-                        self.doc
-                            .image
-                            .put_pixel(r.x + x, r.y + y, Rgba(self.colors[1]));
+                        self.doc.image.put_pixel(r.x + x, r.y + y, Rgba(background));
                     }
                 }
             } else if self.free_points.is_empty() {
-                r.clear(&mut self.doc.image, self.colors[1]);
+                r.clear(&mut self.doc.image, background);
             } else {
                 for y in r.y..r.y + r.h {
                     for x in r.x..r.x + r.w {
                         if inside_polygon((x as i32, y as i32), &self.free_points) {
-                            self.doc.image.put_pixel(x, y, Rgba(self.colors[1]));
+                            self.doc.image.put_pixel(x, y, Rgba(background));
                         }
                     }
                 }
@@ -264,6 +276,9 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn paste_clipboard(&mut self) {
+        if !self.ensure_active_layer_editable() {
+            return;
+        }
         #[cfg(target_arch = "wasm32")]
         self.paste_browser_clipboard();
         #[cfg(not(target_arch = "wasm32"))]
@@ -302,6 +317,9 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn insert_image(&mut self, img: RgbaImage) {
+        if !self.ensure_active_layer_editable() {
+            return;
+        }
         if !d::valid_size(img.width(), img.height()) {
             self.message = "Picture is too large (16 megapixel limit).".into();
             return;
@@ -324,6 +342,7 @@ impl PaintApp {
                 return;
             }
         }
+        let background = self.editing_background();
         let i = self.doc.add_object(Object {
             kind: ObjectKind::Image(img),
             pos: (0, 0),
@@ -332,7 +351,7 @@ impl PaintApp {
             color_key: self.transparent.then_some(self.colors[1]),
             transform: Default::default(),
             image_edits: d::ImageEdits {
-                matte: Some(self.colors[1]),
+                matte: Some(background),
                 sampling: if self.pixel_resize {
                     d::ImageSampling::Nearest
                 } else {
@@ -379,6 +398,9 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn lift_selection(&mut self) -> Option<usize> {
+        if !self.ensure_active_layer_editable() {
+            return None;
+        }
         if self.object.is_none() && self.selection.is_none() {
             return None;
         }
@@ -405,6 +427,9 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn sync_image_transparency(&mut self) {
+        if !self.active_layer_editable() {
+            return;
+        }
         let Some(index) = self.object else {
             return;
         };

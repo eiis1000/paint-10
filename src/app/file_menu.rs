@@ -429,7 +429,7 @@ impl PaintApp {
             ),
             (
                 "Paint 10 project",
-                "Keep text and original images editable.",
+                "Keep layers, text, and images editable.",
                 "Q",
                 Some(RasterFormat::Project),
                 Icon::Save,
