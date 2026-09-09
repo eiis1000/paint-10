@@ -83,7 +83,7 @@ fn shared_font_table_stores_each_binary_once_and_reuses_decoded_allocations() {
     let document = caption_document(FontBytes::from(epaint_default_fonts::UBUNTU_LIGHT), 12);
     let bytes = encode(&document).unwrap();
     let json = unpacked(&bytes);
-    assert_eq!(json["version"], 2);
+    assert_eq!(json["version"], 3);
     assert_eq!(json["fonts"].as_array().unwrap().len(), 1);
     assert!(bytes.len() * 8 < legacy(&document).len());
 
@@ -103,7 +103,7 @@ fn shared_font_table_stores_each_binary_once_and_reuses_decoded_allocations() {
 }
 
 #[test]
-fn legacy_and_v2_preserve_collection_faces_rich_format_transforms_and_pixels() {
+fn all_project_versions_preserve_collection_faces_rich_format_transforms_and_pixels() {
     let mut document = caption_document(collection(), 2);
     document.resolution = crate::metadata::Resolution { x: 300.0, y: 150.0 };
     document
@@ -130,7 +130,14 @@ fn legacy_and_v2_preserve_collection_faces_rich_format_transforms_and_pixels() {
         object.resize_rendered(260, 140).unwrap();
     }
     let expected = document.composite();
-    for bytes in [legacy(&document), encode(&document).unwrap()] {
+    let current = encode(&document).unwrap();
+    let mut v2 = unpacked(&current);
+    v2["version"] = serde_json::json!(2);
+    for object in v2["objects"].as_array_mut().unwrap() {
+        object.as_object_mut().unwrap().remove("image_edits");
+        object.as_object_mut().unwrap().remove("source_clip");
+    }
+    for bytes in [legacy(&document), packed(&v2), current] {
         let reopened = decode(&bytes).unwrap();
         assert!(reopened.objects == document.objects);
         assert_eq!(reopened.image, document.image);

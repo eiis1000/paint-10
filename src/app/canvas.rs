@@ -125,7 +125,7 @@ impl PaintApp {
                                 _ => CursorIcon::Crosshair,
                             });
                         if !self.measure.enabled
-                            && self.tool == Tool::Select
+                            && matches!(self.tool, Tool::Select | Tool::Text)
                             && self.text_edit.is_none()
                         {
                             response.context_menu(|ui| self.selection_menu(ui, ctx));
@@ -256,9 +256,9 @@ impl PaintApp {
                                             index: self.object,
                                             original: r,
                                             start: self.point(press, rect),
-                                            base: self
-                                                .object
-                                                .map(|index| self.doc.objects[index].clone()),
+                                            base: self.object.map(|index| {
+                                                Box::new(self.doc.objects[index].clone())
+                                            }),
                                             handle,
                                         });
                                     }

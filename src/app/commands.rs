@@ -186,8 +186,11 @@ impl PaintApp {
             Action::Crop => {
                 if let Some(r) = self.selected_region() {
                     self.doc.begin();
-                    self.doc.flatten();
-                    self.doc.image = r.extract(&self.doc.image);
+                    if let Err(error) = self.doc.crop_canvas(r) {
+                        self.doc.cancel();
+                        self.message = error;
+                        return;
+                    }
                     self.doc.commit();
                     self.clear_selection();
                     self.refresh = true;
@@ -232,14 +235,23 @@ impl PaintApp {
                     self.refresh = true;
                 }
             }
-            Action::Invert => self.transform_with_key(
-                |img| {
-                    let mut img = img.clone();
-                    imageops::invert(&mut img);
-                    img
-                },
-                |[r, g, b, a]| [255 - r, 255 - g, 255 - b, a],
-            ),
+            Action::Invert => {
+                if let Some((mut edits, _)) = self.image_edit_target() {
+                    edits.invert = !edits.invert;
+                    if let Err(error) = self.apply_image_edits(edits) {
+                        self.message = error;
+                    }
+                } else {
+                    self.transform_with_key(
+                        |img| {
+                            let mut img = img.clone();
+                            imageops::invert(&mut img);
+                            img
+                        },
+                        |[r, g, b, a]| [255 - r, 255 - g, 255 - b, a],
+                    );
+                }
+            }
             Action::Print => {
                 self.dialog = Some(Dialog::Print);
             }
@@ -261,6 +273,11 @@ impl PaintApp {
                 transform.yx = -transform.yx;
                 transform.yy = -transform.yy;
             }
+            self.doc.commit();
+            self.refresh = true;
+        } else if self.selection.is_none() {
+            self.doc.begin();
+            self.doc.flip_content(horizontal);
             self.doc.commit();
             self.refresh = true;
         } else {
@@ -294,15 +311,22 @@ impl PaintApp {
             return Err("Dimensions must be positive and fit within 16 megapixels.".into());
         }
         let plan = super::transforms::SkewPlan::new(width, height, skew_x, skew_y)?;
+        if let Some(bounds) = self.finish_editing() {
+            self.selection = Some(bounds);
+        }
         if skew_x == 0.0 && skew_y == 0.0 {
             if (width, height) == self.resize_dimensions() {
                 return Ok(());
             }
-            if let Some(index) = self
-                .object
-                .filter(|&index| matches!(self.doc.objects[index].kind, ObjectKind::Text { .. }))
-            {
+            if let Some(index) = self.object {
                 let mut resized = self.doc.objects[index].clone();
+                if matches!(resized.kind, ObjectKind::Image(_)) {
+                    resized.image_edits.sampling = if self.pixel_resize {
+                        d::ImageSampling::Nearest
+                    } else {
+                        d::ImageSampling::Smooth
+                    };
+                }
                 resized.resize_rendered(width, height)?;
                 self.doc.begin();
                 self.doc.objects[index] = resized;
@@ -310,6 +334,39 @@ impl PaintApp {
                 self.refresh = true;
                 return Ok(());
             }
+            if self.selection.is_none() {
+                self.doc.begin();
+                let sampling = if self.pixel_resize {
+                    d::ImageSampling::Nearest
+                } else {
+                    d::ImageSampling::Smooth
+                };
+                if let Err(error) = self.doc.resize_content(width, height, sampling) {
+                    self.doc.cancel();
+                    return Err(error);
+                }
+                self.doc.commit();
+                self.refresh = true;
+                return Ok(());
+            }
+        }
+        if let Some(index) = self
+            .object
+            .filter(|&index| matches!(self.doc.objects[index].kind, ObjectKind::Image(_)))
+        {
+            let mut resized = self.doc.objects[index].clone();
+            resized.image_edits.sampling = if self.pixel_resize {
+                d::ImageSampling::Nearest
+            } else {
+                d::ImageSampling::Smooth
+            };
+            resized.resize_rendered(width, height)?;
+            resized.skew_rendered(skew_x, skew_y)?;
+            self.doc.begin();
+            self.doc.objects[index] = resized;
+            self.doc.commit();
+            self.refresh = true;
+            return Ok(());
         }
         let background = self.colors[1];
         let filter = if self.pixel_resize {
@@ -336,6 +393,8 @@ impl PaintApp {
             self.doc.objects[i].angle = 0.;
             self.doc.objects[i].scale = 1.;
             self.doc.objects[i].transform = Default::default();
+            self.doc.objects[i].image_edits = Default::default();
+            self.doc.objects[i].source_clip = None;
             self.doc.objects[i].color_key = self.doc.objects[i].color_key.map(map_key);
         } else if let Some(r) = self.selection {
             let source = self.selected_image().unwrap();
@@ -349,6 +408,8 @@ impl PaintApp {
                 scale: 1.,
                 color_key: self.transparent.then(|| map_key(self.colors[1])),
                 transform: Default::default(),
+                image_edits: Default::default(),
+                source_clip: None,
             });
             self.select_object(i);
         } else {
@@ -398,11 +459,16 @@ impl PaintApp {
             }
             let background = self.colors[1];
             let quarter_turn = (angle.rem_euclid(180.0) - 90.0).abs() < 0.001;
-            if self.selection.is_none() && quarter_turn {
+            if self.selection.is_none() {
                 self.doc.begin();
-                self.doc.flatten();
-                self.doc.image = d::rotate(&self.doc.image, angle, background);
-                std::mem::swap(&mut self.doc.resolution.x, &mut self.doc.resolution.y);
+                if let Err(error) = self.doc.rotate_content(angle, background) {
+                    self.doc.cancel();
+                    self.message = error;
+                    return false;
+                }
+                if quarter_turn {
+                    std::mem::swap(&mut self.doc.resolution.x, &mut self.doc.resolution.y);
+                }
                 self.doc.commit();
                 self.refresh = true;
             } else {
@@ -443,7 +509,7 @@ mod tests {
         app.pixel_resize = true;
         app.resize_picture(32, 32, 0.0, 0.0).unwrap();
         assert_eq!(app.doc.image.dimensions(), (32, 32));
-        for (x, y, pixel) in app.doc.image.enumerate_pixels() {
+        for (x, y, pixel) in app.doc.composite().enumerate_pixels() {
             assert_eq!(pixel, original.get_pixel(x / 8, y / 8));
         }
         app.doc.undo();

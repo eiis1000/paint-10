@@ -31,8 +31,8 @@ pub fn save(doc: &Document, path: &Path) -> Result<(), String> {
     atomic_write(path, &encode(doc)?)
 }
 
-/// Encode the bounded version-2 format for disk and browser downloads.
-/// Each distinct font binary is stored once; the loader also accepts version 1.
+/// Encode the bounded version-3 format for disk and browser downloads.
+/// Original image edits require v3; the loader also accepts versions 1 and 2.
 pub fn encode(doc: &Document) -> Result<Vec<u8>, String> {
     doc.resolution.validate()?;
     if !valid_size(doc.image.width(), doc.image.height()) {
@@ -105,7 +105,7 @@ fn decode_reader(mut file: impl Read) -> Result<Document, String> {
     let data = match version.version {
         1 => serde_json::from_slice::<Project>(&bytes)
             .map_err(|e| format!("Invalid project: {e}"))?,
-        2 => serde_json::from_slice::<wire::Project>(&bytes)
+        2 | 3 => serde_json::from_slice::<wire::Project>(&bytes)
             .map_err(|e| format!("Invalid project: {e}"))?
             .into_project()?,
         _ => return Err("Unsupported Paint 10 project version.".into()),
@@ -119,6 +119,10 @@ fn decode_reader(mut file: impl Read) -> Result<Document, String> {
 }
 
 fn validate_object(object: &Object) -> Result<usize, String> {
+    object.image_edits.validate(object.source_dimensions())?;
+    if let Some(clip) = &object.source_clip {
+        clip.validate()?;
+    }
     if !object.angle.is_finite()
         || !object.scale.is_finite()
         || object.scale <= 0.
@@ -152,10 +156,14 @@ fn validate_object(object: &Object) -> Result<usize, String> {
 }
 
 fn object_bytes(object: &Object, fonts: &mut crate::text::FontMemory) -> usize {
-    match &object.kind {
-        ObjectKind::Raster(image) | ObjectKind::Image(image) => image.as_raw().len(),
-        ObjectKind::Text { text, format } => text.len() + format.memory_bytes_with_fonts(fonts),
-    }
+    object
+        .source_clip
+        .as_ref()
+        .map_or(0, crate::document::SourceClip::memory_bytes)
+        + match &object.kind {
+            ObjectKind::Raster(image) | ObjectKind::Image(image) => image.as_raw().len(),
+            ObjectKind::Text { text, format } => text.len() + format.memory_bytes_with_fonts(fonts),
+        }
 }
 
 fn validate_objects(objects: &[Object]) -> Result<(), String> {
@@ -507,6 +515,8 @@ mod tests {
             scale: 1.,
             color_key: Some(crate::document::WHITE),
             transform: Default::default(),
+            image_edits: Default::default(),
+            source_clip: None,
         });
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("test.p10");
@@ -574,6 +584,8 @@ mod tests {
                 angle: 0.,
                 color_key: None,
                 transform: Default::default(),
+                image_edits: Default::default(),
+                source_clip: None,
             });
             assert!(save(&doc, &path).is_err());
             write_malformed_fixture(&doc, &path);
@@ -587,6 +599,8 @@ mod tests {
             angle: 0.,
             color_key: None,
             transform: Default::default(),
+            image_edits: Default::default(),
+            source_clip: None,
         });
         assert!(save(&doc, &path).is_err());
         write_malformed_fixture(&doc, &path);

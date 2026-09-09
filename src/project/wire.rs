@@ -1,8 +1,8 @@
-//! Version 2 keeps each font binary once while retaining all face and style
-//! metadata at its original use site. Empty style fonts select the built-in face.
+//! Versions 2 and 3 share a deduplicated font table. Version 3 adds reversible
+//! image edits; old readers reject it instead of silently losing those edits.
 
 use super::*;
-use crate::document::{Color, LinearTransform, Point};
+use crate::document::{Color, ImageEdits, LinearTransform, Point, SourceClip};
 use crate::text::{
     EmbeddedFont, FontBytes, TextAlignment, TextFormat, TextSizeMode, TextSpan, TextStyle,
 };
@@ -36,6 +36,10 @@ struct WireObject {
     color_key: Option<Color>,
     #[serde(default)]
     transform: LinearTransform,
+    #[serde(default)]
+    image_edits: ImageEdits,
+    #[serde(default)]
+    source_clip: Option<SourceClip>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -129,7 +133,7 @@ impl Project {
             .map(|object| WireObject::from_object(object, &mut fonts))
             .collect::<Result<_, _>>()?;
         Ok(Self {
-            version: 2,
+            version: 3,
             mono: document.mono,
             resolution: document.resolution,
             image: document.image.clone(),
@@ -139,7 +143,7 @@ impl Project {
     }
 
     pub(super) fn into_project(self) -> Result<super::Project, String> {
-        if self.version != 2 {
+        if !matches!(self.version, 2 | 3) {
             return Err("Unsupported Paint 10 project version.".into());
         }
         self.resolution.validate()?;
@@ -171,7 +175,7 @@ impl Project {
             .collect::<Result<Vec<_>, _>>()?;
         validate_objects(&objects)?;
         Ok(super::Project {
-            version: 2,
+            version: self.version,
             mono: self.mono,
             resolution: self.resolution,
             image: self.image,
@@ -207,6 +211,8 @@ impl WireObject {
             scale: object.scale,
             color_key: object.color_key,
             transform: object.transform,
+            image_edits: object.image_edits,
+            source_clip: object.source_clip.clone(),
         })
     }
 
@@ -226,27 +232,34 @@ impl WireObject {
             scale: self.scale,
             color_key: self.color_key,
             transform: self.transform,
+            image_edits: self.image_edits,
+            source_clip: self.source_clip,
         })
     }
 
     fn non_font_bytes(&self) -> usize {
-        match &self.kind {
-            WireKind::Raster(image) | WireKind::Image(image) => image.as_raw().len(),
-            WireKind::Text { text, format } => {
-                text.len()
-                    + format.style.font_name.len()
-                    + format
-                        .spans
-                        .iter()
-                        .map(|span| std::mem::size_of::<TextSpan>() + span.style.font_name.len())
-                        .sum::<usize>()
-                    + format
-                        .font_faces
-                        .iter()
-                        .map(|face| std::mem::size_of::<EmbeddedFont>() + face.family.len())
-                        .sum::<usize>()
+        self.source_clip
+            .as_ref()
+            .map_or(0, SourceClip::memory_bytes)
+            + match &self.kind {
+                WireKind::Raster(image) | WireKind::Image(image) => image.as_raw().len(),
+                WireKind::Text { text, format } => {
+                    text.len()
+                        + format.style.font_name.len()
+                        + format
+                            .spans
+                            .iter()
+                            .map(|span| {
+                                std::mem::size_of::<TextSpan>() + span.style.font_name.len()
+                            })
+                            .sum::<usize>()
+                        + format
+                            .font_faces
+                            .iter()
+                            .map(|face| std::mem::size_of::<EmbeddedFont>() + face.family.len())
+                            .sum::<usize>()
+                }
             }
-        }
     }
 }
 

@@ -30,7 +30,9 @@ fn bounds(output: &FullOutput, label: &str) -> Rect {
         .unwrap()
         .nodes
         .iter()
-        .find(|(_, node)| node.label() == Some(label))
+        .find(|(_, node)| {
+            node.label() == Some(label) && node.role() == egui::accesskit::Role::Button
+        })
         .unwrap_or_else(|| panic!("Missing accessible control: {label}"))
         .1
         .bounds()

@@ -2554,13 +2554,19 @@ mod tests {
         let ctx = Context::default();
         let mut app = editing_app(&ctx, "Hello");
         app_frame(&mut app, &ctx, vec![key(Key::Tab, Modifiers::CTRL)]);
-        assert!(!app.text_tab && !app.view_tab);
+        assert!(!app.text_tab && !app.view_tab && !app.image_tab);
         app_frame(
             &mut app,
             &ctx,
             vec![key(Key::Tab, Modifiers::CTRL | Modifiers::SHIFT)],
         );
         assert!(app.text_tab);
+        app_frame(
+            &mut app,
+            &ctx,
+            vec![key(Key::Tab, Modifiers::CTRL | Modifiers::SHIFT)],
+        );
+        assert!(app.image_tab && !app.text_tab && !app.view_tab);
         app_frame(
             &mut app,
             &ctx,

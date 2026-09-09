@@ -118,7 +118,12 @@ impl PaintApp {
             hover.0.clamp(0, self.doc.image.width() as i32 - 1),
             hover.1.clamp(0, self.doc.image.height() as i32 - 1),
         ));
-        let press_pos = pointer_press_in(ui, ctx, rect, self.tool == Tool::Select);
+        let press_pos = pointer_press_in(
+            ui,
+            ctx,
+            rect,
+            matches!(self.tool, Tool::Select | Tool::Text),
+        );
         let raw = self.point(
             gesture_pointer_position(ctx, press_pos).unwrap_or(pos),
             rect,
@@ -359,6 +364,8 @@ impl PaintApp {
                         scale: 1.,
                         color_key: self.transparent.then_some(self.colors[1]),
                         transform: Default::default(),
+                        image_edits: Default::default(),
+                        source_clip: None,
                     });
                     self.select_object(i);
                     self.gesture = Some(Gesture::Move {
@@ -484,9 +491,9 @@ impl PaintApp {
                 } => {
                     if index.is_none() && raw != *start {
                         *index = self.lift_selection();
-                        *base = index.map(|index| self.doc.objects[index].clone());
+                        *base = index.map(|index| Box::new(self.doc.objects[index].clone()));
                     }
-                    let Some((index, base)) = index.as_ref().zip(base.as_ref()) else {
+                    let Some((index, base)) = index.as_ref().zip(base.as_deref()) else {
                         if !released {
                             self.gesture = Some(gesture);
                         }
@@ -501,6 +508,13 @@ impl PaintApp {
                     );
                     if d::valid_size(w, h) {
                         let mut object = base.clone();
+                        if matches!(object.kind, ObjectKind::Image(_)) {
+                            object.image_edits.sampling = if self.pixel_resize {
+                                d::ImageSampling::Nearest
+                            } else {
+                                d::ImageSampling::Smooth
+                            };
+                        }
                         match object.resize_rendered(w, h) {
                             Ok(()) => {
                                 object.pos = position;
@@ -1020,6 +1034,28 @@ mod tests {
                 modifiers: Modifiers::NONE,
             },
         ]
+    }
+
+    #[test]
+    fn right_click_with_text_tool_opens_context_without_creating_a_text_box() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.set_tool(Tool::Text);
+        for _ in 0..3 {
+            pointer_app_frame(&mut app, &ctx, vec![]);
+        }
+        pointer_app_frame(
+            &mut app,
+            &ctx,
+            coalesced_click(pos2(100.0, 250.0), PointerButton::Secondary),
+        );
+        for _ in 0..3 {
+            pointer_app_frame(&mut app, &ctx, vec![]);
+        }
+        assert!(app.text_edit.is_none());
+        assert!(app.gesture.is_none());
+        assert!(!app.doc.dirty());
+        assert!(keytips::popup_open(&ctx));
     }
 
     #[test]

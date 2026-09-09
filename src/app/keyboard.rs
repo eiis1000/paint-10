@@ -68,19 +68,22 @@ impl PaintApp {
             consume_shortcut(input, Modifiers::CTRL | Modifiers::SHIFT, Key::Tab)
         });
         if backward || ctx.input_mut(|input| consume_shortcut(input, Modifiers::CTRL, Key::Tab)) {
-            let count = if self.text_edit.is_some() { 3 } else { 2 };
+            let count = if self.text_edit.is_some() { 4 } else { 3 };
             let current = if self.text_tab {
+                3
+            } else if self.image_tab {
                 2
             } else {
                 usize::from(self.view_tab)
             };
             let next = (current + if backward { count - 1 } else { 1 }) % count;
-            self.text_tab = next == 2;
+            self.text_tab = next == 3;
+            self.image_tab = next == 2;
             self.view_tab = next == 1;
             if self.collapsed {
                 ctx.data_mut(|data| data.insert_temp(Id::new("paint10-ribbon-revealed"), true));
             }
-            keytips::switch_tab(ctx, ["home", "view", "text"][next]);
+            keytips::switch_tab(ctx, ["home", "view", "image", "text"][next]);
             return true;
         }
         if ctx.input_mut(|input| {
@@ -100,6 +103,8 @@ impl PaintApp {
         }
         let tab = if self.text_tab {
             "text"
+        } else if self.image_tab {
+            "image"
         } else if self.view_tab {
             "view"
         } else {
@@ -154,14 +159,15 @@ impl PaintApp {
                 .text_edit
                 .as_ref()
                 .is_some_and(|state| !state.selection.is_empty());
-            for (label, action, enabled) in [
-                ("Cut", Action::Cut, selected),
-                ("Copy", Action::Copy, selected),
-                ("Paste", Action::Paste, true),
-                ("Delete", Action::Clear, selected),
-                ("Select all", Action::SelectAll, true),
+            for (label, shortcut, action, enabled) in [
+                ("Cut", "Ctrl+X", Action::Cut, selected),
+                ("Copy", "Ctrl+C", Action::Copy, selected),
+                ("Paste", "Ctrl+V", Action::Paste, true),
+                ("Delete", "Del", Action::Clear, selected),
+                ("Select all", "Ctrl+A", Action::SelectAll, true),
             ] {
-                let response = ui.add_enabled(enabled, theme::MenuItem::new(label));
+                let response =
+                    ui.add_enabled(enabled, theme::MenuItem::new(label).shortcut(shortcut));
                 self.focus_keyboard_context(ui, &response);
                 if response.clicked() {
                     if matches!(action, Action::Clear | Action::SelectAll) {
@@ -176,17 +182,20 @@ impl PaintApp {
             return;
         }
         let selected = self.selected_region().is_some();
-        for (label, action, enabled) in [
-            ("Cut", Action::Cut, selected),
-            ("Copy", Action::Copy, selected),
-            ("Paste", Action::Paste, true),
-            ("Crop", Action::Crop, selected),
-            ("Delete", Action::Clear, selected),
-            ("Select all", Action::SelectAll, true),
-            ("Invert colors", Action::Invert, true),
-            ("Resize and skew…", Action::Resize, true),
+        for (label, shortcut, action, enabled) in [
+            ("Cut", "Ctrl+X", Action::Cut, selected),
+            ("Copy", "Ctrl+C", Action::Copy, selected),
+            ("Paste", "Ctrl+V", Action::Paste, true),
+            ("Delete", "Del", Action::Clear, selected),
+            ("Select all", "Ctrl+A", Action::SelectAll, true),
+            ("Crop", "Ctrl+Shift+X", Action::Crop, selected),
+            ("Resize and skew…", "Ctrl+W", Action::Resize, true),
+            ("Invert colors", "Ctrl+Shift+I", Action::Invert, true),
         ] {
-            let response = ui.add_enabled(enabled, theme::MenuItem::new(label));
+            if label == "Crop" {
+                ui.separator();
+            }
+            let response = ui.add_enabled(enabled, theme::MenuItem::new(label).shortcut(shortcut));
             self.focus_keyboard_context(ui, &response);
             if response.clicked() {
                 self.action(action, ctx);
@@ -198,6 +207,21 @@ impl PaintApp {
             self.invert_selection();
             self.keyboard_context_menu = false;
             ui.close_menu();
+        }
+        if self.image_edit_target().is_some() {
+            ui.separator();
+            for (label, dialog) in [
+                ("Adjust image colors…", Dialog::ImageAdjustments),
+                ("Crop image…", Dialog::ImageCrop),
+            ] {
+                let response = ui.add(theme::MenuItem::new(label));
+                self.focus_keyboard_context(ui, &response);
+                if response.clicked() {
+                    self.dialog = Some(dialog);
+                    self.keyboard_context_menu = false;
+                    ui.close_menu();
+                }
+            }
         }
     }
 

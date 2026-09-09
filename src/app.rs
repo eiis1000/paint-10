@@ -7,6 +7,7 @@ mod file_menu;
 #[cfg_attr(target_arch = "wasm32", path = "app/web_files.rs")]
 mod files;
 mod gestures;
+mod image_ribbon;
 mod jobs;
 mod keyboard;
 mod keytips;
@@ -74,6 +75,8 @@ enum Dialog {
     Resize,
     Rotate,
     Colors,
+    ImageAdjustments,
+    ImageCrop,
     Properties,
     About,
     Print,
@@ -139,7 +142,7 @@ enum Gesture {
         index: Option<usize>,
         original: Region,
         start: Point,
-        base: Option<Object>,
+        base: Option<Box<Object>>,
         handle: usize,
     },
     MoveShape {
@@ -183,6 +186,7 @@ pub struct PaintApp {
     measure: measure::Measurement,
     status_bar: bool,
     view_tab: bool,
+    image_tab: bool,
     text_tab: bool,
     collapsed: bool,
     selection: Option<Region>,
@@ -298,6 +302,7 @@ impl PaintApp {
             measure: Default::default(),
             status_bar: true,
             view_tab: false,
+            image_tab: false,
             text_tab: false,
             collapsed: false,
             selection: None,
