@@ -19,11 +19,14 @@
   Root removes explanatory UI banners and verbose status messages, retaining
   useful labels, tooltips, measurements and errors. README documents local
   processing, file behavior, math limits and differences from Windows Paint.
-- Current full app suite passes 292 tests before the last layout/copy refinements.
-  Native private desktops are :1 (ribbon), :2 (root), :3 (transforms). Disposable
-  builds remain in /tmp/paint10-layers-target. Final full native/WASM checks,
-  manual equation/project/export workflows, logical commits, CI and public
-  Pages replay remain required. Do not infer completion from older checkpoints.
+- Final local gates pass 191 library and 295 application tests, strict native
+  and WASM Clippy, formatting, browser inputs, packaging and release web build.
+  Native/browser manual equation editing, source persistence and export pass;
+  private ribbon/transform sessions are closed. Root :2 remains for live Pages
+  checks. Disposable builds remain in /tmp/paint10-layers-target.
+- Logical commits through 919ad37 are pushed, CI run34418055620 is in progress.
+  The final additional double-click regression and these verification records
+  need a follow-up commit/run. Final CI and public Pages replay remain required.
 
 ## September 9: approved optional Layers
 

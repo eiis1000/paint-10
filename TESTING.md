@@ -2,7 +2,7 @@
 
 ## September 9: equations, transform menus, toolbar alignment, and UI copy
 
-The integrated native suite passes 191 library and 294 application tests.
+The integrated native suite passes 191 library and 295 application tests.
 Strict native and WebAssembly Clippy, formatting, the 11 browser input tests,
 four package tests, and the release browser build pass. Math rendering tests
 cover fractions, roots, sums, matrices, cases, styled alpha/outline output,
@@ -23,8 +23,18 @@ Manual rotation and Undo work on both the whole picture and closed free-form
 selections. Evidence: `/tmp/paint10-transform-audit.md` and
 `/tmp/paint10-ribbon-final-*.png`.
 
-Final GitHub CI, Pages deployment, and live-site replay are still required for
-these changes; previous successful runs do not verify this batch.
+The release browser opened the native equation project, reopened its source,
+changed the fraction to an integral, and downloaded `browser-equation.p10`.
+Decompression confirmed project v5 retains exactly the entered source. The
+browser download dialog and startup/status areas have no explanatory banners.
+Additional native checks reopen both ordinary text and equations after loading
+projects using separate and batched double-clicks, with no extra input required.
+
+The browser WASM module is 11,892,247 bytes, up from 8,360,220 bytes before math
+rendering. The added renderer/font cost is
+shared by native and browser builds; no external compiler or service is needed.
+Final GitHub CI, Pages deployment, and live-site replay remain the completion
+gates; previous successful runs do not verify this batch.
 
 ## September 9: optional Layers
 
