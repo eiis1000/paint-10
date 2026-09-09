@@ -669,6 +669,7 @@ impl PaintApp {
                     let extra_rows = usize::from(cfg!(target_arch = "wasm32"));
                     let height = ((row_count.max(1) + extra_rows) as f32 * 31.0).min(280.0);
                     ScrollArea::vertical()
+                        .drag_to_scroll(false)
                         .max_height(280.0)
                         .min_scrolled_height(height)
                         .auto_shrink([false, true])
@@ -1460,6 +1461,8 @@ fn change_style(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod picker_scroll_tests;
 
     fn key(key: Key, modifiers: Modifiers) -> Event {
         Event::Key {
