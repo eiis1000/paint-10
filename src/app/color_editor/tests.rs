@@ -3,6 +3,7 @@ use super::*;
 struct Fixture {
     ctx: Context,
     app: PaintApp,
+    width: f32,
     height: f32,
     textures: std::collections::HashMap<TextureId, ColorImage>,
 }
@@ -17,6 +18,7 @@ impl Fixture {
         Self {
             ctx,
             app,
+            width: 500.0,
             height: 500.0,
             textures: Default::default(),
         }
@@ -24,7 +26,10 @@ impl Fixture {
 
     fn frame(&mut self, events: Vec<Event>) -> FullOutput {
         let mut input = RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(500.0, self.height))),
+            screen_rect: Some(Rect::from_min_size(
+                Pos2::ZERO,
+                vec2(self.width, self.height),
+            )),
             time: Some(self.ctx.cumulative_pass_nr() as f64 / 30.0),
             events,
             ..Default::default()
@@ -718,4 +723,56 @@ fn cmyk_black_strip_changes_the_plane_and_perceptual_pointer_edits_can_be_fitted
     fixture.settle();
     assert!(fixture.state().in_gamut);
     assert_eq!(fixture.app.colors[0][3], 99);
+}
+
+#[test]
+fn cmyk_strip_readout_has_distinct_labels_and_units_and_fits_narrow_dialogs() {
+    // Match the normal viewport and the native minimum in main.rs.
+    for (width, height) in [(1200.0, 800.0), (500.0, 400.0)] {
+        let mut fixture = Fixture::new([51, 102, 153, 128]);
+        fixture.width = width;
+        fixture.height = height;
+        fixture.settle();
+        fixture.choose_space(Space::Cmyk);
+        for (slice, channel, abbreviation) in [
+            (Slice::Third, "Yellow", "Y"),
+            (Slice::First, "Cyan", "C"),
+            (Slice::Second, "Magenta", "M"),
+        ] {
+            fixture.choose_slice(slice);
+            for (ink, black) in [(0.0, 40.0), (100.0, 100.0)] {
+                fixture.replace_field(channel, &ink.to_string());
+                let output = fixture.replace_field("Black", &black.to_string());
+                let expected = format!("{abbreviation} {ink:.2}% · K {black:.2}%");
+                let (clipped, text) = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        Shape::Text(text) if text.galley.job.text == expected => {
+                            Some((shape, text))
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("Missing distinct CMYK strip readout: {expected}"));
+                let painted = text.visual_bounding_rect();
+                let plane = fixture.plane_bounds(&output);
+                let black_strip = bounds(&output, "Black color strip");
+                let alpha = bounds(&output, "Alpha transparency");
+                let footer = Rect::from_min_max(
+                    pos2(plane.left(), plane.bottom()),
+                    pos2(black_strip.right(), alpha.top()),
+                );
+                assert!(
+                    footer.contains_rect(painted),
+                    "{width}px: {expected}: {painted:?}"
+                );
+                assert!(
+                    clipped.clip_rect.contains_rect(painted),
+                    "{width}px: {expected}: {painted:?} is clipped by {:?}",
+                    clipped.clip_rect
+                );
+                assert_eq!(fixture.app.colors[0][3], 128);
+            }
+        }
+    }
 }
