@@ -1,5 +1,17 @@
 # Paint 10 verification log
 
+## September 9: installed browser color replay
+
+The immutable `6baab78` web package is served at port 8082 and was operated
+in private Chromium. F10 → H → D opens Edit Colors from the visible ribbon
+keytips. Pasting `color(srgb-linear 0.21404114 0.05087609 0.01444384 / 50%)`
+sets RGB 127/64/32 and alpha 128. Add stores that color in slot one. Cancel
+restores black, and F5 followed by slot recall restores exact `7F402080`.
+The new application and browser-tab icons are present. Captures were visually
+inspected: `/tmp/paint10-browser-package-{editor,linear,persisted}.png`.
+This supplements the broader native and mutable-browser tests below with
+actual input against the installed Nix output.
+
 ## September 8: color/icon Nix package builds
 
 Immutable source `6baab78` builds both updated packages from the same captured

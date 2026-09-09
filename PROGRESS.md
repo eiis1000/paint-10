@@ -1,5 +1,24 @@
 # Paint 10 work in progress
 
+## Current September 9 checkpoint, around 01:00 EDT
+
+- Production remains `6baab78`, with both immutable Nix packages built and
+  audited. Actual browser replay now passes on port 8082: F10/H/D, linear RGB
+  with alpha, custom Add, Cancel, F5 and exact slot recall. Its scratch picture
+  is clean; private controller 38238 remains available on DISPLAY=:2.
+- The installed native package remains in launcher 45195, controller 31474,
+  private DISPLAY=:1. The saved landscape is open at 50%, origin (58,234).
+  Two unequal pine branch masses, two ground polygons covering pale symbolic
+  plants, and bent grass Curve shapes are being added through the GUI. These
+  latest changes are not yet saved. The first Curve was visually inspected.
+  Tool Curve, Natural pencil outline, 5px, Color 1 #415950FF, Color 2 white.
+- The whole landscape still needs stronger naturalism and fresh raster
+  exports. Root continues painting; no direct image/project generation is
+  permitted. `tmp/art-controls.sh` now has a hand-input Curve helper.
+- file_finish is doing a bounded read-only completion audit outside the known
+  landscape and unexecuted Windows/macOS limits. It may write only its scratch
+  audit. Other agents are idle; root owns source, GUI, artwork and Git.
+
 ## Current September 8 checkpoint, around 21:52 EDT
 
 - Production remains `6baab78`; `f83da5d` documents the color work and
