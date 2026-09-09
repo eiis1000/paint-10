@@ -1169,6 +1169,7 @@ mod tests {
 
     mod picker_scroll_tests;
     mod ribbon_ui_tests;
+    mod undo_order_tests;
 
     fn key(key: Key, modifiers: Modifiers) -> Event {
         Event::Key {

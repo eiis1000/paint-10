@@ -1,11 +1,11 @@
-//! Unicode editing boundaries and ordered IME/visual-cursor input.
+//! Unicode editing boundaries and ordered text, history and IME input.
 
 use super::*;
 use unicode_segmentation::UnicodeSegmentation;
 
 impl PaintApp {
     pub(in crate::app) fn text_raw_input(&self, ctx: &Context, input: &mut RawInput) {
-        let pending = Id::new("paint10_text_composition_input");
+        let pending = Id::new("paint10_text_ordered_input");
         let mut events = ctx
             .data_mut(|data| data.remove_temp::<Vec<Event>>(pending))
             .unwrap_or_default();
@@ -29,6 +29,12 @@ impl PaintApp {
                 end
             })
             .unwrap_or(events.len());
+        if let Some(index) = events.iter().position(is_history_shortcut) {
+            // The ribbon/shortcut pass runs before TextEdit. Finish preceding
+            // input first, then give each Undo/Redo its own pass so commands
+            // cannot overtake typing or consume each other in the same frame.
+            boundary = boundary.min(if index == 0 { 1 } else { index });
+        }
         if self
             .text_edit
             .as_ref()
@@ -53,12 +59,28 @@ impl PaintApp {
         let deferred = events.split_off(boundary);
         input.events = events;
         if !deferred.is_empty() {
-            // A composition's final text must reach TextEdit before a second
-            // composition or a following Save/Undo command observes the state.
+            // Confirmed text must reach TextEdit before a subsequent history
+            // command or composition observes the state.
             ctx.data_mut(|data| data.insert_temp(pending, deferred));
             ctx.request_repaint();
         }
     }
+}
+
+fn is_history_shortcut(event: &Event) -> bool {
+    let Event::Key {
+        key,
+        modifiers,
+        pressed: true,
+        ..
+    } = event
+    else {
+        return false;
+    };
+    let matches =
+        |expected| super::super::shortcuts::shortcut_modifiers_match(*modifiers, expected);
+    matches!(key, Key::Z | Key::Y) && matches(Modifiers::CTRL)
+        || *key == Key::Z && matches(Modifiers::CTRL | Modifiers::SHIFT)
 }
 
 /// The document stores scalar indices, while editing stops at complete user
