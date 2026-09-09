@@ -87,6 +87,10 @@ The foliage pass gives the large pine two unequal branch masses and replaces
 the pale star-shaped plants with eight bent Curve shapes. Natural pencil
 outlines at five pixels provide their broken edges. These were painted in
 the installed Nix package and visually inspected on the actual canvas.
+Four further Polygon shapes tone down and interrupt the broad snow reflection.
+Color Picker samples from the open water and darker reflected mountain give
+the cuts their colors. The saved project contains these changes; raster
+exports still await the end of the landscape pass.
 
 ## Ant-colony simulation slide
 
