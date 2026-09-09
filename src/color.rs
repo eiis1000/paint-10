@@ -4,6 +4,7 @@
 //! Oklab uses Björn Ottosson's public-domain, January 2021 matrices:
 //! <https://bottosson.github.io/posts/oklab/>.
 
+mod named;
 mod parse;
 
 pub use parse::{parse_color, parse_color_with_alpha, ParsedColor};
@@ -230,14 +231,19 @@ pub fn coordinates(space: Space, rgb: [u8; 3]) -> [f64; 4] {
 }
 
 pub fn from_coordinates(space: Space, values: [f64; 4]) -> Conversion {
+    checked_from_coordinates(space, values).unwrap_or(Conversion {
+        rgb: [0; 3],
+        in_gamut: false,
+    })
+}
+
+// Literal entry must distinguish conversion overflow from a valid clipped color.
+fn checked_from_coordinates(space: Space, values: [f64; 4]) -> Option<Conversion> {
     if !values[..space.channels().len()]
         .iter()
         .all(|v| v.is_finite())
     {
-        return Conversion {
-            rgb: [0; 3],
-            in_gamut: false,
-        };
+        return None;
     }
     let [a, b, c, d] = values;
     let rgb = match space {
@@ -255,10 +261,13 @@ pub fn from_coordinates(space: Space, values: [f64; 4]) -> Conversion {
         Space::Oklab => oklab_to_linear([a, b, c]).map(linear_to_srgb),
         Space::Oklch => oklab_to_linear(oklch_to_oklab([a, b, c])).map(linear_to_srgb),
     };
-    Conversion {
+    if !rgb.iter().all(|channel| channel.is_finite()) {
+        return None;
+    }
+    Some(Conversion {
         rgb: rgb.map(byte),
         in_gamut: in_unit_gamut(rgb.map(srgb_to_linear)),
-    }
+    })
 }
 
 pub fn format_hex([red, green, blue, alpha]: [u8; 4], include_alpha: bool) -> String {

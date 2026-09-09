@@ -1,4 +1,4 @@
-use super::{byte, from_coordinates, Space};
+use super::{byte, checked_from_coordinates, named, Space};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ParsedColor {
@@ -13,7 +13,7 @@ pub fn parse_color(input: &str) -> Result<[u8; 4], String> {
     parse_color_with_alpha(input).map(|color| color.rgba)
 }
 
-/// Parse literal hex and common CSS color functions, without a CSS environment.
+/// Parse fixed CSS names, hex and common color functions without a CSS environment.
 /// Expressions, relative colors, variables and named system colors are rejected.
 pub fn parse_color_with_alpha(input: &str) -> Result<ParsedColor, String> {
     let input = input.trim();
@@ -21,6 +21,14 @@ pub fn parse_color_with_alpha(input: &str) -> Result<ParsedColor, String> {
         return Ok(ParsedColor {
             rgba: [0; 4],
             explicit_alpha: true,
+            in_gamut: true,
+            coordinates: None,
+        });
+    }
+    if let Some([red, green, blue]) = named::lookup(input) {
+        return Ok(ParsedColor {
+            rgba: [red, green, blue, 255],
+            explicit_alpha: false,
             in_gamut: true,
             coordinates: None,
         });
@@ -47,7 +55,7 @@ pub fn parse_color_with_alpha(input: &str) -> Result<ParsedColor, String> {
     }
 
     let (name, body) = input.split_once('(').ok_or_else(|| {
-        "Use 3, 4, 6 or 8 hex digits, or a literal rgb(), hsl(), oklab() or oklch() color."
+        "Use hex digits, a CSS color name, or a literal rgb(), hsl(), oklab() or oklch() color."
             .to_owned()
     })?;
     let name = name.to_ascii_lowercase();
@@ -60,6 +68,9 @@ pub fn parse_color_with_alpha(input: &str) -> Result<ParsedColor, String> {
     let legacy_allowed = matches!(name.as_str(), "rgb" | "rgba" | "hsl" | "hsla");
     let legacy = body.contains(',');
     let (components, alpha) = split_components(body, legacy_allowed)?;
+    if legacy && components.iter().copied().chain(alpha).any(is_none) {
+        return Err("The none keyword requires space-separated color components.".into());
+    }
     let alpha = alpha
         .map(|token| number_or_percent(token, 1.0))
         .transpose()?;
@@ -148,7 +159,8 @@ pub fn parse_color_with_alpha(input: &str) -> Result<ParsedColor, String> {
     if !values.iter().all(|v| v.is_finite()) {
         return Err("Color components are too large to represent.".into());
     }
-    let color = from_coordinates(space, values);
+    let color = checked_from_coordinates(space, values)
+        .ok_or("Color components are too large to convert to sRGB.")?;
     Ok(ParsedColor {
         rgba: [color.rgb[0], color.rgb[1], color.rgb[2], alpha_byte],
         explicit_alpha: alpha.is_some(),
@@ -198,7 +210,11 @@ fn require_count(components: &[&str], count: usize) -> Result<(), String> {
 }
 
 fn number_or_percent(token: &str, reference: f64) -> Result<f64, String> {
-    if let Some(value) = token.strip_suffix('%') {
+    if is_none(token) {
+        // Standalone colors resolve missing components to zero, including alpha.
+        // https://www.w3.org/TR/css-color-4/#missing
+        Ok(0.0)
+    } else if let Some(value) = token.strip_suffix('%') {
         Ok(number(value)? / 100.0 * reference)
     } else {
         number(token)
@@ -206,11 +222,7 @@ fn number_or_percent(token: &str, reference: f64) -> Result<f64, String> {
 }
 
 fn number(token: &str) -> Result<f64, String> {
-    // Rust's float parser accepts non-CSS spellings such as NaN and inf.
-    if !token
-        .bytes()
-        .all(|b| b.is_ascii_digit() || matches!(b, b'+' | b'-' | b'.' | b'e' | b'E'))
-    {
+    if !is_css_number(token) {
         return Err(format!("Invalid numeric component: {token}"));
     }
     token
@@ -220,7 +232,60 @@ fn number(token: &str) -> Result<f64, String> {
         .ok_or_else(|| format!("Invalid or non-finite numeric component: {token}"))
 }
 
+fn is_none(token: &str) -> bool {
+    token.eq_ignore_ascii_case("none")
+}
+
+fn is_css_number(token: &str) -> bool {
+    // Consume exactly one CSS number, rather than Rust-only float spellings.
+    // https://www.w3.org/TR/css-syntax-3/#consume-number
+    let mut bytes = token.bytes().peekable();
+    if matches!(bytes.peek(), Some(b'+' | b'-')) {
+        bytes.next();
+    }
+
+    let mut digits = 0;
+    while bytes.peek().is_some_and(u8::is_ascii_digit) {
+        bytes.next();
+        digits += 1;
+    }
+    if bytes.peek() == Some(&b'.') {
+        bytes.next();
+        let mut fraction_digits = 0;
+        while bytes.peek().is_some_and(u8::is_ascii_digit) {
+            bytes.next();
+            fraction_digits += 1;
+        }
+        if fraction_digits == 0 {
+            return false;
+        }
+        digits += fraction_digits;
+    }
+    if digits == 0 {
+        return false;
+    }
+
+    if matches!(bytes.peek(), Some(b'e' | b'E')) {
+        bytes.next();
+        if matches!(bytes.peek(), Some(b'+' | b'-')) {
+            bytes.next();
+        }
+        let mut exponent_digits = 0;
+        while bytes.peek().is_some_and(u8::is_ascii_digit) {
+            bytes.next();
+            exponent_digits += 1;
+        }
+        if exponent_digits == 0 {
+            return false;
+        }
+    }
+    bytes.next().is_none()
+}
+
 fn angle(token: &str) -> Result<f64, String> {
+    if is_none(token) {
+        return Ok(0.0);
+    }
     let token = token.to_ascii_lowercase();
     let degrees = if let Some(value) = token.strip_suffix("grad") {
         number(value)? * 0.9
@@ -237,3 +302,6 @@ fn angle(token: &str) -> Result<f64, String> {
     };
     Ok(degrees.rem_euclid(360.0))
 }
+
+#[cfg(test)]
+mod tests;
