@@ -1,5 +1,26 @@
 # Paint 10 work in progress
 
+## September 9: cleanup complete; build size and publishing setup underway
+
+- User requested cleanup first, then smaller binaries, GitHub Pages setup and
+  a proper README. Disposable files must use `/tmp`; a reboot is expected.
+  Detailed artwork remains paused. Do not resume older artwork checklists.
+- Removed 31,621,398,528 allocated bytes (29.45 GiB) from project `target/`
+  and `tmp/`. Every tracked working file was hashed before and after: unchanged.
+  The old 409 MiB development executable contained 377.8 MiB of debug sections;
+  the existing native Nix release executable is about 27 MiB.
+- Unique scratch sources, notes, final evidence and two small project fixtures
+  survive in `tmp/retained-notes-and-projects.tar.gz` (383,675 bytes).
+  `tmp/cleanup-manifest.json` lists retained paths and copies recoverable from
+  Git. Older `tmp/...` links below are historical: inspect the archive for
+  retained notes; binaries, caches, duplicate projects and bulk media are gone.
+- Root owns build profiles, scripts, verification and commits. Agents
+  `pages_setup` and `readme` own the workflow/browser guide and README,
+  respectively. No GitHub publication or push is authorized by this task.
+  Build and GUI scratch output now belongs under `/tmp/paint10-*`.
+- The existing browser server at `http://127.0.0.1:8088/` serves an immutable
+  Nix package, independently of the cleaned directories. It will stop on reboot.
+
 ## Current September 9 checkpoint: focused polish pass verified
 
 - Detailed artwork remains paused at the user's request. Continue using short,

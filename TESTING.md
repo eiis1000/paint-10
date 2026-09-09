@@ -1,5 +1,16 @@
 # Paint 10 verification log
 
+## September 9: generated artifact cleanup
+
+Deleted the accumulated project `target/` and scratch tree after inventorying
+files and verifying a compressed archive of unique notes, source probes, final
+evidence and two small saved projects. Cleanup removed 31,621,398,528 allocated
+bytes; the retained archive is 383,675 bytes. SHA-256 checks of every tracked
+working file are unchanged. Historical scratch links below may now refer to
+members of `tmp/retained-notes-and-projects.tar.gz`, or to removed generated
+artifacts; `tmp/cleanup-manifest.json` identifies preserved files. Disposable
+builds and test output will use `/tmp` going forward.
+
 ## September 9: text behavior, typography and coordinate-plane polish
 
 Detailed artwork is paused at the user's request. This pass uses two short
