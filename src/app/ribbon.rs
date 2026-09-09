@@ -65,24 +65,68 @@ fn ribbon_focus(ui: &Ui, response: &Response) {
     }
 }
 
-fn paint_style_choice(ui: &mut Ui, selected: bool, style: PaintStyle, label: &str) -> Response {
+fn paint_style_choice(
+    ui: &mut Ui,
+    selected: bool,
+    style: PaintStyle,
+    label: &str,
+    color: Color,
+    fill: bool,
+) -> Response {
     let response = ui.add(theme::MenuItem::new(label).selected(selected).width(250.0));
     controls::named(ui, &response, label);
     let sample = Rect::from_center_size(
         response.rect.right_center() - vec2(42.0, 0.0),
         vec2(62.0, 20.0),
     );
-    let brush = match style {
-        PaintStyle::None => None,
-        PaintStyle::Solid => Some(Brush::Round),
-        PaintStyle::Crayon => Some(Brush::Crayon),
-        PaintStyle::Marker => Some(Brush::Marker),
-        PaintStyle::Oil => Some(Brush::Oil),
-        PaintStyle::Pencil => Some(Brush::Pencil),
-        PaintStyle::Watercolor => Some(Brush::Watercolor),
-    };
-    if let Some(brush) = brush {
-        icons::brush_preview(ui.painter(), sample, brush);
+    if style != PaintStyle::None {
+        // The swatch uses the same rasterizer and color as the picture. Cache
+        // one texture per choice, replacing it when the palette changes.
+        let id = Id::new(("paint10-style-sample", style as u8, fill));
+        let cached = ui
+            .ctx()
+            .data(|data| data.get_temp::<(Color, TextureHandle)>(id));
+        let texture = if let Some((_, texture)) = cached.filter(|(saved, _)| *saved == color) {
+            texture
+        } else {
+            let mut pixels = RgbaImage::new(62, 20);
+            if fill {
+                d::styled_shape(
+                    &mut pixels,
+                    Tool::Rectangle,
+                    (0, 0),
+                    (61, 20),
+                    1,
+                    None,
+                    Some((color, style).into()),
+                );
+            } else {
+                d::styled_cubic(
+                    &mut pixels,
+                    (2, 12),
+                    (59, 9),
+                    [(20, 1), (40, 19)],
+                    5,
+                    color,
+                    style,
+                );
+            }
+            let texture = ui.ctx().load_texture(
+                "Paint style sample",
+                display::image([62, 20], pixels.as_raw()),
+                TextureOptions::NEAREST,
+            );
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(id, (color, texture.clone())));
+            texture
+        };
+        canvas::checkerboard(ui.painter(), sample, 5.0);
+        ui.painter().image(
+            texture.id(),
+            sample,
+            Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
     } else {
         ui.painter().rect_stroke(
             sample.shrink2(vec2(13.0, 3.0)),
@@ -923,6 +967,8 @@ impl PaintApp {
                                 } else {
                                     style.name()
                                 },
+                                self.colors[0],
+                                false,
                             );
                             self.preview_shape_style(&choice, shapes::StylePreview::Outline(style));
                             if choice.clicked() {
@@ -948,6 +994,8 @@ impl PaintApp {
                             } else {
                                 style.name()
                             },
+                            self.colors[1],
+                            true,
                         );
                         self.preview_shape_style(&choice, shapes::StylePreview::Fill(style));
                         if choice.clicked() {

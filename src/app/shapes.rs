@@ -523,6 +523,41 @@ mod tests {
     }
 
     #[test]
+    fn textured_shape_preview_commit_project_and_png_preserve_identical_pixels() {
+        for tool in [Tool::Rectangle, Tool::Oval, Tool::Star5, Tool::CloudCallout] {
+            for style in PaintStyle::ALL {
+                let context = Context::default();
+                let mut app = PaintApp::new_with_context(&context, false);
+                app.doc = Document::from_image(RgbaImage::new(96, 80));
+                app.colors = [[30, 60, 120, 180], [237, 28, 36, 127]];
+                app.fill = style;
+                app.outline = style;
+                app.size = 5;
+                app.doc.begin();
+                app.start_shape_draft(
+                    ShapeGeometry::Primitive {
+                        tool,
+                        start: (-7, 9),
+                        end: (81, 66),
+                    },
+                    0,
+                );
+                let preview = app.doc.composite();
+                app.commit_shape();
+                assert!(
+                    app.doc.composite() == preview,
+                    "commit changed {tool:?}/{style:?}"
+                );
+                let project = crate::project::encode(&app.doc).unwrap();
+                assert!(crate::project::decode(&project).unwrap().composite() == preview);
+                let png = crate::raster_io::encode(&preview, crate::raster_io::RasterFormat::Png)
+                    .unwrap();
+                assert!(crate::raster_io::decode_bytes(&png).unwrap() == preview);
+            }
+        }
+    }
+
+    #[test]
     fn gradient_shape_and_polygon_drafts_recolor_resize_save_and_undo() {
         for tool in [Tool::Rectangle, Tool::Polygon] {
             for gradient in Gradient::ALL {
