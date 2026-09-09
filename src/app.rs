@@ -11,6 +11,7 @@ mod image_ribbon;
 mod jobs;
 mod keyboard;
 mod keytips;
+mod latex_editing;
 #[cfg(test)]
 mod layer_workflow_tests;
 mod layers;
@@ -80,6 +81,7 @@ enum Dialog {
     Colors,
     ImageAdjustments,
     ImageCrop,
+    Latex,
     Properties,
     About,
     Print,
@@ -222,6 +224,7 @@ pub struct PaintApp {
     pending_path: Option<PathBuf>,
     allow_close: bool,
     text_edit: Option<TextEditState>,
+    latex_edit: Option<latex_editing::LatexDraft>,
     resize_w: u32,
     resize_h: u32,
     percent: bool,
@@ -283,7 +286,7 @@ impl PaintApp {
                 Vec::new(),
             )
         };
-        let mut app = Self {
+        let app = Self {
             doc,
             rendered,
             texture: None,
@@ -324,7 +327,7 @@ impl PaintApp {
             polygon_color: BLACK,
             polygon_color_slot: 0,
             file: None,
-            message: "For Help, click ? or press F1".into(),
+            message: String::new(),
             cursor: None,
             #[cfg(target_arch = "wasm32")]
             web: files::BrowserState::new(ctx.clone()),
@@ -352,6 +355,7 @@ impl PaintApp {
             pending_path: None,
             allow_close: false,
             text_edit: None,
+            latex_edit: None,
             resize_w: 900,
             resize_h: 600,
             percent: false,
@@ -383,14 +387,12 @@ impl PaintApp {
             wallpaper_size: (1920, 1080),
         };
         #[cfg(not(target_arch = "wasm32"))]
+        let mut app = app;
+        #[cfg(not(target_arch = "wasm32"))]
         if load_environment {
             if let Some(path) = std::env::args_os().nth(1) {
                 app.load(PathBuf::from(path));
             }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            app.message = "Paint 10 in your browser. Open imports a file; Save downloads it. Your pictures stay on this device.".into();
         }
         app
     }
@@ -418,15 +420,21 @@ impl eframe::App for PaintApp {
         self.page
             .set_resolution(self.doc.resolution.x, self.doc.resolution.y);
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close {
-            self.commit_text();
-            self.finish_polygon();
-            self.commit_shape();
-            if self.curve.take().is_some() {
-                self.doc.commit();
-            }
-            if self.doc.dirty() {
+            if self.latex_edit.is_some() {
                 ctx.send_viewport_cmd(ViewportCommand::CancelClose);
-                self.pending = Some(Action::Close);
+                self.dialog_error =
+                    Some("Apply or cancel the equation before closing Paint 10.".into());
+            } else {
+                self.commit_text();
+                self.finish_polygon();
+                self.commit_shape();
+                if self.curve.take().is_some() {
+                    self.doc.commit();
+                }
+                if self.doc.dirty() {
+                    ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+                    self.pending = Some(Action::Close);
+                }
             }
         }
         if self.print_preview.is_none() && !self.preview {

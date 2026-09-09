@@ -12,7 +12,7 @@ mod native_options;
 mod print_preview;
 #[cfg(not(target_arch = "wasm32"))]
 use paint_10::{
-    color, display, document, integration, preferences, printing, project, raster_io, text,
+    color, display, document, integration, latex, preferences, printing, project, raster_io, text,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
