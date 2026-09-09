@@ -4,6 +4,7 @@ struct Fixture {
     ctx: Context,
     app: PaintApp,
     height: f32,
+    textures: std::collections::HashMap<TextureId, ColorImage>,
 }
 
 impl Fixture {
@@ -17,6 +18,7 @@ impl Fixture {
             ctx,
             app,
             height: 500.0,
+            textures: Default::default(),
         }
     }
 
@@ -28,7 +30,18 @@ impl Fixture {
             ..Default::default()
         };
         eframe::App::raw_input_hook(&mut self.app, &self.ctx, &mut input);
-        self.ctx.run(input, |ctx| self.app.dialogs(ctx))
+        let output = self.ctx.run(input, |ctx| self.app.dialogs(ctx));
+        for (id, delta) in &output.textures_delta.set {
+            if let egui::ImageData::Color(image) = &delta.image {
+                if delta.pos.is_none() {
+                    self.textures.insert(*id, (**image).clone());
+                }
+            }
+        }
+        for id in &output.textures_delta.free {
+            self.textures.remove(id);
+        }
+        output
     }
 
     fn settle(&mut self) -> FullOutput {
@@ -86,6 +99,65 @@ impl Fixture {
             Event::Paste(text.to_owned()),
         ]);
         self.settle()
+    }
+
+    fn state(&self) -> Editor {
+        self.ctx
+            .data(|data| data.get_temp::<Editor>(key()).unwrap())
+    }
+
+    fn choose_slice(&mut self, slice: Slice) -> FullOutput {
+        let state = self.state();
+        if state.slice != slice {
+            let output = self.settle();
+            self.click(bounds(&output, "Color plane slice").center());
+            let output = self.settle();
+            let option = nodes(&output)
+                .iter()
+                .find(|(_, node)| {
+                    node.role() == egui::accesskit::Role::Button
+                        && node.label() == Some(slice.label(state.space))
+                })
+                .unwrap();
+            self.click(rect(&option.1).center());
+        }
+        let output = self.settle();
+        assert_eq!(self.state().slice, slice);
+        output
+    }
+
+    fn plane_bounds(&self, output: &FullOutput) -> Rect {
+        let state = self.state();
+        let axes = Plane {
+            space: state.space,
+            slice: state.slice,
+        }
+        .axes();
+        bounds(
+            output,
+            &format!(
+                "{} and {}",
+                state.space.channels()[axes[0]].label,
+                state.space.channels()[axes[1]].label.to_ascii_lowercase()
+            ),
+        )
+    }
+
+    fn plane_image(&self, output: &FullOutput) -> ColorImage {
+        let rect = self.plane_bounds(output);
+        let id = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                Shape::Mesh(mesh)
+                    if mesh.calc_bounds() == rect && mesh.texture_id != TextureId::Managed(0) =>
+                {
+                    Some(mesh.texture_id)
+                }
+                _ => None,
+            })
+            .expect("The actual color plane must be painted with its coordinate texture");
+        self.textures.get(&id).unwrap().clone()
     }
 }
 
@@ -149,9 +221,9 @@ fn every_color_space_fits_500_pixels_without_changing_rgba() {
             fixture.app.colors[0], original,
             "Switching to {space:?} must be a no-op"
         );
+        assert!(Rect::from_min_size(Pos2::ZERO, vec2(500.0, 500.0))
+            .contains_rect(fixture.plane_bounds(&output)));
         for label in [
-            "Hue and saturation",
-            "Luminosity",
             "Basic colors",
             "Custom colors",
             "New color",
@@ -365,11 +437,8 @@ fn hsv_picker_alpha_slider_and_custom_swatches_preserve_rgba_semantics() {
     let original = [40, 80, 120, 99];
     let mut fixture = Fixture::new(original);
     fixture.app.custom_colors = vec![[18, 52, 86, 170]];
-    let output = fixture.settle();
-    fixture.click(bounds(&output, "Visual color picker").center());
-    let output = fixture.settle();
-    fixture.click(bounds(&output, "HSV picker").center());
-    let output = fixture.settle();
+    fixture.settle();
+    let output = fixture.choose_space(Space::Hsv);
     assert_eq!(fixture.app.colors[0], original);
     fixture.click(bounds(&output, "Saturation and value").center());
     let output = fixture.settle();
@@ -503,4 +572,150 @@ fn all_palette_slots_are_visible_and_add_replaces_the_chosen_slot() {
         fixture.app.custom_colors, expected,
         "Home recents must not reorder stored slots"
     );
+}
+
+#[test]
+fn coordinate_choice_changes_the_actual_plane_image_without_changing_literal_or_rgba() {
+    let original = [40, 80, 120, 99];
+    let literal = "rgb(40 80 120 / 38.823529%)";
+    let mut fixture = Fixture::new(original);
+    fixture.settle();
+    fixture.replace_field("Color text", literal);
+    let mut images: Vec<ColorImage> = Vec::new();
+    for space in Space::ALL {
+        let output = fixture.choose_space(space);
+        let image = fixture.plane_image(&output);
+        assert!(
+            images
+                .iter()
+                .all(|previous| previous.size != image.size || previous.pixels != image.pixels),
+            "Selecting {space:?} must render its own coordinate plane"
+        );
+        images.push(image);
+        assert_eq!(fixture.app.colors[0], original);
+        assert_eq!(fixture.app.hex, literal);
+
+        for &slice in Plane::slices(space) {
+            let output = fixture.choose_slice(slice);
+            assert_eq!(fixture.app.colors[0], original, "{space:?}: {slice:?}");
+            assert_eq!(fixture.app.hex, literal);
+            assert!(fixture.plane_bounds(&output).is_positive());
+        }
+    }
+    assert!(!fixture.app.doc.dirty() && !fixture.app.doc.can_undo());
+}
+
+#[test]
+fn plane_and_strip_pointer_edits_use_every_selected_space_and_keep_alpha() {
+    for space in Space::ALL {
+        let mut fixture = Fixture::new([40, 80, 120, 99]);
+        fixture.settle();
+        let output = fixture.choose_space(space);
+        let before = fixture.state();
+        let plane = Plane {
+            space,
+            slice: before.slice,
+        };
+        let rect = fixture.plane_bounds(&output);
+        fixture.click(pos2(
+            rect.left() + rect.width() * 0.75,
+            rect.top() + rect.height() * 0.25,
+        ));
+        let output = fixture.settle();
+        let state = fixture.state();
+        let expected = plane.coordinates_at(before.values, 0.75, 0.75);
+        for (actual, expected) in state.values.into_iter().zip(expected) {
+            assert!(
+                (actual - expected).abs() < 0.001,
+                "{space:?}: {actual} vs {expected}"
+            );
+        }
+        assert_eq!(state.rgba[3], 99);
+        assert_eq!(
+            &state.rgba[..3],
+            &color::from_coordinates(space, expected).rgb
+        );
+
+        let channel = plane.slice.channel();
+        let strip = bounds(
+            &output,
+            &format!("{} color strip", space.channels()[channel].label),
+        );
+        fixture.click(pos2(strip.center().x, strip.top() + strip.height() * 0.4));
+        fixture.settle();
+        let moved = fixture.state();
+        for axis in plane.axes() {
+            assert_eq!(
+                moved.values[axis], state.values[axis],
+                "Strip must preserve the plane axes in {space:?}"
+            );
+        }
+        assert!((plane.fraction(channel, moved.values[channel]) - 0.6).abs() < 0.005);
+        assert_eq!(moved.rgba[3], 99);
+    }
+}
+
+#[test]
+fn rgb_and_linear_plane_pixels_have_the_expected_transfer_function() {
+    let mut fixture = Fixture::new([40, 80, 0, 99]);
+    fixture.settle();
+    for (space, middle_red) in [(Space::Rgb, 128_u8), (Space::LinearRgb, 188_u8)] {
+        let output = fixture.choose_space(space);
+        let image = fixture.plane_image(&output);
+        let top_left = image.pixels[0];
+        let top_right = image.pixels[image.size[0] - 1];
+        assert_eq!(top_left, Color32::from_rgb(0, 255, 0));
+        assert_eq!(top_right, Color32::from_rgb(255, 255, 0));
+        let middle = image.pixels[image.size[0] / 2];
+        assert!((middle.r() as i16 - middle_red as i16).abs() <= 1);
+        assert_eq!((middle.g(), middle.b()), (255, 0));
+    }
+}
+
+#[test]
+fn cmyk_black_strip_changes_the_plane_and_perceptual_pointer_edits_can_be_fitted() {
+    let mut fixture = Fixture::new([40, 80, 120, 99]);
+    fixture.settle();
+    let output = fixture.choose_space(Space::Cmyk);
+    let before = fixture.plane_image(&output);
+    let inks = fixture.state().values;
+    let black = bounds(&output, "Black color strip");
+    fixture.click(pos2(black.center().x, black.top() + black.height() / 4.0));
+    let output = fixture.settle();
+    let after = fixture.state();
+    assert_eq!(&after.values[..3], &inks[..3]);
+    assert!((after.values[3] - 75.0).abs() < 0.001);
+    assert_ne!(fixture.plane_image(&output).pixels, before.pixels);
+    assert_eq!(after.rgba[3], 99);
+
+    fixture.choose_space(Space::Oklab);
+    fixture.replace_field("Lightness", "0.7");
+    let output = fixture.settle();
+    let plane = fixture.plane_bounds(&output);
+    fixture.click(pos2(
+        plane.left() + plane.width() * 0.95,
+        plane.top() + plane.height() * 0.05,
+    ));
+    let output = fixture.settle();
+    let requested = fixture.state();
+    assert!(!requested.in_gamut);
+    assert_eq!(requested.authored, Some((Space::Oklab, requested.values)));
+    assert!((requested.values[1] - 0.36).abs() < 0.001);
+    assert!((requested.values[2] - 0.36).abs() < 0.001);
+    let image = fixture.plane_image(&output);
+    let raw = Plane {
+        space: Space::Oklab,
+        slice: Slice::First,
+    }
+    .color_at(requested.values, 0.0, 1.0);
+    assert!(!raw.in_gamut);
+    assert_ne!(
+        image.pixels[0],
+        Color32::from_rgb(raw.rgb[0], raw.rgb[1], raw.rgb[2]),
+        "Unavailable coordinates are visibly hatched, not presented as ordinary in-gamut colors"
+    );
+    fixture.click(bounds(&output, "Fit to sRGB").center());
+    fixture.settle();
+    assert!(fixture.state().in_gamut);
+    assert_eq!(fixture.app.colors[0][3], 99);
 }

@@ -2,9 +2,10 @@ use super::dialogs::{
     default_button, dialog_button, initial_focus, numeric_input, register_button,
 };
 use super::*;
+use crate::color::plane::{Plane, Slice};
 use crate::color::{self, Space};
 use palette::palette_controls;
-use picker::{gradient_mesh, visual_picker, Picker};
+use picker::{gradient_mesh, visual_picker};
 
 mod palette;
 mod picker;
@@ -18,9 +19,7 @@ struct Editor {
     rgba: Color,
     space: Space,
     values: [f64; 4],
-    paint: [f64; 4],
-    hsv: [f64; 4],
-    picker: Picker,
+    slice: Slice,
     text: String,
     text_error: Option<String>,
     numeric_invalid: bool,
@@ -37,9 +36,7 @@ impl Editor {
             rgba,
             space: Space::PaintHsl,
             values: color::coordinates(Space::PaintHsl, rgb),
-            paint: color::coordinates(Space::PaintHsl, rgb),
-            hsv: color::coordinates(Space::Hsv, rgb),
-            picker: Picker::Paint,
+            slice: Plane::default_slice(Space::PaintHsl),
             text: hex(rgba),
             text_error: None,
             numeric_invalid: false,
@@ -56,8 +53,6 @@ impl Editor {
     fn set_color(&mut self, rgba: Color) {
         self.rgba = rgba;
         self.values = color::coordinates(self.space, self.rgb());
-        self.paint = color::coordinates(Space::PaintHsl, self.rgb());
-        self.hsv = color::coordinates(Space::Hsv, self.rgb());
         self.text = hex(rgba);
         self.text_error = None;
         self.in_gamut = true;
@@ -77,11 +72,6 @@ impl Editor {
         }
         if self.space == space {
             self.values = values;
-        }
-        match space {
-            Space::PaintHsl => self.paint = values,
-            Space::Hsv => self.hsv = values,
-            _ => {}
         }
     }
 
@@ -163,9 +153,8 @@ impl PaintApp {
         let previous_visual = (
             state.rgba,
             state.space,
-            state.picker,
-            state.paint,
-            state.hsv,
+            state.slice,
+            state.values,
             state.custom_slot,
         );
         let width = 440.0_f32.min((ui.ctx().screen_rect().width() - 42.0).max(320.0));
@@ -281,9 +270,8 @@ impl PaintApp {
             != (
                 state.rgba,
                 state.space,
-                state.picker,
-                state.paint,
-                state.hsv,
+                state.slice,
+                state.values,
                 state.custom_slot,
             )
         {
@@ -296,11 +284,11 @@ impl PaintApp {
 
 fn mode_controls(ui: &mut Ui, state: &mut Editor) {
     ui.horizontal(|ui| {
-        ui.label("Coordinates");
+        ui.label("Space");
         let previous = state.space;
         ui.add_enabled_ui(!state.numeric_invalid, |ui| {
             ComboBox::from_id_salt("color_space")
-                .width(182.0)
+                .width(168.0)
                 .height(260.0)
                 .selected_text(state.space.label())
                 .show_ui(ui, |ui| {
@@ -321,29 +309,34 @@ fn mode_controls(ui: &mut Ui, state: &mut Editor) {
                 });
         });
         if state.space != previous {
+            state.slice = Plane::default_slice(state.space);
             state.values = state
                 .authored
                 .filter(|(space, _)| *space == state.space)
                 .map(|(_, values)| values)
                 .unwrap_or_else(|| color::coordinates(state.space, state.rgb()));
         }
-        ComboBox::from_id_salt("color_picker")
-            .width(125.0)
-            .selected_text(state.picker.label())
+        ui.label("Slice");
+        ComboBox::from_id_salt("color_slice")
+            .width(115.0)
+            .selected_text(state.slice.label(state.space))
             .show_ui(ui, |ui| {
                 theme::menu(ui);
-                for picker in [Picker::Paint, Picker::Hsv] {
+                for &slice in Plane::slices(state.space) {
                     if ui
-                        .add(theme::MenuItem::new(picker.label()).selected(state.picker == picker))
+                        .add(
+                            theme::MenuItem::new(slice.label(state.space))
+                                .selected(state.slice == slice),
+                        )
                         .clicked()
                     {
-                        state.picker = picker;
+                        state.slice = slice;
                         ui.close_menu();
                     }
                 }
             })
             .response
-            .widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, true, "Visual color picker"));
+            .widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, true, "Color plane slice"));
     });
 }
 
@@ -559,6 +552,9 @@ fn color_text(ui: &mut Ui, state: &mut Editor) {
                     }
                     state.set_color(rgba);
                     if let Some((space, coordinates)) = parsed.coordinates {
+                        if state.space != space {
+                            state.slice = Plane::default_slice(space);
+                        }
                         state.space = space;
                         state.values = coordinates;
                         state.authored = Some((space, coordinates));
