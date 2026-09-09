@@ -24,11 +24,12 @@ export function installBrowserEvents(notify, canvas) {
         }
     }, { capture: true });
 
-    // F10 must open Paint's keytips without moving focus to the browser menu.
+    // F10 opens Paint's keytips and F12 opens Save As. Suppress the browser's
+    // menu/DevTools defaults while still forwarding each key to eframe.
     // Listen above both the canvas and eframe's hidden text-input element.
     window.addEventListener('keydown', event => {
         if (
-            event.key === 'F10'
+            (event.key === 'F10' || event.key === 'F12')
             && !event.shiftKey
             && !event.ctrlKey
             && !event.altKey
