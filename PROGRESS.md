@@ -1,5 +1,38 @@
 # Paint 10 work in progress
 
+## Current September 9 checkpoint: corrected alpha display and measurements
+
+- Production `a292591` corrects the display alpha mismatch. Earlier source
+  commits `334d476` and `cc13446` fix native project insertion and measurement
+  lifecycle/ordered arrows. All 365 native tests, strict native/WASM Clippy,
+  formatting, both builds and eight browser adapter tests pass. Source hashes
+  match the reviewed snapshot; exact handoffs are under `tmp/alpha-display-*`
+  and `tmp/display-measurement-combined-native-handoff.md`.
+- Actual native Paste from inserts the CPAP project as a movable picture;
+  movement and both Undo steps pass. Native New/Open clear measurements and
+  three rapid Right presses move three pixels. Browser rapid arrows, File New
+  and smaller-image Open also pass through the actual GUI.
+- Native and browser actual Open display the GUI-created alpha PNG correctly.
+  C0C4B960 Current/New/Home previews match. Independent screenshot inspection
+  compares 25,841 checker-interior pixels with the actual document compositor,
+  all within one channel level. This fixes display only; PNG bytes were already
+  correct. Exact captures/results are recorded at the top of TESTING.md.
+- Native launcher shell 45195/controller31474 remain on private DISPLAY=:1,
+  `/tmp/paint10-desktop.SuHYRa`. The refreshed debug binary has reopened the
+  saved landscape at 50%, origin58,234. Oval, No outline, Radial fill and
+  transparent Color 2 are being prepared for an uneven cloud pass. No new
+  artwork has been saved since `14f5d4b`; raster exports remain stale and
+  photorealism remains unfinished. Continue actual shape-only painting.
+- Browser launcher90300/controller38238 remain on private DISPLAY=:2. The
+  refreshed mutable build is loaded from8080. The 96×64 CPAP project is open
+  and clean, with Measure enabled and its old endpoints correctly cleared.
+  No artwork is modified there. Old immutable8082 is unchanged.
+- file_finish builds/audits the native Nix package from immutable `a292591`;
+  ribbon_finish does the matching web package. browser_finish completed the
+  read-only screenshot quantification. Root owns GUI, art, docs and all Git.
+  Package handoffs will be `tmp/{native,browser}-package-a292591-handoff.md`.
+  Continue package replay, artwork/export acceptance and logical commits.
+
 ## Current September 9 checkpoint, around 01:00 EDT
 
 - Production remains `6baab78`, with both immutable Nix packages built and

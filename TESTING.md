@@ -1,5 +1,103 @@
 # Paint 10 verification log
 
+## September 9: reopened measurement and Paste from findings
+
+The read-only completion audit reproduced three defects in the current app:
+New retains measurements from the previous canvas, three queued Right presses
+move a measurement endpoint only one pixel, and native Paste from rejects a
+valid `.p10` offered by its own file filter. The isolated probes exercise the
+real app frame/input path and native decoder (`tmp/completion-probes.rs` and
+`tmp/completion-probes.log`). Commits `334d476` and `cc13446` correct these
+failures, with seven native file and fourteen measurement tests passing.
+
+Actual native replay on `cc13446` opens the private Paste from chooser and
+inserts `airsense-10-p30i.p10` into a blank 900×600 picture as a selected 96×64
+image. Dragging moves it from (0,0) to (220,162). One Undo restores its original
+position; the next removes the insertion and restores the clean Untitled
+picture. The project source is unchanged. Captures were visually inspected:
+`/tmp/paint10-native-project-{pasted,moved-settled,move-undo,undo-view}.png`.
+
+In the same native app, measuring A(42,188) to B(192,388) gives 250.00px.
+Three immediate Right presses produce B(195,388), Δx153 and 251.81px. New
+clears the endpoints while keeping Measure enabled. Drawing another ruler and
+opening the 96×64 CPAP project also clears the endpoints, leaving no off-canvas
+labels. Captures were visually inspected:
+`/tmp/paint10-native-measure-{fixed-baseline,three-arrows-fixed,new-fixed,open-fixed}.png`.
+The old-browser reproductions below remain before-fix evidence.
+
+The installed browser also reproduces the New defect through its actual File
+menu: A(76,89), B(220,280) and the 239.20px reading survive File → New.
+Both `/tmp/paint10-browser-measure-before-new.png` and
+`/tmp/paint10-browser-measure-menu-new-before-fix.png` were visually inspected.
+Ctrl+N opened a Chromium window, as already documented; that window was closed
+and the actual Paint File menu was used for the reproduction.
+
+In that same browser session, three immediate Right presses moved B from
+(220,280) to (221,280), confirming the dropped steps in actual keyboard input.
+`/tmp/paint10-browser-measure-three-arrows-before-fix.png` was visually
+inspected; the expected endpoint is (223,280).
+
+Opening the 96×64 CPAP project then leaves both old labels outside the small
+canvas and retains the stale distance. The actual capture
+`/tmp/paint10-browser-measure-open-before-fix.png` was visually inspected.
+
+The refreshed `a292591` browser now moves B(220,280) to B(223,280) for the
+same three immediate Right presses: Δx147 and 241.02px. File → New clears
+both endpoints, and opening the 96×64 CPAP project after drawing another ruler
+also clears them. Measure remains enabled and the project stays clean. These
+actual screenshots were visually inspected:
+`/tmp/paint10-browser-measure-{fixed-baseline,three-arrows-fixed,new-fixed,open-fixed}.png`.
+
+## September 9: light transparent color preview defect
+
+Painting haze exposed a separate display discrepancy. Native and browser
+Edit Colors both show RGB 192/196/185, alpha 96, and exact `C0C4B960`, while
+their New and Home swatches appear white instead of a muted checkerboard.
+The native Current swatch also appears white when reopening the same color.
+This persists after the dialog settles. Captures were visually inspected:
+`/tmp/paint10-landscape-haze-color-{check,settled}.png` and
+`/tmp/paint10-browser-light-alpha-preview.png`. The numeric color and saved
+painting are separate from this preview failure.
+
+The actual browser also paints the same color as a No-outline Solid Rectangle
+on a canvas cleared with transparent Color 2. Its on-screen rectangle is white.
+Saving through the browser's PNG download and private native destination dialog
+produces `/tmp/paint10-alpha-fixture.png`. Independent ImageMagick inspection
+confirms 900×600, with 27,456 pixels of exact `(192,196,185,96)` and 512,544
+fully transparent pixels. The screenshot and saved data therefore demonstrate
+a display-conversion failure, not lost PNG alpha. This real drawing is the
+fixture for the corrected native/browser texture replay.
+
+The pinned constructor/shader probe predicts the observed clipping: the old
+display value `[123,126,118,96]` becomes almost white over both checker colors;
+the needed byte-premultiplied value is `[72,74,70,96]`. Correct document
+composites are `[206,208,204]` over gray 215 and `[231,233,229]` over white.
+`tmp/alpha-display-probe.log` records the constructor and screenshot pixel
+measurements. The correction below keeps display conversion separate from
+image storage and raster compositing.
+
+Commit `a292591` corrects Paint-owned display colors and textures without
+changing document RGBA or exports. The combined source passes 365 tests
+(142 library + 223 app), strict native/WASM Clippy, formatting, native debug
+and browser release builds, and all eight JavaScript adapter tests. Exact
+source manifests and logs are in `tmp/display-measurement-combined-native-handoff.md`
+and `tmp/alpha-display-handoff.md`.
+
+Actual native and browser Open both display the GUI-saved alpha fixture as a
+muted translucent rectangle, retaining the checkerboard. Entering `C0C4B960`
+in Edit Colors matches that canvas, and native acceptance/reopening retains
+matching Current/New/Home swatches. All corrected screenshots were visually
+inspected: `/tmp/paint10-{native,browser}-alpha-{canvas,editor}-fixed.png` and
+`/tmp/paint10-native-alpha-current-settled.png`.
+
+Independent read-only screenshot measurements compare 25,841 checker-interior
+pixels with the actual document compositor. Every channel agrees within one
+8-bit level, including native software-renderer dithering. Full region
+histograms and geometric edge exclusions are recorded in
+`tmp/alpha-{native,browser}-fixed-pixels.log`. This checks solid colors and
+nearest-neighbor canvas pixels; it does not claim exact agreement at the
+pinned renderer's linearly filtered subpixel preview edges.
+
 ## September 9: installed browser color replay
 
 The immutable `6baab78` web package is served at port 8082 and was operated
@@ -32,7 +130,8 @@ Exact derivations, manifests and qualifications are in
 `tmp/{native,browser}-package-6baab78-handoff.md`. ARM Linux was evaluated only;
 Windows/macOS were not executed. The browser derivation disables its native
 Cargo test phase; the shared native and adapter gates are separate evidence.
-Actual GUI replay of these installed outputs remains pending.
+Actual GUI replay of both installed outputs now passes; the native painting
+and September 9 packaged-browser records below and above give the details.
 
 The mutable browser build separately passes strict WASM Clippy, release build,
 eight adapter tests and source/static/HTTP checks for all served assets at
