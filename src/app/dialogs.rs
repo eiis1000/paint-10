@@ -388,6 +388,9 @@ pub(in crate::app) fn default_button(ui: &mut Ui, label: &str, enabled: bool) ->
 impl PaintApp {
     pub(in crate::app) fn modal_raw_input(&mut self, ctx: &Context, input: &mut RawInput) {
         let key = pending_modal_input_key();
+        if self.dialog.is_some() || self.pending.is_some() || self.browser_dialog_open() {
+            keytips::release_queued_input(ctx, input);
+        }
         if self.dialog.is_none() && self.pending.is_none() {
             if let Some(mut events) = ctx.data_mut(|data| data.remove_temp::<Vec<Event>>(key)) {
                 // Successful dialog completion must preserve later input. Keep

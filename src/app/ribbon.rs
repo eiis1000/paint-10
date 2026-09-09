@@ -1680,6 +1680,31 @@ mod gradient_tests {
         );
     }
 
+    fn field_center(output: &FullOutput, label: &str) -> Pos2 {
+        let nodes = &output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes;
+        let labels: Vec<_> = nodes
+            .iter()
+            .filter(|(_, node)| node.label() == Some(label) || node.value() == Some(label))
+            .map(|(id, _)| *id)
+            .collect();
+        let field = nodes
+            .iter()
+            .find(|(_, node)| node.labelled_by().iter().any(|id| labels.contains(id)))
+            .unwrap_or_else(|| panic!("Missing field {label}"))
+            .1
+            .bounds()
+            .unwrap();
+        pos2(
+            ((field.x0 + field.x1) / 2.0) as f32,
+            ((field.y0 + field.y1) / 2.0) as f32,
+        )
+    }
+
     #[test]
     fn shape_style_menu_hover_changes_only_display_and_restores_on_exit_or_escape() {
         for (menu, label) in [
@@ -1918,6 +1943,7 @@ mod gradient_tests {
             assert_eq!(app.fill_gradient, Some(gradient));
             assert_eq!(app.outline, PaintStyle::Marker);
             assert!(!keytips::active(&context));
+            assert!(!keytips::popup_open(&context));
         }
         for (style, key) in PaintStyle::ALL.into_iter().zip([
             Key::Num1,
@@ -1942,5 +1968,194 @@ mod gradient_tests {
             assert!(!has_label(&outline, gradient.name()));
         }
         assert!(has_label(&outline, "No outline"));
+    }
+
+    #[test]
+    fn color_dialog_closes_ribbon_menus_and_preserves_typing_before_ok() {
+        let context = Context::default();
+        context.enable_accesskit();
+        let mut app = PaintApp::new_with_context(&context, false);
+        app.set_tool(Tool::Rectangle);
+        settle(&mut app, &context);
+        for open_menu_by_mouse in [false, true] {
+            keys(&mut app, &context, &[Key::F10, Key::H, Key::L, Key::V]);
+            let mut ribbon = settle(&mut app, &context);
+            assert_eq!(app.fill_gradient, Some(Gradient::Vertical));
+            if open_menu_by_mouse {
+                click(&mut app, &context, center(&ribbon, "Shape fill style"));
+                ribbon = settle(&mut app, &context);
+                assert!(keytips::popup_open(&context));
+            }
+            let position = center(&ribbon, "Edit colors");
+            click(&mut app, &context, position);
+            let dialog = settle(&mut app, &context);
+            assert!(app.dialog == Some(Dialog::Colors));
+            assert!(!keytips::popup_open(&context));
+            assert!(!has_label(&dialog, "Vertical gradient"));
+
+            click(&mut app, &context, center(&dialog, "Color coordinates"));
+            settle(&mut app, &context);
+            assert!(keytips::popup_open(&context));
+            keys(&mut app, &context, &[Key::Escape]);
+            let dialog = settle(&mut app, &context);
+            assert!(!keytips::popup_open(&context));
+            assert!(app.dialog == Some(Dialog::Colors));
+
+            click(&mut app, &context, field_center(&dialog, "Color text"));
+            settle(&mut app, &context);
+            frame(
+                &mut app,
+                &context,
+                vec![Event::Key {
+                    key: Key::A,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::COMMAND,
+                }],
+            );
+            frame(&mut app, &context, vec![Event::Text("607C97F".into())]);
+            let dialog = settle(&mut app, &context);
+            let ok = center(&dialog, "OK");
+            frame(
+                &mut app,
+                &context,
+                vec![
+                    Event::Text("F".into()),
+                    Event::PointerMoved(ok),
+                    Event::PointerButton {
+                        pos: ok,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Modifiers::NONE,
+                    },
+                    Event::PointerButton {
+                        pos: ok,
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+            );
+            settle(&mut app, &context);
+            assert!(app.dialog.is_none());
+            assert_eq!(app.colors[0], [96, 124, 151, 255]);
+        }
+    }
+
+    #[test]
+    fn alt_fill_gradient_keytips_then_color_click_handle_batched_input() {
+        for already_selected in [true, false] {
+            for batched in [false, true] {
+                let context = Context::default();
+                context.enable_accesskit();
+                let mut app = PaintApp::new_with_context(&context, false);
+                app.set_tool(Tool::Rectangle);
+                app.fill_gradient = already_selected.then_some(Gradient::Vertical);
+                let ribbon = settle(&mut app, &context);
+                let edit_colors = center(&ribbon, "Edit colors");
+                let mut events = Vec::new();
+                for (key, modifiers) in [
+                    (Key::Escape, Modifiers::NONE),
+                    (Key::Escape, Modifiers::NONE),
+                    (Key::H, Modifiers::ALT),
+                    (Key::L, Modifiers::NONE),
+                    (Key::V, Modifiers::NONE),
+                ] {
+                    for pressed in [true, false] {
+                        events.push(Event::Key {
+                            key,
+                            physical_key: None,
+                            pressed,
+                            repeat: false,
+                            modifiers,
+                        });
+                        if pressed && key != Key::Escape {
+                            events.push(Event::Text(key.name().to_ascii_lowercase()));
+                        }
+                    }
+                }
+                events.push(Event::PointerMoved(edit_colors));
+                for pressed in [true, false] {
+                    events.push(Event::PointerButton {
+                        pos: edit_colors,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    });
+                }
+                if batched {
+                    frame(&mut app, &context, events);
+                } else {
+                    for event in events {
+                        frame(&mut app, &context, vec![event]);
+                    }
+                }
+                for _ in 0..12 {
+                    frame(&mut app, &context, vec![]);
+                }
+                assert_eq!(
+                    app.fill_gradient,
+                    Some(Gradient::Vertical),
+                    "already_selected={already_selected}; batched={batched}"
+                );
+                assert!(app.dialog == Some(Dialog::Colors));
+                assert!(!keytips::active(&context));
+                assert!(!keytips::popup_open(&context));
+            }
+        }
+    }
+
+    #[test]
+    fn color_dialog_keytip_preserves_following_click_and_typing() {
+        let context = Context::default();
+        context.enable_accesskit();
+        let mut app = PaintApp::new_with_context(&context, false);
+        settle(&mut app, &context);
+        keys(&mut app, &context, &[Key::F10, Key::H, Key::D]);
+        let dialog = settle(&mut app, &context);
+        let field = field_center(&dialog, "Color text");
+        let ok = center(&dialog, "OK");
+        keys(&mut app, &context, &[Key::Escape]);
+        settle(&mut app, &context);
+        assert!(app.dialog.is_none());
+
+        let mut events = Vec::new();
+        for key in [Key::F10, Key::H, Key::D] {
+            events.push(Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        for position in [field, ok] {
+            events.push(Event::PointerMoved(position));
+            for pressed in [true, false] {
+                events.push(Event::PointerButton {
+                    pos: position,
+                    button: PointerButton::Primary,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                });
+            }
+            if position == field {
+                events.push(Event::Key {
+                    key: Key::A,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::COMMAND,
+                });
+                events.push(Event::Text("607C97FF".into()));
+            }
+        }
+        frame(&mut app, &context, events);
+        for _ in 0..20 {
+            frame(&mut app, &context, vec![]);
+        }
+        assert!(app.dialog.is_none());
+        assert_eq!(app.colors[0], [96, 124, 151, 255]);
     }
 }

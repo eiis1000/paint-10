@@ -238,13 +238,23 @@ pub(super) fn raw_input(ctx: &Context, input: &mut RawInput) {
     // with its associated text events, then release the following key only
     // after that activation has been rendered. Collecting all letter keys
     // first loses digits typed immediately after a numeric-field keytip.
-    let boundary = input
+    let next_key = input
         .events
         .iter()
         .enumerate()
         .filter(|(_, event)| matches!(event, Event::Key { pressed: true, .. }))
         .nth(1)
         .map(|(index, _)| index);
+    let following_click = input.events.iter().enumerate().find_map(|(index, event)| {
+        (matches!(event, Event::PointerButton { pressed: true, .. })
+            && input.events[..index]
+                .iter()
+                .any(|event| matches!(event, Event::Key { pressed: true, .. })))
+        .then_some(index)
+    });
+    // A later click must not cancel the keytip that precedes it in this batch.
+    // Render the key's activation before allowing pointer input to take over.
+    let boundary = next_key.into_iter().chain(following_click).min();
     if let Some(index) = boundary.filter(|_| !editing) {
         state.navigation_tail = input.events.split_off(index);
         ctx.request_repaint();
@@ -259,6 +269,21 @@ pub(super) fn raw_input(ctx: &Context, input: &mut RawInput) {
         retain
     });
     write(ctx, state);
+}
+
+/// A dialog opened by a keytip takes over the input queued after that command.
+pub(super) fn release_queued_input(ctx: &Context, input: &mut RawInput) {
+    let mut events = ctx.data_mut(|data| {
+        std::mem::take(
+            &mut data
+                .get_temp_mut_or_default::<State>(Id::new(STATE))
+                .navigation_tail,
+        )
+    });
+    if !events.is_empty() {
+        events.append(&mut input.events);
+        input.events = events;
+    }
 }
 
 pub(super) fn active(ctx: &Context) -> bool {
@@ -324,6 +349,21 @@ pub(super) fn switch_tab(ctx: &Context, scope: &str) {
 pub(super) fn cancel(ctx: &Context, restore: bool) {
     let mut state = read(ctx);
     close_all(ctx, &state);
+    // Mouse-opened menus have no keyboard levels. A complete click can also
+    // arrive in one frame, which egui's outside-press handler does not close.
+    // Cancel the registered ribbon menus before a dialog takes over, while
+    // leaving the dialog's own ComboBox popups alone.
+    for target in state
+        .targets
+        .iter()
+        .chain(&state.previous)
+        .filter(|target| matches!(target.kind, Kind::Menu { .. } | Kind::PopupGroup { .. }))
+    {
+        if egui::menu::BarState::load(ctx, target.owner).is_some() {
+            egui::menu::BarState::default().store(ctx, target.owner);
+        }
+    }
+    state.popup_was_open = false;
     state.levels.clear();
     state.prefix.clear();
     state.queued_keys.clear();

@@ -1,5 +1,46 @@
 # Paint 10 verification log
 
+## September 9: popup ordering replay and focused polish work
+
+The user paused detailed artwork in favor of interface polish and functionality.
+Manual tests now use short text samples and small interaction exercises.
+
+The popup correction passes 368 native tests, strict Clippy, formatting and
+build (`tmp/popup-native-gate.log`). In the stable debug binary, actual rapid
+Alt+H, L, V followed by an Edit Colors click settles with only the color dialog
+open. Typing `607C97F`, then the final `F` immediately followed by OK, accepts
+the complete color. Reopening shows RGB 96/124/151 and alpha 255. Captures
+`/tmp/paint10-popup-gradient-settled.png` and
+`/tmp/paint10-popup-exact-color-fixed.png` were visually inspected on the
+private Xvfb desktop. This closes the corresponding old-binary finding below.
+
+## September 9: refreshed alpine exports and reopened menu findings
+
+The installed native `a292591` package saved the additional pine, snow and
+slope-shading shapes, then **Save a copy** refreshed the alpine PNG, JPEG and
+WebP. The working filename remained `shape-landscape.p10`. Read-only checks in
+`tmp/artwork-export-check-september9.log` confirm exact project/PNG/WebP RGBA
+agreement at 1920×1080 and matching JPEG dimensions. The JPEG was visually
+inspected; the fresh WebP actually reopened with the same composition in
+`/tmp/paint10-landscape-webp-reopened.png`. Art commits: `2abbdda`, `a6a99da`.
+
+The same checker reconfirms portrait text counts, exact Mona Lisa PNG/TIFF
+pixels, 13-color CPAP project/PNG/GIF agreement, and exact 8× nearest-neighbor
+replication. All four other artwork PNGs were visually inspected again.
+
+Starting a separate coastal study exposed two new UI findings. New retains
+the preceding `Picture opened` status; `047e872` changes successful New to
+`New picture created`, with existing command/lifecycle tests passing.
+Actual rebuilt GUI replay is pending with the following menu correction.
+
+After a gradient keytip and an Edit Colors click, Fill remains above the color
+dialog and the final F in `607C97FF` is lost. This persists after settling in
+`/tmp/paint10-coastal-color-second-capture.png`. One Escape dismisses only Fill;
+re-entering the complete hex then works. The real-frame reproduction identifies
+a final keytip and newer pointer press sharing a frame, plus mouse-menu state
+that survives modal cancellation. A focused correction and regression are
+underway; this is not passing acceptance evidence yet.
+
 ## September 9: immutable packages after display and measurement fixes
 
 Both Nix packages build from production commit `a292591`, using captured source
