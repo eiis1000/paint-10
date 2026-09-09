@@ -113,6 +113,12 @@ impl PaintApp {
         if self.text_history_action(action, ctx) || self.text_clipboard_action(action, ctx) {
             return;
         }
+        if matches!(action, Action::Resize) {
+            // Opening a transform dialog is not an edit. In particular, Cancel
+            // must leave a live text box or adjustable shape exactly as it was.
+            self.execute(action, ctx);
+            return;
+        }
         if matches!(action, Action::Paste) {
             // Reading an empty or unavailable clipboard must not finish an
             // unrelated text/shape edit. Valid image insertion settles it.
@@ -260,6 +266,7 @@ impl PaintApp {
                 self.percent = false;
                 self.skew_x = 0.;
                 self.skew_y = 0.;
+                self.angle = 0.0;
                 self.dialog = Some(Dialog::Resize);
             }
             Action::Properties => {
@@ -351,12 +358,39 @@ impl PaintApp {
     /// Resizing an object includes the portion outside the canvas; cropping
     /// and copying use the visible selection instead.
     pub(in crate::app) fn resize_dimensions(&self) -> (u32, u32) {
+        if let Some(state) = &self.text_edit {
+            let mut object = state
+                .index
+                .and_then(|index| self.doc.objects.get(index))
+                .cloned()
+                .unwrap_or_else(|| {
+                    Object::new(
+                        ObjectKind::Text {
+                            text: String::new(),
+                            format: state.format.clone(),
+                        },
+                        state.origin,
+                    )
+                });
+            object.kind = ObjectKind::Text {
+                text: state.text.clone(),
+                format: state.format.clone(),
+            };
+            if let Some(dimensions) = object.rendered_dimensions() {
+                return dimensions;
+            }
+        }
         self.object
             .and_then(|index| self.doc.objects[index].rendered_dimensions())
             .or_else(|| self.selected_region().map(|region| (region.w, region.h)))
+            .or_else(|| {
+                self.pending_polygon_bounds()
+                    .map(|region| (region.w, region.h))
+            })
             .unwrap_or(self.doc.image.dimensions())
     }
 
+    #[cfg(test)]
     pub(in crate::app) fn resize_picture(
         &mut self,
         width: u32,
@@ -364,10 +398,32 @@ impl PaintApp {
         skew_x: f32,
         skew_y: f32,
     ) -> Result<(), String> {
+        self.resize_skew_rotate_picture(width, height, skew_x, skew_y, 0.0)
+    }
+
+    /// Apply the dialog's transforms in displayed coordinates, keeping their
+    /// original image/text data and committing the combined change only once.
+    pub(in crate::app) fn resize_skew_rotate_picture(
+        &mut self,
+        width: u32,
+        height: u32,
+        skew_x: f32,
+        skew_y: f32,
+        angle: f32,
+    ) -> Result<(), String> {
         if !d::valid_size(width, height) {
             return Err("Dimensions must be positive and fit within 16 megapixels.".into());
         }
-        let plan = super::transforms::SkewPlan::new(width, height, skew_x, skew_y)?;
+        super::transforms::SkewPlan::new(width, height, skew_x, skew_y)?
+            .validate_rotation(angle)?;
+        let angle = angle.rem_euclid(360.0);
+        if (width, height) == self.resize_dimensions()
+            && skew_x == 0.0
+            && skew_y == 0.0
+            && angle == 0.0
+        {
+            return Ok(());
+        }
         if let Some(bounds) = self.finish_editing() {
             self.selection = Some(bounds);
         }
@@ -387,10 +443,20 @@ impl PaintApp {
                     } else {
                         self.doc.skew_content(skew_x, skew_y, self.colors[1])
                     }
+                })
+                .and_then(|()| {
+                    if angle == 0.0 {
+                        Ok(())
+                    } else {
+                        self.doc.rotate_content(angle, self.colors[1])
+                    }
                 });
             if let Err(error) = result {
                 self.doc.cancel();
                 return Err(error);
+            }
+            if (angle.rem_euclid(180.0) - 90.0).abs() < 0.001 {
+                std::mem::swap(&mut self.doc.resolution.x, &mut self.doc.resolution.y);
             }
             self.doc.commit();
             self.refresh = true;
@@ -399,54 +465,39 @@ impl PaintApp {
         if !self.ensure_active_layer_editable() {
             return Err(self.message.clone());
         }
-        if skew_x == 0.0 && skew_y == 0.0 {
-            if (width, height) == self.resize_dimensions() {
-                return Ok(());
-            }
-            if let Some(index) = self.object {
-                let mut resized = self.doc.objects[index].clone();
-                if matches!(resized.kind, ObjectKind::Image(_)) {
-                    resized.image_edits.sampling = if self.pixel_resize {
-                        d::ImageSampling::Nearest
-                    } else {
-                        d::ImageSampling::Smooth
-                    };
-                }
-                resized.resize_rendered(width, height)?;
-                self.doc.begin();
-                self.doc.objects[index] = resized;
-                self.doc.commit();
-                self.refresh = true;
-                return Ok(());
-            }
-        }
-        if let Some(index) = self
-            .object
-            .filter(|&index| matches!(self.doc.objects[index].kind, ObjectKind::Image(_)))
-        {
-            let mut resized = self.doc.objects[index].clone();
+        let mut resized = if let Some(index) = self.object {
+            self.doc.objects[index].clone()
+        } else {
+            let region = self
+                .selection
+                .ok_or("The selection is no longer available.")?;
+            Object::new(
+                ObjectKind::Image(
+                    self.selected_image()
+                        .ok_or("The selection is no longer available.")?,
+                ),
+                (region.x as i32, region.y as i32),
+            )
+        };
+        if matches!(resized.kind, ObjectKind::Image(_)) {
             resized.image_edits.sampling = if self.pixel_resize {
                 d::ImageSampling::Nearest
             } else {
                 d::ImageSampling::Smooth
             };
-            resized.resize_rendered(width, height)?;
-            resized.skew_rendered(skew_x, skew_y)?;
-            self.doc.begin();
-            self.doc.objects[index] = resized;
-            self.doc.commit();
-            self.refresh = true;
-            return Ok(());
         }
-        let background = self.editing_background();
-        let filter = if self.pixel_resize {
-            imageops::FilterType::Nearest
-        } else {
-            imageops::FilterType::CatmullRom
-        };
-        self.transform(|image| {
-            plan.apply(&imageops::resize(image, width, height, filter), background)
-        });
+        resized.resize_rendered(width, height)?;
+        resized.skew_rendered(skew_x, skew_y)?;
+        resized.rotate_to(resized.angle + angle)?;
+        let index = self
+            .lift_selection()
+            .ok_or("The selection is no longer available.")?;
+        // A lifted free-form selection already carries its alpha coverage.
+        // Keep its color key without introducing opaque rotation/skew corners.
+        resized.color_key = self.doc.objects[index].color_key;
+        self.doc.objects[index] = resized;
+        self.doc.commit();
+        self.refresh = true;
         Ok(())
     }
 
@@ -532,15 +583,10 @@ impl PaintApp {
                 self.message = "The rotated picture would exceed the 16 megapixel limit.".into();
                 return false;
             }
-            let background = if self.selection.is_some() {
-                self.editing_background()
-            } else {
-                self.colors[1]
-            };
             let quarter_turn = (angle.rem_euclid(180.0) - 90.0).abs() < 0.001;
             if self.selection.is_none() {
                 self.doc.begin();
-                if let Err(error) = self.doc.rotate_content(angle, background) {
+                if let Err(error) = self.doc.rotate_content(angle, self.colors[1]) {
                     self.doc.cancel();
                     self.message = error;
                     return false;
@@ -551,7 +597,17 @@ impl PaintApp {
                 self.doc.commit();
                 self.refresh = true;
             } else {
-                self.transform(|image| d::rotate(image, angle, background));
+                let Some(index) = self.lift_selection() else {
+                    return false;
+                };
+                if let Err(error) = self.doc.objects[index].rotate_to(angle) {
+                    self.doc.cancel();
+                    self.clear_selection();
+                    self.message = error;
+                    return false;
+                }
+                self.doc.commit();
+                self.refresh = true;
             }
         }
         true
@@ -568,6 +624,9 @@ impl PaintApp {
 
 #[cfg(test)]
 mod workflow_tests;
+
+#[cfg(test)]
+mod transform_tests;
 
 #[cfg(test)]
 mod tests {

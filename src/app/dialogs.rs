@@ -545,7 +545,7 @@ impl PaintApp {
             Some("Unsaved changes")
         } else {
             self.dialog.map(|dialog| match dialog {
-                Dialog::Resize => "Resize and Skew",
+                Dialog::Resize => "Resize, Skew, and Rotate",
                 Dialog::Rotate => "Rotate",
                 Dialog::ImageAdjustments => "Edit Image",
                 Dialog::ImageCrop => "Crop Image",
@@ -720,7 +720,12 @@ impl PaintApp {
         ui.label(
             RichText::new(format!(
                 "{} · {} × {} pixels",
-                if self.selected_region().is_some() || self.object.is_some() {
+                if self.text_edit.is_some() {
+                    "Text"
+                } else if self.selected_region().is_some()
+                    || self.object.is_some()
+                    || !self.polygon.is_empty()
+                {
                     "Selection"
                 } else {
                     "Picture"
@@ -730,10 +735,8 @@ impl PaintApp {
             ))
             .weak(),
         );
-        ui.add_space(8.0);
-        ui.strong("Resize");
         ui.horizontal(|ui| {
-            ui.label("By:");
+            ui.strong("Resize by:");
             let previous = self.percent;
             ui.radio_value(&mut self.percent, true, "Percentage");
             ui.radio_value(&mut self.percent, false, "Pixels");
@@ -747,7 +750,7 @@ impl PaintApp {
         });
         Grid::new("dimensions")
             .num_columns(2)
-            .spacing(vec2(16.0, 10.0))
+            .spacing(vec2(16.0, 4.0))
             .show(ui, |ui| {
                 ui.label("Horizontal:");
                 let horizontal = numeric_input(
@@ -791,19 +794,30 @@ impl PaintApp {
         ui.checkbox(&mut self.pixel_resize, "Keep hard pixel edges (pixel art)")
             .on_hover_text("Use nearest-neighbor scaling to preserve the exact palette. Leave off for smoother photographs.");
         ui.separator();
-        ui.strong("Skew (degrees)");
-        Grid::new("skew_dimensions")
+        ui.strong("Angles (degrees)");
+        Grid::new("transform_angles")
             .num_columns(2)
-            .spacing(vec2(16.0, 10.0))
+            .spacing(vec2(16.0, 4.0))
             .show(ui, |ui| {
                 for (label, angle) in [
-                    ("Horizontal:", &mut self.skew_x),
-                    ("Vertical:", &mut self.skew_y),
+                    ("Horizontal skew:", &mut self.skew_x),
+                    ("Vertical skew:", &mut self.skew_y),
                 ] {
                     ui.label(label);
                     numeric_input(ui, DragValue::new(angle).range(-89.0..=89.0).suffix("°"));
                     ui.end_row();
                 }
+                let label = ui.label("Rotation:");
+                let angle = numeric_input(
+                    ui,
+                    DragValue::new(&mut self.angle)
+                        .range(-360.0..=360.0)
+                        .speed(1.0)
+                        .suffix("°"),
+                )
+                .labelled_by(label.id);
+                angle.on_hover_text("Rotate clockwise by this angle after resizing and skewing. Negative angles turn counterclockwise.");
+                ui.end_row();
             });
         let mut close = false;
         dialog_actions(ui, &["OK", "Cancel"], |ui| {
@@ -820,9 +834,13 @@ impl PaintApp {
                 } else {
                     (self.resize_w, self.resize_h)
                 };
-                if let Err(error) =
-                    self.resize_picture(dimensions.0, dimensions.1, self.skew_x, self.skew_y)
-                {
+                if let Err(error) = self.resize_skew_rotate_picture(
+                    dimensions.0,
+                    dimensions.1,
+                    self.skew_x,
+                    self.skew_y,
+                    self.angle,
+                ) {
                     self.dialog_error = Some(error);
                     return;
                 }
