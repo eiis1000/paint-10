@@ -57,6 +57,9 @@ impl PaintApp {
         }
         if ctx.input_mut(|input| consume_shortcut(input, Modifiers::SHIFT, Key::F10)) {
             keytips::cancel(ctx, false);
+            if self.open_layer_context_menu(ctx) {
+                return true;
+            }
             self.keyboard_context_menu = true;
             ctx.data_mut(|data| data.insert_temp(Id::new("paint10_context_initial_focus"), true));
             if let Some(state) = &mut self.text_edit {

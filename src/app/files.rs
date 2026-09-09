@@ -44,6 +44,7 @@ impl PaintApp {
         match read_document(&path, format) {
             Ok(document) => {
                 self.doc = document;
+                self.reset_layer_panel_state();
                 self.measure.reset();
                 self.register_document_fonts();
                 self.file = Some(path.clone());
@@ -176,7 +177,7 @@ impl PaintApp {
         let shape = self.finish_editing();
         if selection_only {
             self.selected_image()
-                .or_else(|| shape.map(|bounds| bounds.extract(&self.doc.composite())))
+                .or_else(|| shape.map(|bounds| bounds.extract(&self.doc.active_composite())))
                 .map(Some)
                 .ok_or_else(|| "Select part of the picture before saving a selection.".into())
         } else {
@@ -356,6 +357,54 @@ mod tests {
             assert_eq!(initial_format, RasterFormat::Project);
             Ok(None)
         });
+    }
+
+    #[test]
+    fn draft_shape_export_uses_active_pixels_but_picture_export_uses_visible_stack() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.doc = Document::from_image(RgbaImage::from_pixel(80, 60, Rgba([20, 160, 80, 255])));
+        app.doc.add_layer().unwrap();
+        app.doc.add_layer().unwrap();
+        app.doc.image = RgbaImage::from_pixel(80, 60, Rgba([25, 70, 220, 255]));
+        app.doc.set_active_layer(1).unwrap();
+        app.set_tool(Tool::Rectangle);
+        app.doc.begin();
+        app.start_shape_draft(
+            ShapeGeometry::Primitive {
+                tool: Tool::Rectangle,
+                start: (10, 10),
+                end: (50, 40),
+            },
+            0,
+        );
+        let bounds = app
+            .shape_draft
+            .as_ref()
+            .unwrap()
+            .bounds(&app.doc.image)
+            .unwrap();
+        let selection = app.prepare_export(true).unwrap().unwrap();
+        assert_eq!(selection, bounds.extract(&app.doc.active_composite()));
+        assert_ne!(selection, bounds.extract(&app.doc.composite()));
+        let directory = tempfile::tempdir().unwrap();
+        let choice = SaveChoice {
+            path: directory.path().join("stack.png"),
+            format: RasterFormat::Png,
+        };
+        app.write_export(&choice, None).unwrap();
+        assert_eq!(
+            PaintApp::read_image(&choice.path).unwrap(),
+            app.doc.composite()
+        );
+        let choice = SaveChoice {
+            path: directory.path().join("stack.p10"),
+            format: RasterFormat::Project,
+        };
+        app.write_export(&choice, None).unwrap();
+        let restored = read_document(&choice.path, Some(RasterFormat::Project)).unwrap();
+        assert!(restored.layers() == app.doc.layers());
+        assert_eq!(restored.active_layer_index(), 1);
     }
 
     #[test]

@@ -1,4 +1,6 @@
-use crate::document::{valid_size, Document, Object, ObjectKind};
+use crate::document::{
+    valid_size, Document, Object, ObjectBudget, ObjectKind, MAX_OBJECTS, MAX_OBJECT_BYTES,
+};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -7,12 +9,12 @@ use std::{
 };
 
 #[cfg(test)]
+mod layer_tests;
+#[cfg(test)]
 mod version_tests;
 mod wire;
 
 const MAX_PROJECT_BYTES: u64 = 256 * 1024 * 1024;
-const MAX_OBJECT_BYTES: usize = 128 * 1024 * 1024;
-const MAX_OBJECTS: usize = 1000;
 
 #[derive(Serialize, Deserialize)]
 struct Project {
@@ -31,15 +33,12 @@ pub fn save(doc: &Document, path: &Path) -> Result<(), String> {
     atomic_write(path, &encode(doc)?)
 }
 
-/// Encode the bounded version-3 format for disk and browser downloads.
-/// Original image edits require v3; the loader also accepts versions 1 and 2.
+/// Encode layers and source-preserving objects in the bounded version-4 format.
+/// The loader also accepts the single-layer versions 1, 2, and 3.
 pub fn encode(doc: &Document) -> Result<Vec<u8>, String> {
     doc.resolution.validate()?;
-    if !valid_size(doc.image.width(), doc.image.height()) {
-        return Err("The project canvas exceeds the allocation limit.".into());
-    }
-    validate_objects(&doc.objects)?;
-    let data = wire::Project::from_document(doc)?;
+    validate_document(doc)?;
+    let data = wire::LayerProject::from_document(doc)?;
     let mut out = vec![];
     out.extend(b"PAINT10\0");
     let mut encoder = BoundedWriter {
@@ -102,6 +101,11 @@ fn decode_reader(mut file: impl Read) -> Result<Document, String> {
     }
     let version: Version =
         serde_json::from_slice(&bytes).map_err(|e| format!("Invalid project: {e}"))?;
+    if version.version == 4 {
+        return serde_json::from_slice::<wire::LayerProject>(&bytes)
+            .map_err(|e| format!("Invalid project: {e}"))?
+            .into_document();
+    }
     let data = match version.version {
         1 => serde_json::from_slice::<Project>(&bytes)
             .map_err(|e| format!("Invalid project: {e}"))?,
@@ -116,6 +120,14 @@ fn decode_reader(mut file: impl Read) -> Result<Document, String> {
     doc.mono = data.mono;
     doc.resolution = data.resolution;
     Ok(doc)
+}
+
+fn validate_document(doc: &Document) -> Result<(), String> {
+    crate::document::validate_layers(doc.layers(), doc.active_layer_index())?;
+    for object in doc.layers().iter().flat_map(|layer| &layer.objects) {
+        validate_object(object)?;
+    }
+    Ok(())
 }
 
 fn validate_object(object: &Object) -> Result<usize, String> {
@@ -155,32 +167,11 @@ fn validate_object(object: &Object) -> Result<usize, String> {
     Ok(bytes)
 }
 
-fn object_bytes(object: &Object, fonts: &mut crate::text::FontMemory) -> usize {
-    object
-        .source_clip
-        .as_ref()
-        .map_or(0, crate::document::SourceClip::memory_bytes)
-        + match &object.kind {
-            ObjectKind::Raster(image) | ObjectKind::Image(image) => image.as_raw().len(),
-            ObjectKind::Text { text, format } => text.len() + format.memory_bytes_with_fonts(fonts),
-        }
-}
-
 fn validate_objects(objects: &[Object]) -> Result<(), String> {
-    if objects.len() > MAX_OBJECTS {
-        return Err("Project objects exceed the 1,000 object limit.".into());
-    }
-    let mut fonts = crate::text::FontMemory::default();
-    let mut bytes = 0usize;
+    let mut budget = ObjectBudget::default();
     for object in objects {
+        budget.add(object)?;
         validate_object(object)?;
-        bytes = bytes.saturating_add(object_bytes(object, &mut fonts));
-        if bytes > MAX_OBJECT_BYTES {
-            break;
-        }
-    }
-    if bytes > MAX_OBJECT_BYTES {
-        return Err("Project objects exceed the 128 MB or 1,000 object limit. Export a picture or reduce the number of editable objects.".into());
     }
     Ok(())
 }
@@ -199,16 +190,10 @@ fn deserialize_objects<'de, D: serde::Deserializer<'de>>(
             mut sequence: A,
         ) -> Result<Self::Value, A::Error> {
             let mut objects = vec![];
-            let mut bytes = 0usize;
-            let mut fonts = crate::text::FontMemory::default();
+            let mut budget = ObjectBudget::default();
             while let Some(object) = sequence.next_element::<Object>()? {
+                budget.add(&object).map_err(serde::de::Error::custom)?;
                 validate_object(&object).map_err(serde::de::Error::custom)?;
-                bytes = bytes.saturating_add(object_bytes(&object, &mut fonts));
-                if objects.len() >= MAX_OBJECTS || bytes > MAX_OBJECT_BYTES {
-                    return Err(serde::de::Error::custom(
-                        "Project objects exceed the 128 MB or 1,000 object limit.",
-                    ));
-                }
                 objects.push(object);
             }
             Ok(objects)

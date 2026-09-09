@@ -208,7 +208,7 @@ impl PaintApp {
             self.curve = Some(curve);
             return;
         }
-        if response.double_clicked() && self.tool == Tool::Select {
+        if response.double_clicked() && self.tool == Tool::Select && self.active_layer_editable() {
             let hit = self
                 .doc
                 .objects
@@ -262,6 +262,11 @@ impl PaintApp {
         );
     }
     fn begin_canvas_gesture(&mut self, press_pos: Pos2, rect: Rect, ctx: &Context) {
+        if !matches!(self.tool, Tool::Select | Tool::Picker | Tool::Magnifier)
+            && !self.ensure_active_layer_editable()
+        {
+            return;
+        }
         let p = self.point(press_pos, rect);
         if self.begin_shape_gesture(p) {
             return;
@@ -281,7 +286,7 @@ impl PaintApp {
         let color = self.colors[usize::from(right)];
         match self.tool {
             Tool::Fill => {
-                let before = self.doc.composite();
+                let before = self.doc.active_composite();
                 let mut after = before.clone();
                 d::flood_fill(&mut after, p, color);
                 self.doc.begin();
@@ -337,6 +342,9 @@ impl PaintApp {
                 if let Some(mut i) =
                     hit.filter(|index| self.object == Some(*index) && !self.selection_contains(p))
                 {
+                    if !self.ensure_active_layer_editable() {
+                        return;
+                    }
                     self.doc.begin();
                     if duplicate {
                         let obj = self.doc.objects[i].clone();
@@ -350,6 +358,9 @@ impl PaintApp {
                         last_stamp: p,
                     });
                 } else if self.selection_contains(p) {
+                    if !self.ensure_active_layer_editable() {
+                        return;
+                    }
                     let r = self.selection.unwrap();
                     let img = self.selected_image().unwrap();
                     self.doc.begin();
@@ -625,7 +636,7 @@ impl PaintApp {
                     } else {
                         let width = self.size;
                         let c = if self.tool == Tool::Eraser {
-                            self.colors[1]
+                            self.editing_background()
                         } else {
                             *color
                         };
@@ -661,7 +672,7 @@ impl PaintApp {
                                 if erase_target.is_some()
                                     || (c[3] < 255 && !self.doc.objects.is_empty())
                                 {
-                                    let before = self.doc.composite();
+                                    let before = self.doc.active_composite();
                                     let mut after = before.clone();
                                     d::erase_line(
                                         &mut after,
@@ -803,13 +814,21 @@ impl PaintApp {
                     index,
                     last_stamp,
                 } => {
-                    if shift && raw != *last_stamp && self.doc.objects.len() < 1000 {
+                    let object_count: usize = self
+                        .doc
+                        .layers()
+                        .iter()
+                        .map(|layer| layer.objects.len())
+                        .sum();
+                    if shift && raw != *last_stamp && object_count < d::MAX_OBJECTS {
                         let mut copy = self.doc.objects[*index].clone();
                         copy.kind = ObjectKind::Raster(copy.render());
                         copy.angle = 0.;
                         copy.scale = 1.;
                         copy.color_key = None;
                         copy.transform = Default::default();
+                        copy.image_edits = Default::default();
+                        copy.source_clip = None;
                         self.doc.objects.insert(*index, copy);
                         *index += 1;
                         self.object = Some(*index);
@@ -1678,6 +1697,59 @@ mod tests {
     }
 
     #[test]
+    fn shift_drag_stamps_cropped_images_without_applying_source_edits_twice() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.doc = Document::new(40, 40);
+        app.doc.add_layer().unwrap();
+        let mut object = Object::new(
+            ObjectKind::Image(RgbaImage::from_pixel(30, 20, Rgba([25, 80, 190, 255]))),
+            (0, 0),
+        );
+        object.image_edits.invert = true;
+        let index = app.doc.add_object(object);
+        app.doc
+            .crop_canvas(Region {
+                x: 12,
+                y: 0,
+                w: 20,
+                h: 20,
+            })
+            .unwrap();
+        assert!(app.doc.objects[index].source_clip.is_some());
+        let expected = app.doc.objects[index].render();
+        let origin = app.doc.objects[index].pos;
+        app.doc.begin();
+        app.gesture = Some(Gesture::Move {
+            start: (0, 0),
+            origin,
+            index,
+            last_stamp: (0, 0),
+        });
+        let _ = ctx.run(RawInput::default(), |ctx| {
+            CentralPanel::default().show(ctx, |ui| {
+                app.continue_canvas_gesture(
+                    ui,
+                    Rect::from_min_size(Pos2::ZERO, vec2(20.0, 20.0)),
+                    ctx,
+                    CanvasPointer {
+                        raw: (5, 0),
+                        clamped: (5, 0),
+                        shift: true,
+                        released: true,
+                    },
+                );
+            });
+        });
+        assert_eq!(app.doc.objects[index].render(), expected);
+        assert!(app.doc.objects[index].source_clip.is_none());
+        assert!(app.doc.objects[index + 1].source_clip.is_some());
+        app.doc.undo();
+        assert_eq!(app.doc.objects.len(), 1);
+        assert_eq!(app.doc.objects[index].render(), expected);
+    }
+
+    #[test]
     fn shift_stroke_handles_large_outside_pointer_coordinates() {
         let context = Context::default();
         let mut app = PaintApp::new_with_context(&context, false);
@@ -1795,7 +1867,7 @@ mod tests {
             first: true,
         });
         gesture_frame(&mut app, &ctx, (120, 70), false);
-        let mut expected = Document::new(200, 100).image;
+        let mut expected = Document::new(200, 100).image.clone();
         d::styled_shape(
             &mut expected,
             Tool::Line,

@@ -11,9 +11,56 @@ fn stroke_size_group(tool: Tool) -> Option<usize> {
 }
 
 impl PaintApp {
+    pub(in crate::app) fn active_layer_editable(&self) -> bool {
+        let layer = self.doc.active_layer();
+        layer.visible && !layer.locked
+    }
+
+    pub(in crate::app) fn ensure_active_layer_editable(&mut self) -> bool {
+        if self.active_layer_editable() {
+            return true;
+        }
+        let layer = self.doc.active_layer();
+        self.message = if !layer.visible {
+            format!(
+                "Show the layer \"{}\" in Layers before editing it.",
+                layer.name
+            )
+        } else {
+            format!(
+                "Unlock the layer \"{}\" in Layers before editing it.",
+                layer.name
+            )
+        };
+        false
+    }
+
+    /// The original Paint background uses Color 2; added sheets erase to clear.
+    pub(in crate::app) fn editing_background(&self) -> Color {
+        if self.doc.active_layer().is_background {
+            self.colors[1]
+        } else {
+            [0, 0, 0, 0]
+        }
+    }
+
+    fn action_edits_active_layer(&self, action: Action) -> bool {
+        matches!(
+            action,
+            Action::Cut
+                | Action::Paste
+                | Action::PasteFrom
+                | Action::Clear
+                | Action::ClearPicture
+                | Action::Invert
+        ) || (matches!(action, Action::Resize | Action::Rotate(_) | Action::Flip(_))
+            && (self.object.is_some() || self.selection.is_some() || self.shape_draft.is_some()))
+    }
+
     /// Finish the current drawing operation before another command consumes
     /// the document, while retaining the committed shape's selection bounds.
     pub(in crate::app) fn finish_editing(&mut self) -> Option<Region> {
+        self.finish_layer_opacity();
         self.commit_text();
         self.finish_polygon();
         let shape = self.commit_shape();
@@ -57,6 +104,10 @@ impl PaintApp {
 
     pub(in crate::app) fn action(&mut self, action: Action, ctx: &Context) {
         if self.dialog.is_some() || self.pending.is_some() {
+            return;
+        }
+        self.finish_layer_opacity();
+        if self.action_edits_active_layer(action) && !self.ensure_active_layer_editable() {
             return;
         }
         if self.text_history_action(action, ctx) || self.text_clipboard_action(action, ctx) {
@@ -108,9 +159,13 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn execute(&mut self, action: Action, ctx: &Context) {
+        if self.action_edits_active_layer(action) && !self.ensure_active_layer_editable() {
+            return;
+        }
         match action {
             Action::New => {
                 self.doc = Document::new(900, 600);
+                self.reset_layer_panel_state();
                 self.measure.reset();
                 self.file = None;
                 self.clear_selection();
@@ -149,11 +204,13 @@ impl PaintApp {
             }
             Action::Undo => {
                 self.doc.undo();
+                self.reset_layer_panel_state();
                 self.clear_selection();
                 self.refresh = true;
             }
             Action::Redo => {
                 self.doc.redo();
+                self.reset_layer_panel_state();
                 self.clear_selection();
                 self.refresh = true;
             }
@@ -223,7 +280,7 @@ impl PaintApp {
                 if self.selection.is_some() || self.object.is_some() {
                     self.delete_selection();
                 } else {
-                    let bg = self.colors[1];
+                    let bg = self.editing_background();
                     self.doc.begin();
                     self.doc.objects.clear();
                     self.doc.image = RgbaImage::from_pixel(
@@ -314,6 +371,34 @@ impl PaintApp {
         if let Some(bounds) = self.finish_editing() {
             self.selection = Some(bounds);
         }
+        if self.object.is_none() && self.selection.is_none() {
+            let sampling = if self.pixel_resize {
+                d::ImageSampling::Nearest
+            } else {
+                d::ImageSampling::Smooth
+            };
+            self.doc.begin();
+            let result = self
+                .doc
+                .resize_content(width, height, sampling)
+                .and_then(|()| {
+                    if skew_x == 0.0 && skew_y == 0.0 {
+                        Ok(())
+                    } else {
+                        self.doc.skew_content(skew_x, skew_y, self.colors[1])
+                    }
+                });
+            if let Err(error) = result {
+                self.doc.cancel();
+                return Err(error);
+            }
+            self.doc.commit();
+            self.refresh = true;
+            return Ok(());
+        }
+        if !self.ensure_active_layer_editable() {
+            return Err(self.message.clone());
+        }
         if skew_x == 0.0 && skew_y == 0.0 {
             if (width, height) == self.resize_dimensions() {
                 return Ok(());
@@ -330,21 +415,6 @@ impl PaintApp {
                 resized.resize_rendered(width, height)?;
                 self.doc.begin();
                 self.doc.objects[index] = resized;
-                self.doc.commit();
-                self.refresh = true;
-                return Ok(());
-            }
-            if self.selection.is_none() {
-                self.doc.begin();
-                let sampling = if self.pixel_resize {
-                    d::ImageSampling::Nearest
-                } else {
-                    d::ImageSampling::Smooth
-                };
-                if let Err(error) = self.doc.resize_content(width, height, sampling) {
-                    self.doc.cancel();
-                    return Err(error);
-                }
                 self.doc.commit();
                 self.refresh = true;
                 return Ok(());
@@ -368,7 +438,7 @@ impl PaintApp {
             self.refresh = true;
             return Ok(());
         }
-        let background = self.colors[1];
+        let background = self.editing_background();
         let filter = if self.pixel_resize {
             imageops::FilterType::Nearest
         } else {
@@ -427,6 +497,11 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn rotate_picture(&mut self, angle: f32, absolute: bool) -> bool {
+        if (self.object.is_some() || self.selection.is_some() || self.shape_draft.is_some())
+            && !self.ensure_active_layer_editable()
+        {
+            return false;
+        }
         // The custom-angle dialog can open over an unfinished shape or text
         // box. Apply consumes that edit; Cancel leaves it adjustable.
         if let Some(bounds) = self.finish_editing() {
@@ -457,7 +532,11 @@ impl PaintApp {
                 self.message = "The rotated picture would exceed the 16 megapixel limit.".into();
                 return false;
             }
-            let background = self.colors[1];
+            let background = if self.selection.is_some() {
+                self.editing_background()
+            } else {
+                self.colors[1]
+            };
             let quarter_turn = (angle.rem_euclid(180.0) - 90.0).abs() < 0.001;
             if self.selection.is_none() {
                 self.doc.begin();

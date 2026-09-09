@@ -2,6 +2,16 @@ use super::*;
 
 const CANVAS_CENTER_REQUEST: &str = "paint10_canvas_center_request";
 
+#[derive(Clone)]
+pub(super) struct CanvasImageSlot {
+    pub painter: Painter,
+    pub shape: egui::layers::ShapeIdx,
+    pub rect: Rect,
+    pub pass: u64,
+}
+
+pub(super) const CANVAS_IMAGE_SLOT: &str = "paint10-canvas-image-slot";
+
 pub(super) fn checkerboard(painter: &Painter, rect: Rect, cell: f32) {
     let clip = rect.intersect(painter.clip_rect());
     if !clip.is_positive() {
@@ -41,6 +51,7 @@ impl PaintApp {
         if !self.refresh {
             return;
         }
+        self.render_revision = self.render_revision.wrapping_add(1);
         self.rendered =
             self.shape_display_image(ctx, self.text_edit.as_ref().and_then(|s| s.index));
         self.canvas_alpha = self.rendered.pixels().any(|pixel| pixel[3] != 255);
@@ -110,12 +121,24 @@ impl PaintApp {
                         if self.canvas_alpha {
                             checkerboard(ui.painter(), rect, 12.0);
                         }
-                        ui.painter().image(
+                        let shape = ui.painter().image(
                             self.texture.as_ref().unwrap().id(),
                             rect,
                             Rect::from_min_max(Pos2::ZERO, pos2(1., 1.)),
                             Color32::WHITE,
                         );
+                        let pass = ctx.cumulative_pass_nr();
+                        ctx.data_mut(|data| {
+                            data.insert_temp(
+                                Id::new(CANVAS_IMAGE_SLOT),
+                                CanvasImageSlot {
+                                    painter: ui.painter().clone(),
+                                    shape,
+                                    rect,
+                                    pass,
+                                },
+                            );
+                        });
                         let response = ui
                             .interact(rect, Id::new("canvas"), Sense::click_and_drag())
                             .on_hover_cursor(match self.tool {
@@ -230,6 +253,7 @@ impl PaintApp {
                                 if let Some(press) = press.filter(|_| {
                                     self.text_edit.is_none()
                                         && !self.measure.enabled
+                                        && self.active_layer_editable()
                                         && self.dialog.is_none()
                                         && self.pending.is_none()
                                 }) {

@@ -1493,9 +1493,11 @@ impl PaintApp {
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(242., 10.), vec2(155., 80.))),
             |ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
                 controls::checkbox(ui, &mut self.rulers, "Rulers");
                 controls::checkbox(ui, &mut self.grid, "Gridlines");
                 controls::checkbox(ui, &mut self.status_bar, "Status bar");
+                controls::checkbox(ui, &mut self.layer_ui.open, "Layers");
             },
         );
     }

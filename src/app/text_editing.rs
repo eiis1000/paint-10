@@ -205,6 +205,9 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn edit_text_object(&mut self, index: usize) {
+        if !self.ensure_active_layer_editable() {
+            return;
+        }
         if let ObjectKind::Text { text, format } = &self.doc.objects[index].kind {
             self.colors[0] = format.style_at(0).color;
             if let Some(background) = format.background {
@@ -493,7 +496,7 @@ impl PaintApp {
     pub(in crate::app) fn register_document_fonts(&mut self) {
         let mut visited = Vec::<&[u8]>::new();
         let mut added = false;
-        for object in &self.doc.objects {
+        for object in self.doc.layers().iter().flat_map(|layer| &layer.objects) {
             let ObjectKind::Text { format, .. } = &object.kind else {
                 continue;
             };
@@ -667,7 +670,25 @@ impl PaintApp {
                 if !composing {
                     snap_editor_selection(&state.text, &mut output, ctx, input_id);
                 }
-                text_preview::paint(ui, picture, position, &state.text, &live_format, zoom);
+                if self.doc.layer_count() > 1 || self.doc.active_layer().opacity < 255 {
+                    let kind = ObjectKind::Text {
+                        text: state.text.clone(),
+                        format: live_format.clone(),
+                    };
+                    // Editing uses the same untransformed glyph geometry as
+                    // the caret and selection. Commit retains the original
+                    // object's rotation, scaling, and canvas clip.
+                    let object = Object::new(kind, state.origin);
+                    text_preview::paint_layered(
+                        ui,
+                        &self.doc,
+                        object,
+                        state.index,
+                        self.render_revision,
+                    );
+                } else {
+                    text_preview::paint(ui, picture, position, &state.text, &live_format, zoom);
+                }
                 dashed_rect(ui.painter(), output.response.rect.expand(3.0));
                 output
             })

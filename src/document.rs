@@ -2,7 +2,10 @@ use crate::text::FontMemory;
 use image::{imageops, Rgba, RgbaImage};
 use std::collections::VecDeque;
 
+mod layers;
 mod shape_texture;
+pub(crate) use layers::{validate_layers, ObjectBudget};
+pub use layers::{Layer, MAX_LAYERS, MAX_LAYER_BYTES, MAX_OBJECTS, MAX_OBJECT_BYTES};
 
 pub type Color = [u8; 4];
 pub type Point = (i32, i32);
@@ -318,8 +321,8 @@ impl Region {
 
 #[derive(Clone)]
 struct Snapshot {
-    image: RgbaImage,
-    objects: Vec<Object>,
+    layers: Vec<Layer>,
+    active_layer: usize,
     mono: bool,
     resolution: crate::metadata::Resolution,
     revision: u64,
@@ -708,10 +711,10 @@ fn transform_image(
 }
 
 pub struct Document {
-    pub image: RgbaImage,
+    layers: Vec<Layer>,
+    active_layer: usize,
     pub mono: bool,
     pub resolution: crate::metadata::Resolution,
-    pub objects: Vec<Object>,
     undo: VecDeque<Snapshot>,
     redo: Vec<Snapshot>,
     before: Option<Snapshot>,
@@ -725,10 +728,10 @@ impl Document {
     }
     pub fn from_image(image: RgbaImage) -> Self {
         Self {
-            image,
+            layers: vec![Layer::background(image)],
+            active_layer: 0,
             mono: false,
             resolution: Default::default(),
-            objects: vec![],
             undo: VecDeque::new(),
             redo: vec![],
             before: None,
@@ -740,13 +743,12 @@ impl Document {
     pub fn dirty(&self) -> bool {
         self.revision != self.saved_revision
             || self.before.as_ref().is_some_and(|s| {
-                s.image != self.image
-                    || s.objects != self.objects
-                    || s.mono != self.mono
-                    || s.resolution != self.resolution
+                s.layers != self.layers || s.mono != self.mono || s.resolution != self.resolution
             })
     }
+}
 
+impl Layer {
     /// Resize the canvas and retained objects together. Repeated reductions
     /// never become the input to a later enlargement.
     pub fn resize_content(
@@ -884,6 +886,9 @@ impl Document {
             imageops::flip_vertical(&self.image)
         };
     }
+}
+
+impl Document {
     pub fn mark_saved(&mut self) {
         self.saved_revision = self.revision;
     }
@@ -896,8 +901,8 @@ impl Document {
     pub fn begin(&mut self) {
         if self.before.is_none() {
             self.before = Some(Snapshot {
-                image: self.image.clone(),
-                objects: self.objects.clone(),
+                layers: self.layers.clone(),
+                active_layer: self.active_layer,
                 mono: self.mono,
                 resolution: self.resolution,
                 revision: self.revision,
@@ -906,16 +911,16 @@ impl Document {
     }
     pub fn restore_preview(&mut self) {
         if let Some(s) = &self.before {
-            self.image.clone_from(&s.image);
-            self.objects.clone_from(&s.objects);
+            self.layers.clone_from(&s.layers);
+            self.active_layer = s.active_layer;
             self.mono = s.mono;
             self.resolution = s.resolution;
         }
     }
     pub fn cancel(&mut self) {
         if let Some(s) = self.before.take() {
-            self.image = s.image;
-            self.objects = s.objects;
+            self.layers = s.layers;
+            self.active_layer = s.active_layer;
             self.mono = s.mono;
             self.resolution = s.resolution;
             self.revision = s.revision;
@@ -923,11 +928,7 @@ impl Document {
     }
     pub fn commit(&mut self) {
         if let Some(s) = self.before.take() {
-            if s.image == self.image
-                && s.objects == self.objects
-                && s.mono == self.mono
-                && s.resolution == self.resolution
-            {
+            if s.layers == self.layers && s.mono == self.mono && s.resolution == self.resolution {
                 return;
             }
             self.undo.push_back(s);
@@ -955,8 +956,8 @@ impl Document {
         self.cancel();
         if let Some(s) = self.undo.pop_back() {
             self.redo.push(Snapshot {
-                image: std::mem::replace(&mut self.image, s.image),
-                objects: std::mem::replace(&mut self.objects, s.objects),
+                layers: std::mem::replace(&mut self.layers, s.layers),
+                active_layer: std::mem::replace(&mut self.active_layer, s.active_layer),
                 mono: std::mem::replace(&mut self.mono, s.mono),
                 resolution: std::mem::replace(&mut self.resolution, s.resolution),
                 revision: self.revision,
@@ -968,8 +969,8 @@ impl Document {
         self.cancel();
         if let Some(s) = self.redo.pop() {
             self.undo.push_back(Snapshot {
-                image: std::mem::replace(&mut self.image, s.image),
-                objects: std::mem::replace(&mut self.objects, s.objects),
+                layers: std::mem::replace(&mut self.layers, s.layers),
+                active_layer: std::mem::replace(&mut self.active_layer, s.active_layer),
                 mono: std::mem::replace(&mut self.mono, s.mono),
                 resolution: std::mem::replace(&mut self.resolution, s.resolution),
                 revision: self.revision,
@@ -986,27 +987,33 @@ impl Document {
 
     /// Raster beneath an active drawing transaction, without changing its state.
     pub fn preview_raster(&self) -> &RgbaImage {
-        self.before
-            .as_ref()
-            .map_or(&self.image, |before| &before.image)
+        self.before.as_ref().map_or(&self.image, |before| {
+            &before.layers[before.active_layer].image
+        })
     }
 
     /// Composite a display-only raster replacement over the retained objects.
     pub fn composite_with_raster(&self, raster: &RgbaImage, skip: Option<usize>) -> RgbaImage {
         debug_assert_eq!(raster.dimensions(), self.image.dimensions());
-        let mut out = if self.objects.is_empty() {
-            raster.clone()
-        } else {
-            RgbaImage::new(self.image.width(), self.image.height())
-        };
-        for (i, obj) in self.objects.iter().enumerate() {
-            if skip != Some(i) {
-                overlay(&mut out, &obj.render(), obj.pos.0 as i64, obj.pos.1 as i64);
+        let mut output: Option<RgbaImage> = None;
+        for (index, layer) in self.layers.iter().enumerate() {
+            if !layer.visible || layer.opacity == 0 {
+                continue;
+            }
+            let mut pixels = if index == self.active_layer {
+                layer.composite_with_raster(raster, skip)
+            } else {
+                layer.composite()
+            };
+            layers::apply_opacity(&mut pixels, layer.opacity);
+            if let Some(out) = &mut output {
+                overlay(out, &pixels, 0, 0);
+            } else {
+                output = Some(pixels);
             }
         }
-        if !self.objects.is_empty() {
-            overlay(&mut out, raster, 0, 0);
-        }
+        let mut out =
+            output.unwrap_or_else(|| RgbaImage::new(self.image.width(), self.image.height()));
         if self.mono {
             for p in out.pixels_mut() {
                 let v = if p[0] as u32 * 299 + p[1] as u32 * 587 + p[2] as u32 * 114 >= 128000 {
@@ -1020,10 +1027,12 @@ impl Document {
         out
     }
     pub fn flatten(&mut self) {
-        self.image = self.composite();
+        self.image = self.active_composite();
         self.objects.clear();
     }
+}
 
+impl Layer {
     /// Change canvas bounds, copying existing pixels exactly and placing newly
     /// exposed background beneath retained objects. A new bottom raster can
     /// shift object indices; callers must clear or re-establish their selection.
@@ -1115,20 +1124,10 @@ impl Document {
 
 impl Snapshot {
     fn bytes_with_fonts(&self, fonts: &mut FontMemory) -> usize {
-        self.image.as_raw().len()
-            + self
-                .objects
-                .iter()
-                .map(|o| {
-                    o.source_clip.as_ref().map_or(0, SourceClip::memory_bytes)
-                        + match &o.kind {
-                            ObjectKind::Raster(img) | ObjectKind::Image(img) => img.as_raw().len(),
-                            ObjectKind::Text { text, format } => {
-                                text.len() + format.memory_bytes_with_fonts(fonts)
-                            }
-                        }
-                })
-                .sum::<usize>()
+        self.layers
+            .iter()
+            .map(|layer| layer.bytes_with_fonts(fonts))
+            .sum()
     }
 }
 
@@ -2168,7 +2167,7 @@ mod tests {
     }
     #[test]
     fn fill_stays_inside_outline_and_handles_edges() {
-        let mut img = Document::new(64, 64).image;
+        let mut img = RgbaImage::from_pixel(64, 64, Rgba(WHITE));
         styled_shape(
             &mut img,
             Tool::Rectangle,
@@ -2214,7 +2213,7 @@ mod tests {
     }
     #[test]
     fn one_pixel_selection_and_clipped_paste() {
-        let mut img = Document::new(8, 8).image;
+        let mut img = RgbaImage::from_pixel(8, 8, Rgba(WHITE));
         let r = Region::between((7, 7), (7, 7), &img);
         assert_eq!((r.w, r.h), (1, 1));
         let source = RgbaImage::from_pixel(4, 4, Rgba(BLACK));
@@ -2252,7 +2251,7 @@ mod tests {
 
     #[test]
     fn resize_and_rotate_preserve_pixels() {
-        let mut img = Document::new(2, 3).image;
+        let mut img = RgbaImage::from_pixel(2, 3, Rgba(WHITE));
         img.put_pixel(0, 0, Rgba(BLACK));
         let rotated = rotate(&img, 90., WHITE);
         assert_eq!(rotated.dimensions(), (3, 2));
@@ -2263,7 +2262,7 @@ mod tests {
     }
     #[test]
     fn png_roundtrip_and_text_render() {
-        let mut img = Document::new(128, 64).image;
+        let mut img = RgbaImage::from_pixel(128, 64, Rgba(WHITE));
         let rendered = crate::text::TextFormat {
             size: 24.,
             width: 100,

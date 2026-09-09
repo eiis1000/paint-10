@@ -421,8 +421,56 @@ impl PaintApp {
                 let zoom_width = if compact { 188.0 } else { 212.0 };
                 let zoom_rect =
                     Rect::from_min_max(pos2(bounds.right() - zoom_width, bounds.top()), bounds.max);
-                let information_rect =
-                    Rect::from_min_max(bounds.min, pos2(zoom_rect.left() - 8.0, bounds.bottom()));
+                let layer_width = if self.doc.layer_count() > 1 {
+                    if compact {
+                        120.0
+                    } else {
+                        220.0
+                    }
+                } else {
+                    0.0
+                };
+                let information_rect = Rect::from_min_max(
+                    bounds.min,
+                    pos2(zoom_rect.left() - layer_width - 8.0, bounds.bottom()),
+                );
+                if layer_width > 0.0 {
+                    let layer_rect = Rect::from_min_max(
+                        pos2(information_rect.right() + 4.0, bounds.top()),
+                        pos2(zoom_rect.left() - 4.0, bounds.bottom()),
+                    );
+                    let layer = self.doc.active_layer();
+                    let state = if !layer.visible {
+                        "Hidden"
+                    } else if layer.locked {
+                        "Locked"
+                    } else {
+                        "Drawing on"
+                    };
+                    let label = format!("{state}: {}", layer.name);
+                    let visible_label = if compact {
+                        layer.name.clone()
+                    } else {
+                        label.clone()
+                    };
+                    ui.scope_builder(UiBuilder::new().max_rect(layer_rect), |ui| {
+                        ui.set_clip_rect(layer_rect);
+                        let response = ui.add_sized(
+                            layer_rect.size(),
+                            Button::new(RichText::new(visible_label).size(12.0))
+                                .frame(false)
+                                .truncate(),
+                        );
+                        response
+                            .widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &label));
+                        if response
+                            .on_hover_text(format!("{label}\nShow Layers"))
+                            .clicked()
+                        {
+                            self.reveal_layers();
+                        }
+                    });
+                }
                 let mut information = format!(
                     "{} × {} px",
                     self.doc.image.width(),

@@ -18,6 +18,98 @@ struct PreviewTile {
     texture: TextureHandle,
 }
 
+#[derive(Clone)]
+struct LayeredPreview {
+    object: Object,
+    replace: Option<usize>,
+    revision: u64,
+    max_side: usize,
+    tiles: Vec<PreviewTile>,
+}
+
+/// Replace the canvas image in its original paint slot. Painting a caption as
+/// a foreground overlay would put it above higher layers and blend opacity twice.
+pub(super) fn paint_layered(
+    ui: &Ui,
+    document: &Document,
+    object: Object,
+    replace: Option<usize>,
+    revision: u64,
+) {
+    let Some(slot) = ui
+        .ctx()
+        .data(|data| data.get_temp::<canvas::CanvasImageSlot>(Id::new(canvas::CANVAS_IMAGE_SLOT)))
+        .filter(|slot| slot.pass == ui.ctx().cumulative_pass_nr())
+    else {
+        return;
+    };
+    let id = Id::new("paint10-layered-text-preview");
+    let max_side = ui.input(|input| input.max_texture_side).max(1);
+    let mut cached = ui.ctx().data(|data| data.get_temp::<LayeredPreview>(id));
+    if cached.as_ref().is_none_or(|preview| {
+        preview.object != object
+            || preview.replace != replace
+            || preview.revision != revision
+            || preview.max_side != max_side
+    }) {
+        let raster = document.composite_with_object(&object, replace);
+        let mut tiles = Vec::new();
+        for y in (0..raster.height()).step_by(max_side) {
+            for x in (0..raster.width()).step_by(max_side) {
+                let width = (raster.width() - x).min(max_side as u32);
+                let height = (raster.height() - y).min(max_side as u32);
+                let tile = image::imageops::crop_imm(&raster, x, y, width, height).to_image();
+                let image = display::image([width as usize, height as usize], tile.as_raw());
+                let texture = if let Some(previous) = cached
+                    .as_mut()
+                    .and_then(|preview| preview.tiles.get_mut(tiles.len()))
+                {
+                    previous.texture.set(image, TextureOptions::NEAREST);
+                    previous.texture.clone()
+                } else {
+                    ui.ctx()
+                        .load_texture("layered-live-text", image, TextureOptions::NEAREST)
+                };
+                tiles.push(PreviewTile {
+                    offset: vec2(x as f32, y as f32),
+                    texture,
+                });
+            }
+        }
+        cached = Some(LayeredPreview {
+            object,
+            replace,
+            revision,
+            max_side,
+            tiles,
+        });
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(id, cached.clone().unwrap()));
+    }
+    let preview = cached.expect("initialized layered preview");
+    let zoom = slot.rect.width() / document.image.width() as f32;
+    slot.painter.set(
+        slot.shape,
+        egui::Shape::Vec(
+            preview
+                .tiles
+                .iter()
+                .map(|tile| {
+                    egui::Shape::image(
+                        tile.texture.id(),
+                        Rect::from_min_size(
+                            slot.rect.min + tile.offset * zoom,
+                            tile.texture.size_vec2() * zoom,
+                        ),
+                        Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
+                        Color32::WHITE,
+                    )
+                })
+                .collect(),
+        ),
+    );
+}
+
 pub(super) struct Interaction {
     cursor: egui::text_selection::TextCursorState,
     selection_color: Color32,
@@ -372,6 +464,147 @@ mod tests {
                 app.dialogs(ctx);
             },
         )
+    }
+
+    #[test]
+    fn editing_transformed_layer_text_keeps_the_preview_aligned_with_the_caret() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.doc = Document::new(260, 180);
+        app.doc.add_layer().unwrap();
+        let mut object = Object::new(
+            ObjectKind::Text {
+                text: "Caption".into(),
+                format: TextFormat {
+                    width: 180,
+                    ..Default::default()
+                },
+            },
+            (20, 20),
+        );
+        object.angle = 27.0;
+        object.scale = 1.4;
+        let index = app.doc.add_object(object.clone());
+        app.edit_text_object(index);
+        frame(&mut app, &ctx, vec![]);
+        let preview = ctx
+            .data(|data| data.get_temp::<LayeredPreview>(Id::new("paint10-layered-text-preview")))
+            .unwrap();
+        assert_eq!(preview.object.angle, 0.0);
+        assert_eq!(preview.object.scale, 1.0);
+        assert_eq!(preview.object.pos, object.pos);
+        assert_eq!(preview.object.transform, d::LinearTransform::default());
+        app.commit_text();
+        assert!(app.doc.objects[index] == object);
+    }
+
+    #[test]
+    fn layered_live_text_matches_commit_and_stays_below_the_upper_layer() {
+        for opacity in [255, 128] {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            app.doc = Document::new(240, 120);
+            app.doc.add_layer().unwrap();
+            app.doc.active_layer_mut().opacity = opacity;
+            app.doc.add_layer().unwrap();
+            let blue = [25, 80, 210, 255];
+            for y in 0..120 {
+                for x in 50..100 {
+                    app.doc.image.put_pixel(x, y, Rgba(blue));
+                }
+            }
+            app.doc.set_active_layer(1).unwrap();
+            app.text_tab = true;
+            app.text_edit = Some(TextEditState {
+                index: None,
+                origin: (10, 20),
+                text: "Caption".into(),
+                format: TextFormat {
+                    width: 200,
+                    size: 40.0,
+                    color: BLACK,
+                    ..Default::default()
+                },
+                focus: true,
+                selection: 0..7,
+                insertion_style: None,
+                history: Default::default(),
+                palette_colors: app.colors,
+            });
+            frame(&mut app, &ctx, vec![]);
+            let output = frame(&mut app, &ctx, vec![Event::Text("Layer text".into())]);
+            assert_eq!(app.text_edit.as_ref().unwrap().text, "Layer text");
+            let preview = ctx
+                .data(|data| {
+                    data.get_temp::<LayeredPreview>(Id::new("paint10-layered-text-preview"))
+                })
+                .expect("live text must be composited at its layer depth");
+            assert_eq!(preview.tiles.len(), 1);
+            let texture = preview.tiles[0].texture.id();
+            let delta = output
+                .textures_delta
+                .set
+                .iter()
+                .find(|(id, _)| *id == texture)
+                .expect("typing must update the layer preview immediately");
+            let egui::ImageData::Color(actual) = &delta.1.image else {
+                panic!("color preview");
+            };
+            for y in 0..120 {
+                for x in 50..100 {
+                    assert_eq!(actual.pixels[y * 240 + x], Color32::from_rgb(25, 80, 210));
+                }
+            }
+            fn uses_texture(shape: &egui::Shape, texture: TextureId) -> bool {
+                match shape {
+                    egui::Shape::Mesh(mesh) => mesh.texture_id == texture,
+                    egui::Shape::Vec(shapes) => {
+                        shapes.iter().any(|shape| uses_texture(shape, texture))
+                    }
+                    _ => false,
+                }
+            }
+            assert_eq!(
+                output
+                    .shapes
+                    .iter()
+                    .filter(|shape| uses_texture(&shape.shape, texture))
+                    .count(),
+                1
+            );
+            app.commit_text();
+            let committed = app.doc.composite();
+            assert_eq!(
+                actual.as_ref(),
+                &display::image([240, 120], committed.as_raw())
+            );
+
+            app.edit_text_object(app.object.unwrap());
+            frame(&mut app, &ctx, vec![]);
+            let state = app.text_edit.as_mut().unwrap();
+            state.text = "Edited".into();
+            let output = frame(&mut app, &ctx, vec![]);
+            let preview = ctx
+                .data(|data| {
+                    data.get_temp::<LayeredPreview>(Id::new("paint10-layered-text-preview"))
+                })
+                .unwrap();
+            assert_eq!(preview.replace, Some(0));
+            let delta = output
+                .textures_delta
+                .set
+                .iter()
+                .find(|(id, _)| *id == preview.tiles[0].texture.id())
+                .unwrap();
+            let egui::ImageData::Color(actual) = &delta.1.image else {
+                panic!("color preview");
+            };
+            app.commit_text();
+            assert_eq!(
+                actual.as_ref(),
+                &display::image([240, 120], app.doc.composite().as_raw())
+            );
+        }
     }
 
     #[test]

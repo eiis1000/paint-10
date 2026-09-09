@@ -11,6 +11,9 @@ mod image_ribbon;
 mod jobs;
 mod keyboard;
 mod keytips;
+#[cfg(test)]
+mod layer_workflow_tests;
+mod layers;
 mod measure;
 mod properties;
 mod ribbon;
@@ -166,6 +169,7 @@ pub struct PaintApp {
     doc: Document,
     texture: Option<TextureHandle>,
     refresh: bool,
+    render_revision: u64,
     rendered: RgbaImage,
     tool: Tool,
     brush: Brush,
@@ -185,6 +189,7 @@ pub struct PaintApp {
     rulers: bool,
     measure: measure::Measurement,
     status_bar: bool,
+    layer_ui: layers::LayersState,
     view_tab: bool,
     image_tab: bool,
     text_tab: bool,
@@ -283,6 +288,7 @@ impl PaintApp {
             rendered,
             texture: None,
             refresh: true,
+            render_revision: 0,
             tool: Tool::Brush,
             brush: Brush::Round,
             size: 3,
@@ -301,6 +307,7 @@ impl PaintApp {
             rulers: false,
             measure: Default::default(),
             status_bar: true,
+            layer_ui: Default::default(),
             view_tab: false,
             image_tab: false,
             text_tab: false,
@@ -496,6 +503,7 @@ impl eframe::App for PaintApp {
             self.ribbon(ctx);
             self.quick_access_below(ctx);
             self.status(ctx);
+            self.layers_panel(ctx);
             self.canvas(ctx);
             self.thumbnail(ctx);
         }

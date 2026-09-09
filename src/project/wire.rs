@@ -1,5 +1,5 @@
-//! Versions 2 and 3 share a deduplicated font table. Version 3 adds reversible
-//! image edits; old readers reject it instead of silently losing those edits.
+//! All modern project versions share one deduplicated font table. Version 4
+//! stores the layer stack; versions 2 and 3 contain a single raster/object pair.
 
 use super::*;
 use crate::document::{Color, ImageEdits, LinearTransform, Point, SourceClip};
@@ -10,6 +10,31 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 const MAX_FONT_ASSETS: usize = 4096;
+
+#[derive(Serialize, Deserialize)]
+pub(super) struct LayerProject {
+    version: u32,
+    mono: bool,
+    resolution: crate::metadata::Resolution,
+    active_layer: usize,
+    #[serde(deserialize_with = "deserialize_fonts")]
+    fonts: Vec<FontBytes>,
+    #[serde(deserialize_with = "deserialize_layers")]
+    layers: Vec<WireLayer>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct WireLayer {
+    name: String,
+    visible: bool,
+    locked: bool,
+    opacity: u8,
+    is_background: bool,
+    #[serde(with = "pixels")]
+    image: RgbaImage,
+    #[serde(deserialize_with = "deserialize_objects")]
+    objects: Vec<WireObject>,
+}
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct Project {
@@ -125,6 +150,7 @@ impl FontTable {
 }
 
 impl Project {
+    #[cfg(test)]
     pub(super) fn from_document(document: &Document) -> Result<Self, String> {
         let mut fonts = FontTable::default();
         let objects = document
@@ -181,6 +207,94 @@ impl Project {
             image: self.image,
             objects,
         })
+    }
+}
+
+impl LayerProject {
+    pub(super) fn from_document(document: &Document) -> Result<Self, String> {
+        let mut fonts = FontTable::default();
+        let layers = document
+            .layers()
+            .iter()
+            .map(|layer| {
+                Ok(WireLayer {
+                    name: layer.name.clone(),
+                    visible: layer.visible,
+                    locked: layer.locked,
+                    opacity: layer.opacity,
+                    is_background: layer.is_background,
+                    image: layer.image.clone(),
+                    objects: layer
+                        .objects
+                        .iter()
+                        .map(|object| WireObject::from_object(object, &mut fonts))
+                        .collect::<Result<_, _>>()?,
+                })
+            })
+            .collect::<Result<_, String>>()?;
+        Ok(Self {
+            version: 4,
+            mono: document.mono,
+            resolution: document.resolution,
+            active_layer: document.active_layer_index(),
+            fonts: fonts.fonts,
+            layers,
+        })
+    }
+
+    pub(super) fn into_document(self) -> Result<Document, String> {
+        self.resolution.validate()?;
+        if self.version != 4 {
+            return Err("Unsupported Paint 10 project version.".into());
+        }
+        if self.fonts.iter().any(|font| font.is_empty()) {
+            return Err("A project font-table asset cannot be empty.".into());
+        }
+        let mut referenced = vec![false; self.fonts.len()];
+        let mut bytes = self.fonts.iter().map(|font| font.len()).sum::<usize>();
+        let mut count = 0usize;
+        for object in self.layers.iter().flat_map(|layer| &layer.objects) {
+            count += 1;
+            if count > MAX_OBJECTS {
+                return Err(
+                    "Project objects exceed the 1,000 object limit across all layers.".into(),
+                );
+            }
+            bytes = bytes.saturating_add(object.non_font_bytes());
+            if bytes > MAX_OBJECT_BYTES {
+                return Err("Project assets exceed the 128 MB allocation limit.".into());
+            }
+            if let WireKind::Text { format, .. } = &object.kind {
+                format.validate_references(&self.fonts, &mut referenced)?;
+            }
+        }
+        if referenced.contains(&false) {
+            return Err("The project font table contains an unused asset.".into());
+        }
+        let layers = self
+            .layers
+            .into_iter()
+            .map(|layer| {
+                Ok(crate::document::Layer {
+                    name: layer.name,
+                    visible: layer.visible,
+                    locked: layer.locked,
+                    opacity: layer.opacity,
+                    is_background: layer.is_background,
+                    image: layer.image,
+                    objects: layer
+                        .objects
+                        .into_iter()
+                        .map(|object| object.into_object(&self.fonts))
+                        .collect::<Result<_, _>>()?,
+                })
+            })
+            .collect::<Result<_, String>>()?;
+        let mut document = Document::from_layers(layers, self.active_layer)?;
+        document.mono = self.mono;
+        document.resolution = self.resolution;
+        validate_document(&document)?;
+        Ok(document)
     }
 }
 
@@ -482,6 +596,74 @@ fn deserialize_objects<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> Result<Vec<WireObject>, D::Error> {
     bounded_sequence(d, MAX_OBJECTS, MAX_OBJECT_BYTES, WireObject::non_font_bytes)
+}
+
+fn deserialize_layers<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<WireLayer>, D::Error> {
+    struct Layers;
+    impl<'de> serde::de::Visitor<'de> for Layers {
+        type Value = Vec<WireLayer>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a bounded stack of Paint 10 layers")
+        }
+
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut sequence: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut layers = Vec::new();
+            let mut bytes = 0usize;
+            let mut objects = 0usize;
+            let mut dimensions = None;
+            loop {
+                if layers.len() == crate::document::MAX_LAYERS {
+                    if sequence.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                        return Err(serde::de::Error::custom(
+                            "Project exceeds the 64 layer limit.",
+                        ));
+                    }
+                    return Ok(layers);
+                }
+                let Some(layer) = sequence.next_element::<WireLayer>()? else {
+                    return Ok(layers);
+                };
+                if layer.name.trim().is_empty() || layer.name.len() > 256 {
+                    return Err(serde::de::Error::custom(
+                        "Layer names must contain 1–256 bytes of text.",
+                    ));
+                }
+                if dimensions.is_some_and(|size| size != layer.image.dimensions()) {
+                    return Err(serde::de::Error::custom(
+                        "Every layer must have the same canvas dimensions.",
+                    ));
+                }
+                dimensions = Some(layer.image.dimensions());
+                objects += layer.objects.len();
+                if objects > MAX_OBJECTS {
+                    return Err(serde::de::Error::custom(
+                        "Project objects exceed the 1,000 object limit across all layers.",
+                    ));
+                }
+                bytes = bytes
+                    .saturating_add(layer.image.as_raw().len())
+                    .saturating_add(layer.name.len())
+                    .saturating_add(
+                        layer
+                            .objects
+                            .iter()
+                            .map(WireObject::non_font_bytes)
+                            .sum::<usize>(),
+                    );
+                if bytes > crate::document::MAX_LAYER_BYTES {
+                    return Err(serde::de::Error::custom(
+                        "Layers exceed the 192 MB image allocation limit.",
+                    ));
+                }
+                layers.push(layer);
+            }
+        }
+    }
+    d.deserialize_seq(Layers)
 }
 
 fn deserialize_spans<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<WireSpan>, D::Error> {

@@ -18,6 +18,10 @@ fn legacy(document: &Document) -> Vec<u8> {
     })
 }
 
+fn version_three(document: &Document) -> Vec<u8> {
+    packed(&wire::Project::from_document(document).unwrap())
+}
+
 fn unpacked(bytes: &[u8]) -> serde_json::Value {
     serde_json::from_reader(flate2::read::ZlibDecoder::new(&bytes[8..])).unwrap()
 }
@@ -81,7 +85,7 @@ fn caption_document(font: FontBytes, count: usize) -> Document {
 #[test]
 fn shared_font_table_stores_each_binary_once_and_reuses_decoded_allocations() {
     let document = caption_document(FontBytes::from(epaint_default_fonts::UBUNTU_LIGHT), 12);
-    let bytes = encode(&document).unwrap();
+    let bytes = version_three(&document);
     let json = unpacked(&bytes);
     assert_eq!(json["version"], 3);
     assert_eq!(json["fonts"].as_array().unwrap().len(), 1);
@@ -130,14 +134,19 @@ fn all_project_versions_preserve_collection_faces_rich_format_transforms_and_pix
         object.resize_rendered(260, 140).unwrap();
     }
     let expected = document.composite();
-    let current = encode(&document).unwrap();
+    let current = version_three(&document);
     let mut v2 = unpacked(&current);
     v2["version"] = serde_json::json!(2);
     for object in v2["objects"].as_array_mut().unwrap() {
         object.as_object_mut().unwrap().remove("image_edits");
         object.as_object_mut().unwrap().remove("source_clip");
     }
-    for bytes in [legacy(&document), packed(&v2), current] {
+    for bytes in [
+        legacy(&document),
+        packed(&v2),
+        current,
+        encode(&document).unwrap(),
+    ] {
         let reopened = decode(&bytes).unwrap();
         assert!(reopened.objects == document.objects);
         assert_eq!(reopened.image, document.image);
@@ -175,7 +184,7 @@ fn empty_default_fonts_need_no_table_entry_and_keep_identical_pixels() {
         },
         (2, 3),
     ));
-    let bytes = encode(&document).unwrap();
+    let bytes = version_three(&document);
     let json = unpacked(&bytes);
     assert_eq!(json["fonts"], serde_json::json!([]));
     assert!(json["objects"][0]["kind"]["Text"]["format"]["font"].is_null());
@@ -196,7 +205,7 @@ fn both_project_versions_preserve_legacy_and_em_text_size_modes() {
         };
         format.size_mode = mode;
         let expected = document.composite();
-        for bytes in [legacy(&document), encode(&document).unwrap()] {
+        for bytes in [legacy(&document), version_three(&document)] {
             let reopened = decode(&bytes).unwrap();
             assert!(reopened.objects == document.objects);
             assert_eq!(reopened.composite(), expected);
@@ -217,7 +226,7 @@ fn both_project_versions_preserve_legacy_and_em_text_size_modes() {
 #[test]
 fn malformed_font_references_and_table_payloads_fail_closed() {
     let document = caption_document(FontBytes::from(epaint_default_fonts::UBUNTU_LIGHT), 1);
-    let original = unpacked(&encode(&document).unwrap());
+    let original = unpacked(&version_three(&document));
     for path in [
         "/objects/0/kind/Text/format/font",
         "/objects/0/kind/Text/format/spans/0/style/font",
@@ -243,7 +252,7 @@ fn malformed_font_references_and_table_payloads_fail_closed() {
 #[test]
 fn v2_reference_arrays_are_bounded_during_deserialization() {
     let document = caption_document(FontBytes::from(epaint_default_fonts::UBUNTU_LIGHT), 1);
-    let original = unpacked(&encode(&document).unwrap());
+    let original = unpacked(&version_three(&document));
     for (path, count) in [
         ("/objects", MAX_OBJECTS + 1),
         (
