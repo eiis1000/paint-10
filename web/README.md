@@ -16,9 +16,48 @@ Open `http://127.0.0.1:8080/`. The output is a static site in `target/web`; no
 application server or image upload service is involved. A packaged static site
 is also available through `nix build .#paint-10-web`.
 
+For disposable builds on Linux, set `CARGO_TARGET_DIR` before building:
+
+```sh
+export CARGO_TARGET_DIR=/tmp/paint-10-target
+nix develop .#web -c bash scripts/build-web.sh
+nix develop .#web -c python3 -m http.server 8080 --bind 127.0.0.1 --directory "$CARGO_TARGET_DIR/web"
+```
+
+Both Cargo's intermediates and the generated site then stay outside the
+checkout. They can be rebuilt after `/tmp` is cleared.
+
 Without Nix, install Rust's `wasm32-unknown-unknown` target, LLVM `wasm-ld`, and
 `wasm-bindgen-cli` version **0.2.127**, then run `bash scripts/build-web.sh`.
 The binding generator version must match the crate pinned in `Cargo.toml`.
+
+## Publish with GitHub Pages
+
+The repository's [Build and test workflow](../.github/workflows/build.yml) builds
+the browser app and deploys it to GitHub Pages. After publishing the repository
+to GitHub:
+
+1. Open **Settings → Pages → Build and deployment** and set **Source** to
+   **GitHub Actions**. No generated workflow or `gh-pages` branch is needed.
+2. Open **Actions → Build and test → Run workflow**, select the repository's
+   default branch, and run it. Later pushes to that branch deploy automatically.
+3. Open the site link in the **deploy-pages** job or **Settings → Pages**.
+   A project repository normally appears at
+   `https://OWNER.github.io/REPOSITORY/`.
+
+The workflow detects the default branch instead of assuming `main` or `master`.
+Pull requests, tags, and other branches are tested without deployment. GitHub's
+built-in token handles deployment; no personal access token or repository secret
+is needed. Until the Pages source is enabled, the deployment job reports a Pages
+configuration error; the build artifacts remain downloadable from the run.
+These steps follow [GitHub's custom Pages workflow documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
+
+The deployed artifact contains only the generated static app, icons, and bundled
+font license. Relative asset URLs support project subpaths, account sites, and
+custom domains without changing the build. GitHub Pages provides HTTPS, which
+also makes the browser clipboard APIs available subject to user permissions.
+Images and projects stay in the browser; publishing the app does not upload your
+pictures.
 
 ## Files, text, and clipboard
 
