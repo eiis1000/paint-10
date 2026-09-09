@@ -1,5 +1,43 @@
 # Paint 10 verification log
 
+## September 8: final native and web Nix builds
+
+The immutable source commit `77c1431` builds both final package snapshots:
+
+- Native: `/nix/store/9dfkmb7khssnqicb3j7z2m5r4gydj2j1-paint-10-0.1.0`.
+  All 319 release tests pass. Host flake checks, both Linux output evaluations,
+  installed desktop/icon assets, runtime closure and launcher checks pass.
+- Browser: `/nix/store/wga2a0qyjbpgch4yacbj93vn49b6z2a0-paint-10-web-0.1.0`.
+  The captured 81 source/build/asset files and packaged HTML/JavaScript match
+  the commit. The WASM is 9,532,818 bytes, SHA-256
+  `3a58299d947c9be7d39d813185c0e3a141a785f48309758189e2762c4170fe3c`.
+  All eight adapter tests pass against the same archived source.
+
+Exact derivations, source hashes and logs are recorded in
+`tmp/{native,browser}-package-77c1431-handoff.md`. ARM Linux was evaluated only;
+Windows/macOS were not executed. The browser package's native Cargo test phase
+is disabled; the 319 shared native and eight adapter tests are separate gates.
+
+The installed native package reopened the saved landscape at 50%, and actual
+Line-tool painting is continuing in that package. The packaged browser site
+is served at `http://127.0.0.1:8081/`. Actual Alt, H, W, C followed immediately
+by 137 and Enter produces a 137px custom size, confirmed by reopening Size.
+Captures: `/tmp/paint10-package-77c1431-landscape.png` and
+`/tmp/paint10-browser-package-custom-confirm.png`.
+
+The packaged browser also draws a Polygon, applies two quick Enter presses,
+and changes the next color without recoloring the applied triangle. One Undo
+restores the clean blank picture. Captures:
+`/tmp/paint10-browser-package-polygon-{order,undo}.png`. This replay exposed
+an unwanted gallery scroll that clips the first row after selection; its
+cause is being investigated separately from the passing drawing behavior.
+
+The later test-only commit `e0b4ccd` disables Xvfb screen blanking. A fresh
+private server reports timeout 0 (`tmp/private-display-no-blanking.log`).
+Editing that launcher while its earlier shell was waiting for Paint caused
+the old shell to report a parse error on return; the new launch passes and
+the saved project reopens. This is a test-harness event, not an app crash.
+
 ## September 8: polygon completion and browser Alt replay
 
 Commits `ed20826` and `77c1431` pass **319 native tests (125 library + 194 app)**,

@@ -1,5 +1,32 @@
 # Paint 10 work in progress
 
+## Current September 8 checkpoint, around 20:15 EDT
+
+- Further logical commits: `96b7316` records keyboard acceptance; `e0b4ccd`
+  disables screen blanking in the private test launcher. Both final package
+  snapshots build from production source `77c1431`: native 319 release tests
+  and installed audit pass, web source/static audit and eight Node tests pass.
+  Exact paths/evidence: `tmp/{native,browser}-package-77c1431-handoff.md`.
+- Native launcher 67966 now runs the installed package, private DISPLAY=:1,
+  directory `/tmp/paint10-desktop.V67UYQ`, controller 31474. The landscape's
+  seven mountain polygons and three small canopy additions were saved in
+  the previous process and reopened. Fourteen water glint Lines are unsaved;
+  a soft radial field over the reflection is being reviewed. Read the full
+  updated `tmp/landscape-refinement-ledger.txt`. PNG/JPEG/WebP remain stale.
+- Browser launcher 90300/private DISPLAY=:2/controller 38238 now displays
+  the Nix package served at `http://127.0.0.1:8081/`, server session 49764.
+  Alt/H/W/C plus immediate 137 passes, confirmed by reopening Size. Polygon
+  Enter/Enter plus palette and Undo also pass. The scratch document is blank
+  and clean after Undo; its shape gallery has unexpectedly scrolled one row.
+- ribbon_finish owns a new narrow investigation of that gallery movement:
+  the first selected row is partly clipped after clicking Polygon in the
+  browser. Actual capture `/tmp/paint10-browser-package-polygon-order.png`.
+  It will only change source after reproducing the cause with a real-frame
+  regression. Other agents are idle. Root owns art/docs/Git and GUI replay.
+- All four finished artwork PNGs were visually rechecked. The landscape is
+  still a stylized study and does not yet meet the requested photorealism.
+  Continue painting, fixing observed issues and making logical commits.
+
 ## Current September 8 checkpoint, around 19:57 EDT
 
 - `ed20826` commits Polygon Enter ordering; `77c1431` commits standalone
