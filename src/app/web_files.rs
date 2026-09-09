@@ -134,6 +134,7 @@ impl PaintApp {
         match result {
             Ok(document) if open => {
                 self.doc = document;
+                self.measure.reset();
                 self.register_document_fonts();
                 self.file = Some(path);
                 self.web.format = format.unwrap_or_default();

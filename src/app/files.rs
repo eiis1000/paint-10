@@ -25,6 +25,9 @@ impl PaintApp {
     }
 
     fn remember_file(&mut self, path: &std::path::Path) {
+        if !self.persist_preferences {
+            return;
+        }
         match crate::preferences::record_file(path) {
             Ok(recent) => self.recent = recent,
             Err(error) => {
@@ -41,6 +44,7 @@ impl PaintApp {
         match read_document(&path, format) {
             Ok(document) => {
                 self.doc = document;
+                self.measure.reset();
                 self.register_document_fonts();
                 self.file = Some(path.clone());
                 self.clear_selection();

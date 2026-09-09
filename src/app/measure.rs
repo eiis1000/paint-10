@@ -42,6 +42,50 @@ pub(super) struct Measurement {
     unit: Unit,
 }
 
+enum MeasurementCommand {
+    Move(Point),
+    Reset,
+    Exit,
+}
+
+impl MeasurementCommand {
+    fn from_event(event: &Event, canvas_focus: bool) -> Option<Self> {
+        let Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        if *key == Key::Escape && modifiers.matches_exact(Modifiers::NONE) {
+            return Some(Self::Exit);
+        }
+        if !canvas_focus {
+            return None;
+        }
+        if *key == Key::Delete && modifiers.matches_exact(Modifiers::NONE) {
+            return Some(Self::Reset);
+        }
+        let step = if modifiers.matches_exact(Modifiers::NONE) {
+            1
+        } else if modifiers.matches_exact(Modifiers::SHIFT) {
+            10
+        } else {
+            return None;
+        };
+        let delta = match key {
+            Key::ArrowLeft => (-step, 0),
+            Key::ArrowRight => (step, 0),
+            Key::ArrowUp => (0, -step),
+            Key::ArrowDown => (0, step),
+            _ => return None,
+        };
+        Some(Self::Move(delta))
+    }
+}
+
 #[derive(Debug)]
 struct Reading {
     dx: i64,
@@ -78,9 +122,20 @@ impl Reading {
 }
 
 impl Measurement {
-    fn reset(&mut self) {
+    pub(in crate::app) fn reset(&mut self) {
         self.points = None;
         self.dragging = None;
+    }
+
+    fn constrain_to_canvas(&mut self, dimensions: (u32, u32)) {
+        let Some(points) = self.points else {
+            return;
+        };
+        let clamped = points.map(|point| Self::clamp(point, dimensions));
+        if points != clamped {
+            self.points = Some(clamped);
+            self.dragging = None;
+        }
     }
 
     fn clamp(point: Point, dimensions: (u32, u32)) -> Point {
@@ -188,7 +243,11 @@ impl PaintApp {
         units.response.on_hover_text("Physical distance uses the picture's horizontal and vertical DPI. Pixel distance is always shown.");
     }
 
-    pub(in crate::app) fn measure_readout(&self, ctx: &Context) {
+    pub(in crate::app) fn measure_readout(&mut self, ctx: &Context) {
+        // The ruler belongs to canvas coordinates, independently of document
+        // history. Resizes, crops and Undo may change those coordinates' bounds.
+        self.measure
+            .constrain_to_canvas(self.doc.image.dimensions());
         if !self.measure.enabled {
             return;
         }
@@ -401,55 +460,60 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn measure_shortcuts(&mut self, ctx: &Context) -> bool {
-        use super::shortcuts::consume_shortcut;
         if !self.measure.enabled {
             return false;
-        }
-        if ctx.input_mut(|input| consume_shortcut(input, Modifiers::NONE, Key::Escape)) {
-            self.set_measure_enabled(false, ctx);
-            return true;
         }
         let canvas_focus = ctx.memory(|memory| {
             memory.focused().is_none()
                 || memory.has_focus(Id::new("canvas"))
                 || memory.has_focus(Id::new("text_input"))
         });
-        if !canvas_focus {
-            return false;
-        }
-        if ctx.input_mut(|input| consume_shortcut(input, Modifiers::NONE, Key::Delete)) {
-            self.measure.reset();
-            return true;
-        }
-        for (key, delta) in [
-            (Key::ArrowLeft, (-1, 0)),
-            (Key::ArrowRight, (1, 0)),
-            (Key::ArrowUp, (0, -1)),
-            (Key::ArrowDown, (0, 1)),
-        ] {
-            for (modifiers, step) in [(Modifiers::NONE, 1), (Modifiers::SHIFT, 10)] {
-                if ctx.input_mut(|input| consume_shortcut(input, modifiers, key)) {
+        let mut commands = Vec::new();
+        ctx.input_mut(|input| {
+            let mut accepting = true;
+            input.events.retain(|event| {
+                if accepting {
+                    if let Some(command) = MeasurementCommand::from_event(event, canvas_focus) {
+                        accepting = !matches!(command, MeasurementCommand::Exit);
+                        commands.push(command);
+                        return false;
+                    }
+                }
+                true
+            });
+        });
+        let handled = !commands.is_empty();
+        let dimensions = self.doc.image.dimensions();
+        self.measure.constrain_to_canvas(dimensions);
+        // Preserve input order and clamp after every press, including repeats.
+        // Counting keys by direction would change a Right/Left pair at an edge.
+        for command in commands {
+            match command {
+                MeasurementCommand::Exit => self.set_measure_enabled(false, ctx),
+                MeasurementCommand::Reset => self.measure.reset(),
+                MeasurementCommand::Move(delta) => {
                     if let Some(points) = &mut self.measure.points {
                         let point = &mut points[self.measure.active];
                         *point = Measurement::clamp(
                             (
-                                point.0.saturating_add(delta.0 * step),
-                                point.1.saturating_add(delta.1 * step),
+                                point.0.saturating_add(delta.0),
+                                point.1.saturating_add(delta.1),
                             ),
-                            self.doc.image.dimensions(),
+                            dimensions,
                         );
                     }
-                    return true;
                 }
             }
         }
-        false
+        handled
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod lifecycle;
 
     fn frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) -> FullOutput {
         let mut input = RawInput {
