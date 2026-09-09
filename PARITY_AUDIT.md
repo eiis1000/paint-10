@@ -2,6 +2,15 @@
 
 The original requirement is a Windows 10 Paint replacement with no missing functionality. The earlier completion claim was premature: feature presence and 76 passing tests did not establish that ordinary editing workflows worked correctly. The concrete failures below have now been corrected. Complete Windows equivalence remains unverified, and the remaining differences are explicit below.
 
+## Approved extension: optional Layers, September 9
+
+Layers are a user-approved extension to the Windows 10 workflow. The pane is
+hidden until View → Layers is enabled; ordinary pictures retain one Background
+layer. The active-layer status appears when a document has multiple layers.
+The stack and metadata survive `.p10` saves; normal image exports combine its
+visible layers. No automatic layer is added for each stroke or object.
+Native and browser verification is recorded at the top of `TESTING.md`.
+
 ## Period-video review, September 7
 
 The current visual pass uses actual decoded menu interactions from [Hintling's

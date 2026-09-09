@@ -13,6 +13,7 @@ The target is Windows 10's ribbon-based Paint. A checked feature means implement
 - [x] Selection resize handles and invert selection
 - [x] New/open/save/save-as, common raster formats, unsaved changes guard, file drop
 - [x] Editable project format and persistent recent files/custom colors
+- [x] Optional View → Layers pane, explicit transparent layers, visibility, opacity, lock, rename, duplicate, reorder and Merge Down; active-layer drawing and project persistence
 - [x] Paint HSL, RGB, HSL, HSV, linear RGB, approximate CMYK, OKLab and OKLCH color coordinates; alpha, CSS literals, gamut fitting, 48 basic colors and 16 custom slots
 - [x] Resize in pixels/percent, aspect ratio, skew, canvas resize handles
 - [x] Rotate 90/180/270, flips, arbitrary-angle rotation

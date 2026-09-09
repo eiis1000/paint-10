@@ -1,5 +1,44 @@
 # Paint 10 verification log
 
+## September 9: optional Layers
+
+The approved layer pane is hidden by default under View. Ordinary pictures
+start with one Background layer. New transparent layers hold separate paint,
+editable images and text; selection operations stay on the active layer.
+Projects use v4 for layer metadata and contents, with v1–3 compatibility.
+
+Local verification passes 186 library and 277 application tests, strict native
+and WASM Clippy, formatting, both native clipboard regressions, and all 11
+browser event tests. The app suite includes actual pointer input for pane
+buttons, renaming and opacity, keyboard context menus, and active-layer drawing,
+eraser, fill, selection/export, undo and image adjustment workflows. Live text
+tests compare uploaded preview pixels with the committed composite, including
+partial layer opacity and occlusion by a higher layer. Model tests cover
+ordering, metadata/history, source preservation, whole-stack transforms,
+legacy projects, malformed v4 data and global object/memory limits.
+
+Private native desktop checks exercised Add, rename, visibility, opacity,
+locking, reordering and compact layouts. The initial name editor shifted lower
+rows; a child UI with fixed geometry fixes that, with a regression. A canvas
+context-lock recursion found by the first pane test is also fixed. Native and
+browser tests used separate Xvfb displays and private D-Bus/XDG directories;
+no input was sent to the user's desktop.
+
+The native replay created text on one layer, painted over it on another,
+reopened the caption for editing while preserving upper-layer occlusion,
+saved/reopened a three-layer `.p10`, and exported a matching PNG. The release
+browser opened that native project, revealed the pane through its status
+indicator, hid the upper layer, and downloaded another editable project.
+Scratch evidence is under `/tmp/paint10-layers-*`, including
+`paint10-layers-root-13.png` (live text), `paint10-layers-root-22.png` (project
+reopened), `paint10-layers-export.png`, and `paint10-layers-browser-11.png`.
+
+Implementation commit: `43a52f0`. The final GitHub workflow and deployed-site
+replay are separate completion gates; use the run matching the final main SHA.
+The [live app](https://eiis1000.github.io/paint-10/) and
+[workflow](https://github.com/eiis1000/paint-10/actions/workflows/build.yml)
+provide the current published state. Detailed artwork tests remain paused.
+
 ## September 9: fill quality, reversible images, menus and real CI
 
 The reported Watercolor/Oil blocks reproduced in the native app. Texture noise

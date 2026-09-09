@@ -1,5 +1,35 @@
 # Paint 10 work in progress
 
+## September 9: approved optional Layers
+
+- User approved the proposed hidden-by-default View -> Layers pane, compact
+  thumbnails and visibility controls, explicit layer creation, secondary
+  rename/duplicate/merge/lock/opacity actions, reorder, and active-layer status.
+- New/open ordinary pictures retain one Background layer and familiar drawing.
+  Added layers are transparent. Drawing and editable text/images belong to the
+  active layer. Projects retain the stack; raster exports combine visible layers.
+- Starting point 81271fb is pushed, all six CI/Pages jobs passed in run
+  34405983488, and the public app and all published assets were verified.
+- Ownership: layers_model owns document/history/compositing/project v4;
+  layers_panel owns the new pane and layer actions; root owns integration,
+  tool semantics, previews, verification, commits and final deployment.
+- Temporary builds use /tmp/paint10-layers-target. Tests must cover layer
+  isolation, hidden/locked input, opacity compositing, undo, legacy projects,
+  retained sources, canvas transforms and native/browser manual workflows.
+- Completion requires final pushed CI and Pages success and actual public-site
+  replay. Detailed artwork remains paused; desktop tests use private Xvfb.
+- Implementation and regression gates now pass: 186 library tests and 277 app
+  tests, including pointer-driven opacity/rename, active-layer fill/erase/cut,
+  hidden/locked input, canvas transforms, source-retaining stamps, and live text
+  below higher layers. Native and WASM Clippy/build checks pass; final pushed
+  CI and deployment are still required. Implementation commit: 43a52f0.
+- Native private-display replay saved/reopened three layers with editable text,
+  painted over the caption on a higher layer, re-edited the caption below it,
+  and exported the combined PNG. The native v4 project also opened successfully
+  in the release browser build. A browser v4 download preserves all source
+  data exactly, with only the manually toggled visibility differing. Evidence
+  stays under /tmp/paint10-layers-*.
+
 ## September 9: active CI, deployment, interface and image-editing pass
 
 - The user explicitly authorizes pushing and checking GitHub. Completion now

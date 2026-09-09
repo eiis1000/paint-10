@@ -73,8 +73,12 @@ pictures.
   download and then choose **Don't save** in the pending discard prompt.
   **Save as** offers PNG, JPEG, GIF, TIFF, WebP, ICO, all four Paint BMP depths,
   and editable Paint 10 projects. Save a copy and Save selection are available.
-  Use `.p10` to retain editable text, embedded fonts, original images, source
+  Use `.p10` to retain layers, editable text, embedded fonts, original images, source
   crops, color adjustments, and transforms.
+- **View → Layers** opens the optional layer pane. Drawing and image adjustments
+  affect the selected layer; image downloads combine visible layers. Project
+  downloads preserve the complete stack, including hidden layers. The browser
+  and native builds use the same layer controls and project format.
 - **Font list → Load font** accepts TTF, OTF, and TTC files up to 32 MiB. Select
   the loaded family in the font list. Font data used in text is embedded in a
   project. Opening a project also adds its embedded families to the font list,
