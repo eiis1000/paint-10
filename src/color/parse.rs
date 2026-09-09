@@ -102,6 +102,11 @@ pub fn parse_color_with_alpha(input: &str) -> Result<ParsedColor, String> {
             require_count(&components, 3)?;
             let lightness = number_or_percent(components[0], 1.0)?.clamp(0.0, 1.0);
             let second = number_or_percent(components[1], 0.4)?;
+            let second = if name == "oklch" {
+                second.max(0.0)
+            } else {
+                second
+            };
             let third = if name == "oklch" {
                 angle(components[2])?
             } else {

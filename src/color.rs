@@ -189,7 +189,7 @@ pub fn coordinates(space: Space, rgb: [u8; 3]) -> [f64; 4] {
                     if delta == 0.0 {
                         160.0
                     } else {
-                        (hue * 240.0 / 360.0).round().min(239.0)
+                        (hue * 240.0 / 360.0).round().rem_euclid(240.0)
                     },
                     (saturation * 240.0).round(),
                     (lightness * 240.0).round(),
