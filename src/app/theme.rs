@@ -83,6 +83,13 @@ pub(super) fn menu(ui: &mut Ui) {
     ui.style_mut().visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, BLUE);
 }
 
+/// Egui strips idle control borders in menus. A collapsed ribbon is a panel
+/// of inputs and buttons, so keep the same visible controls as the full ribbon.
+pub(super) fn restore_widget_chrome(ui: &mut Ui) {
+    let widgets = ui.ctx().style().visuals.widgets.clone();
+    ui.visuals_mut().widgets = widgets;
+}
+
 pub(super) fn menu_heading(ui: &mut Ui, label: &str, width: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(width, 23.0), Sense::hover());
     ui.painter().rect_filled(rect, 0.0, Color32::from_gray(239));
