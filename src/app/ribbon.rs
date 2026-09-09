@@ -2,6 +2,9 @@ use super::ribbon_controls::{self as controls, Scope};
 use super::ribbon_layout::Group;
 use super::*;
 
+#[cfg(test)]
+mod gallery_scroll_tests;
+
 pub(in crate::app) const PALETTE: [[u8; 3]; 20] = [
     [0, 0, 0],
     [127, 127, 127],
@@ -828,6 +831,8 @@ impl PaintApp {
                     .id_salt("shape_gallery")
                     .max_height(75.0)
                     .auto_shrink([false, false])
+                    // Shape presses select tools; scrolling uses the wheel or arrows.
+                    .drag_to_scroll(false)
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                     .vertical_scroll_offset(offset)
                     .show(ui, |ui| {
