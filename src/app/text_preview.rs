@@ -185,10 +185,7 @@ pub(super) fn paint(
                 let width = (raster.width() - x).min(max_side as u32);
                 let height = (raster.height() - y).min(max_side as u32);
                 let tile = image::imageops::crop_imm(&raster, x, y, width, height).to_image();
-                let image = ColorImage::from_rgba_unmultiplied(
-                    [width as usize, height as usize],
-                    tile.as_raw(),
-                );
+                let image = display::image([width as usize, height as usize], tile.as_raw());
                 let texture = if let Some(previous) = cached
                     .as_mut()
                     .and_then(|cached| cached.tiles.get_mut(tiles.len()))
@@ -348,7 +345,7 @@ mod tests {
         }
         assert_eq!(
             actual,
-            ColorImage::from_rgba_unmultiplied(
+            display::image(
                 [expected.width() as usize, expected.height() as usize],
                 expected.as_raw()
             )
@@ -414,7 +411,7 @@ mod tests {
             let state = app.text_edit.as_ref().unwrap();
             assert_eq!(state.text, "Caption test");
             let expected = state.format.render(&state.text);
-            let expected = ColorImage::from_rgba_unmultiplied(
+            let expected = display::image(
                 [expected.width() as usize, expected.height() as usize],
                 expected.as_raw(),
             );
@@ -442,7 +439,7 @@ mod tests {
             };
             let saved = format.render(text);
             assert_eq!(
-                ColorImage::from_rgba_unmultiplied(
+                display::image(
                     [saved.width() as usize, saved.height() as usize],
                     saved.as_raw()
                 ),

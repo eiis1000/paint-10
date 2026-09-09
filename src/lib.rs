@@ -6,6 +6,7 @@
 //! opening a window.
 
 pub mod color;
+pub mod display;
 pub mod document;
 pub mod integration;
 pub mod metadata;

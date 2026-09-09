@@ -11,7 +11,9 @@ mod native_options;
 #[cfg(not(target_arch = "wasm32"))]
 mod print_preview;
 #[cfg(not(target_arch = "wasm32"))]
-use paint_10::{color, document, integration, preferences, printing, project, raster_io, text};
+use paint_10::{
+    color, display, document, integration, preferences, printing, project, raster_io, text,
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {

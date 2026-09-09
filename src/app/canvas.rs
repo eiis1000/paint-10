@@ -44,7 +44,7 @@ impl PaintApp {
         self.rendered =
             self.shape_display_image(ctx, self.text_edit.as_ref().and_then(|s| s.index));
         self.canvas_alpha = self.rendered.pixels().any(|pixel| pixel[3] != 255);
-        let image = ColorImage::from_rgba_unmultiplied(
+        let image = display::image(
             [
                 self.rendered.width() as usize,
                 self.rendered.height() as usize,
@@ -532,6 +532,50 @@ pub(in crate::app) fn dashed_rect(p: &Painter, r: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canvas_texture_composites_translucent_pixels_like_the_document() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let source = RgbaImage::from_fn(2, 1, |x, _| {
+            Rgba(if x == 0 {
+                [192, 196, 185, 96]
+            } else {
+                [255, 23, 240, 0]
+            })
+        });
+        app.doc = Document::from_image(source.clone());
+        let output = ctx.run(RawInput::default(), |ctx| app.refresh_texture(ctx));
+        let id = app.texture.as_ref().unwrap().id();
+        let delta = &output
+            .textures_delta
+            .set
+            .iter()
+            .find(|(texture, _)| *texture == id)
+            .unwrap()
+            .1;
+        let ImageData::Color(uploaded) = &delta.image else {
+            panic!("canvas must upload RGBA pixels");
+        };
+        assert_eq!(
+            app.doc.image, source,
+            "upload must leave document RGBA intact"
+        );
+        assert_eq!(uploaded.pixels[1], Color32::TRANSPARENT);
+        for gray in [215, 255] {
+            let mut expected = RgbaImage::from_pixel(2, 1, Rgba([gray, gray, gray, 255]));
+            d::overlay(&mut expected, &source, 0, 0);
+            for (displayed, expected) in uploaded.pixels.iter().zip(expected.pixels()) {
+                for channel in 0..3 {
+                    let actual = (f64::from(displayed[channel])
+                        + f64::from(gray) * (1.0 - f64::from(displayed.a()) / 255.0))
+                        .round()
+                        .clamp(0.0, 255.0) as u8;
+                    assert!(actual.abs_diff(expected[channel]) <= 1);
+                }
+            }
+        }
+    }
 
     fn canvas_frame(app: &mut PaintApp, ctx: &Context) -> Rect {
         let input = RawInput {

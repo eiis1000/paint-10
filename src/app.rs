@@ -28,6 +28,7 @@ use canvas::dashed_rect;
 use gestures::pointer_press_in;
 use shapes::{CurveBend, ShapeDraft, ShapeGeometry};
 
+use crate::display;
 use crate::document::{
     self as d, Brush, Color, Document, Gradient, Object, ObjectKind, PaintStyle, Point, Region,
     ShapeFill, Tool, BLACK, WHITE,

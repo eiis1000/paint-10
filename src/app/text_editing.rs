@@ -901,8 +901,7 @@ impl PaintApp {
                 // Reserve the image below the editor's selection and caret, then
                 // fill it with the final text from this frame (including typing).
                 let picture = ui.painter().add(egui::Shape::Noop);
-                ui.visuals_mut().selection.bg_fill =
-                    Color32::from_rgba_unmultiplied(40, 140, 235, 85);
+                ui.visuals_mut().selection.bg_fill = display::color([40, 140, 235, 85]);
                 if !popup_open && !modal_open && !commit_requested && !composing {
                     let viewport = ctx
                         .data(|data| data.get_temp::<Rect>(Id::new("paint10_canvas_viewport")))
@@ -1125,7 +1124,7 @@ fn font_choice(
         let raster = format.render(name);
         let texture = ui.ctx().load_texture(
             format!("font-preview-{name}"),
-            ColorImage::from_rgba_unmultiplied(
+            display::image(
                 [raster.width() as usize, raster.height() as usize],
                 raster.as_raw(),
             ),
