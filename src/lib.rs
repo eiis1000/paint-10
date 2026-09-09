@@ -5,6 +5,7 @@
 //! allows rendering, history, serialization, and layout to be tested without
 //! opening a window.
 
+pub mod color;
 pub mod document;
 pub mod integration;
 pub mod metadata;
