@@ -3,6 +3,11 @@
 These references are viewed separately while drawing. The finished pictures
 are made inside Paint 10; reference pixels are not imported into them.
 
+- **Coastal light and water:** [Kerem Colakoglu's sunset horizon photograph](https://unsplash.com/photos/horizon-during-sunset-gr3xqmequn0)
+  was viewed separately for the cool upper sky, warm horizon, broad reflected
+  light and increasingly distinct foreground ripples. The new composition is
+  painted with Paint 10's shape tools; the photograph is not imported.
+
 - **Mona Lisa:** the [Louvre's description](https://www.louvre.fr/en/explore/the-palace/from-the-mona-lisa-to-the-wedding-feast-at-cana)
   and the [public-domain C2RMF reproduction](https://commons.wikimedia.org/wiki/File:Mona_Lisa,_by_Leonardo_da_Vinci,_from_C2RMF_retouched.jpg).
   The reproduction was reduced for inspection only; it was not opened in Paint 10.

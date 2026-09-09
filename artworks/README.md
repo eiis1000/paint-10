@@ -88,6 +88,16 @@ This alpine picture remains deliberately geometric in appearance. A separate
 coastal study is underway for the shape-only realism exercise; this painting
 and its refreshed exports are preserved.
 
+## Coastal landscape in progress
+
+[Project](coastal-landscape.p10)
+
+A second 1920 × 1080 landscape uses Rectangle gradients for the sky and sea,
+translucent radial Ovals for the light, and a thin Line for the horizon. Dragging
+the reflection Oval's handles extends its gradient beyond the right and bottom
+canvas edges. This initial foundation was saved through the native project
+dialog and visually inspected. Wave and cloud detail is still underway.
+
 ## Ant-colony simulation slide
 
 [Editable project](ant-colony-simulation.p10) ·
