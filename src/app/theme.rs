@@ -90,6 +90,15 @@ pub(super) fn restore_widget_chrome(ui: &mut Ui) {
     ui.visuals_mut().widgets = widgets;
 }
 
+/// Ribbon commands share a quiet idle state; hover, focus, and open menus
+/// retain the same visible feedback as other controls.
+pub(super) fn toolbar_button(ui: &mut Ui) {
+    ui.spacing_mut().button_padding = Vec2::ZERO;
+    let inactive = &mut ui.visuals_mut().widgets.inactive;
+    inactive.weak_bg_fill = Color32::TRANSPARENT;
+    inactive.bg_stroke = Stroke::NONE;
+}
+
 pub(super) fn menu_heading(ui: &mut Ui, label: &str, width: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(width, 23.0), Sense::hover());
     ui.painter().rect_filled(rect, 0.0, Color32::from_gray(239));

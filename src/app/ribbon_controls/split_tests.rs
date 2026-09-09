@@ -2,7 +2,7 @@ use super::*;
 
 fn frame(app: &mut PaintApp, ctx: &Context, width: f32, events: Vec<Event>) -> FullOutput {
     let mut input = RawInput {
-        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 500.0))),
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 400.0))),
         time: Some(ctx.cumulative_pass_nr() as f64 / 20.0),
         events,
         ..Default::default()
@@ -140,4 +140,64 @@ fn collapsed_image_group_retains_connected_selection_and_nested_menu_actions() {
     click(&mut app, &ctx, 500.0, free.center());
     assert!(app.free_select);
     assert_eq!(app.tool, Tool::Select);
+}
+
+#[test]
+fn shape_style_menus_align_and_remain_usable_in_expanded_and_collapsed_ribbons() {
+    for width in [1200.0, 500.0] {
+        let ctx = Context::default();
+        ctx.enable_accesskit();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let mut output = settle(&mut app, &ctx, width);
+        if width == 500.0 {
+            let shapes = bounds(&output, "Shapes");
+            click(&mut app, &ctx, width, shapes.center());
+            output = settle(&mut app, &ctx, width);
+        }
+
+        let outline = bounds(&output, "Shape outline style");
+        let fill = bounds(&output, "Shape fill style");
+        assert_eq!(outline.x_range(), fill.x_range());
+        assert_eq!(outline.size(), fill.size());
+        assert_eq!(outline.height(), 26.0);
+        assert_eq!(fill.top() - outline.bottom(), 4.0);
+        assert!(fill.right() <= width);
+
+        // Exercise the arrow edge, not only the text in the enlarged slot.
+        click(&mut app, &ctx, width, fill.right_center() - vec2(5.0, 0.0));
+        output = settle(&mut app, &ctx, width);
+        let watercolor = bounds(&output, PaintStyle::Watercolor.name());
+        assert!(watercolor.left() >= 0.0 && watercolor.right() <= width);
+        click(&mut app, &ctx, width, watercolor.center());
+        assert_eq!(app.fill, PaintStyle::Watercolor);
+    }
+}
+
+#[test]
+fn ribbon_header_actions_share_geometry_and_keep_collapse_behavior() {
+    for width in [1200.0, 500.0] {
+        let ctx = Context::default();
+        ctx.enable_accesskit();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let output = settle(&mut app, &ctx, width);
+        let help = bounds(&output, "Help");
+        let collapse = bounds(&output, "Minimize the ribbon");
+        assert_eq!(help.size(), vec2(24.0, 24.0));
+        assert_eq!(help.size(), collapse.size());
+        assert_eq!(help.y_range(), collapse.y_range());
+        assert_eq!(help.left() - collapse.right(), 2.0);
+        assert!(help.right() <= width);
+
+        click(&mut app, &ctx, width, collapse.center());
+        assert!(app.collapsed);
+        let output = settle(&mut app, &ctx, width);
+        let expand = bounds(&output, "Expand the ribbon");
+        assert_eq!(expand, collapse);
+        click(&mut app, &ctx, width, expand.center());
+        assert!(!app.collapsed);
+
+        let output = settle(&mut app, &ctx, width);
+        click(&mut app, &ctx, width, bounds(&output, "Help").center());
+        assert!(matches!(app.dialog, Some(Dialog::About)));
+    }
 }

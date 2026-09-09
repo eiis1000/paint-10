@@ -136,13 +136,15 @@ impl PaintApp {
         let offset = before.commands.len() as f32 * 27.0;
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(
-                origin + vec2(offset, 3.0),
-                vec2(24.0, 24.0),
+                origin + vec2(offset, 0.0),
+                vec2(24.0, 25.0),
             )),
             |ui| {
+                theme::toolbar_button(ui);
+                ui.spacing_mut().interact_size.y = 25.0;
                 let menu = egui::menu::menu_custom_button(
                     ui,
-                    Button::new("").min_size(vec2(21.0, 20.0)),
+                    Button::new("").min_size(vec2(24.0, 25.0)),
                     |ui| {
                         theme::menu(ui);
                         theme::menu_heading(ui, "Customize Quick Access Toolbar", 265.0);
@@ -206,7 +208,7 @@ impl PaintApp {
                 );
                 icons::draw(
                     ui.painter(),
-                    menu.response.rect.shrink(3.0),
+                    Rect::from_center_size(menu.response.rect.center(), vec2(12.0, 12.0)),
                     Icon::ChevronDown,
                 );
                 menu.response.widget_info(|| {
@@ -393,14 +395,6 @@ impl PaintApp {
                         response.on_hover_text(label);
                     }
                 }
-                #[cfg(target_arch = "wasm32")]
-                ui.painter().text(
-                    r.right_top() + vec2(-12.0, 15.0),
-                    Align2::RIGHT_CENTER,
-                    "Browser edition",
-                    FontId::proportional(12.0),
-                    Color32::from_gray(90),
-                );
             });
     }
 
@@ -636,6 +630,37 @@ mod tests {
             assert!(app.doc.can_redo());
             assert!(keytips::active(&ctx));
             frame(&mut app, &ctx, Some(Key::Escape));
+        }
+    }
+
+    #[test]
+    fn quick_access_commands_and_customization_share_the_same_row() {
+        for below_ribbon in [false, true] {
+            let ctx = Context::default();
+            ctx.enable_accesskit();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            app.quick_access = Default::default();
+            app.quick_access.below_ribbon = below_ribbon;
+            frame(&mut app, &ctx, None);
+            let output = frame(&mut app, &ctx, None);
+            let nodes = &output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes;
+            let rows = ["Save", "Undo", "Redo", "Customize Quick Access Toolbar"].map(|label| {
+                let bounds = nodes
+                    .iter()
+                    .find(|(_, node)| node.label() == Some(label))
+                    .unwrap_or_else(|| panic!("Missing toolbar command: {label}"))
+                    .1
+                    .bounds()
+                    .unwrap();
+                assert_eq!(bounds.y1 - bounds.y0, 25.0);
+                (bounds.y0, bounds.y1)
+            });
+            assert!(rows.iter().all(|row| *row == rows[0]));
         }
     }
 
