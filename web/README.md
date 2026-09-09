@@ -3,6 +3,8 @@
 The browser build compiles the same Rust drawing engine and `PaintApp` interface
 as the native application. It requires WebGL and a current desktop browser.
 
+**[Launch Paint 10](https://eiis1000.github.io/paint-10/)**
+
 ## Build and run
 
 With the repository's pinned Nix environment:
@@ -34,8 +36,9 @@ The binding generator version must match the crate pinned in `Cargo.toml`.
 ## Publish with GitHub Pages
 
 The repository's [Build and test workflow](../.github/workflows/build.yml) builds
-the browser app and deploys it to GitHub Pages. After publishing the repository
-to GitHub:
+the browser app and deploys it to GitHub Pages only after the native, Nix, and
+browser checks all pass. This repository's site is configured already.
+For a fork or a new repository:
 
 1. Open **Settings → Pages → Build and deployment** and set **Source** to
    **GitHub Actions**. No generated workflow or `gh-pages` branch is needed.
@@ -70,7 +73,8 @@ pictures.
   download and then choose **Don't save** in the pending discard prompt.
   **Save as** offers PNG, JPEG, GIF, TIFF, WebP, ICO, all four Paint BMP depths,
   and editable Paint 10 projects. Save a copy and Save selection are available.
-  Use `.p10` to retain editable text, embedded fonts, images, and transforms.
+  Use `.p10` to retain editable text, embedded fonts, original images, source
+  crops, color adjustments, and transforms.
 - **Font list → Load font** accepts TTF, OTF, and TTC files up to 32 MiB. Select
   the loaded family in the font list. Font data used in text is embedded in a
   project. Opening a project also adds its embedded families to the font list,

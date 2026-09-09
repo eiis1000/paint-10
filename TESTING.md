@@ -1,5 +1,64 @@
 # Paint 10 verification log
 
+## September 9: fill quality, reversible images, menus and real CI
+
+The reported Watercolor/Oil blocks reproduced in the native app. Texture noise
+was quantized into 8×8 and 3×18 cells; continuous interpolation now produces
+pigment variation and bristle ridges. Concave polygon scanlines also blended
+some shared vertices twice. Fill coverage now visits each pixel once. Tests
+cover all 23 shapes and seven styles, and verify representative preview,
+commit, project reopen and PNG output agree.
+
+Reversible image editing stores source pixels, crop, color/detail adjustments,
+sampling and affine transforms. Canvas transforms retain editable objects;
+source-coordinate clipping prevents hidden pixels leaking through subsequent
+rotation, smoothing or blur. Tests cover original-pixel recovery, alpha edges,
+layer order, malformed edits/clips, bounded previews and project persistence.
+Version 3 projects retain this data; versions 1 and 2 still load.
+
+Local final gates pass: 170 library and 256 application tests, both native
+clipboard regressions, strict native and WASM Clippy, formatting, 11 browser
+event tests, four packaging/icon tests, native build and release WASM build.
+Logs live under `/tmp/paint10-*`; build intermediates use
+`/tmp/paint10-september-ci`, outside the checkout.
+
+Actual mouse/keyboard checks used private Xvfb desktops with private D-Bus,
+XDG state and Chromium profiles. No host desktop input. Coverage:
+
+- Home Paste, Select, Brushes, Shapes, Fill, Outline, Size and Rotate; View
+  navigation and measurement; Text formatting/font lists; Image transform,
+  crop, adjustments and original reset; Quick Access and context menus.
+- File main/Recent and Save As panes, Resize/Skew, Rotate, Image Properties,
+  Edit Colors, About, Page Setup/Print, Wallpaper and unsaved-change forms.
+  Normal and 500×400 dialog layouts were inspected; content and actions remain
+  reachable. Scanner enumeration and actual hardware/desktop actions excluded.
+- Saved/reopened a manually drawn oil-fill PNG. Cropped it, resized the image
+  from 340×220 to 34×22 and back, rotated it 27°, then saved and reopened its
+  `.p10` project. Reset image recovered the original 900×600 source.
+- Actual text creation, mixed bold formatting, completion with Text retained,
+  Select double-click reopening and edits. Text right-click now opens a menu
+  without creating an unwanted box. Size direct entry and F10,H,W,C retain
+  exact widths; Fill keytips stay in the icon gutter.
+- Browser PNG/JPEG downloads completed and were visually inspected; PNG
+  reopened successfully. Image preview/Cancel, Invert and Reset worked. F12
+  was found to open both Save As and DevTools; the browser adapter now prevents
+  the latter, with an actual rebuilt-browser replay and focused regression.
+
+Full disposable evidence ledgers: `/tmp/paint10-root-quality-audit.md`,
+`/tmp/paint10-menu-audit.md`, `/tmp/paint10-browser-smoke-ledger.md`.
+Representative screenshots include `paint10-oil-after.png`,
+`paint10-image-upscaled-real.png`, `paint10-image-project-reopened.png`,
+`paint10-text-context-final.png`, `paint10-dialog-adjustments-focus-final.png`
+and `paint10-browser-smoke-32-f12-fixed.png`, all under `/tmp`.
+
+The earlier CI repair at `8483e6c` passed every real GitHub job and deployed:
+[run 34401937494](https://github.com/eiis1000/paint-10/actions/runs/34401937494).
+Its macOS failures came from synthetic keyboard fixtures missing logical
+Command modifiers; the assertions were preserved. Pages now waits for Linux,
+Windows, macOS, Nix and browser checks. The subsequent quality changes require
+their own green workflow and deployed-site replay before completion; the live
+app is [Paint 10](https://eiis1000.github.io/paint-10/).
+
 ## September 9: Rust 1.98 Clippy compatibility
 
 CI's `stable` toolchain reported `chunks_exact_to_as_chunks`, which the pinned

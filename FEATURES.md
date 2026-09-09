@@ -16,6 +16,8 @@ The target is Windows 10's ribbon-based Paint. A checked feature means implement
 - [x] Paint HSL, RGB, HSL, HSV, linear RGB, approximate CMYK, OKLab and OKLCH color coordinates; alpha, CSS literals, gamut fitting, 48 basic colors and 16 custom slots
 - [x] Resize in pixels/percent, aspect ratio, skew, canvas resize handles
 - [x] Rotate 90/180/270, flips, arbitrary-angle rotation
+- [x] Image ribbon with source-preserving transforms, reversible cropping, color/detail adjustments, and original-image reset
+- [x] Image brightness, contrast, saturation, warmth, hue, gamma, opacity, blur, sharpening, grayscale and inversion; bounded live previews and project persistence
 - [x] Text/image objects remain selectable and movable during editing
 - [x] In-canvas rich text entry with active move/resize handles, typed font names, collection faces, point size, bold/italic/underline/strikeout, opacity
 - [x] Aligned and outlined captions with identical live and saved rendering

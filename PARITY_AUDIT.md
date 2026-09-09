@@ -58,6 +58,22 @@ font/project verification are recorded in `TESTING.md`.
 
 ## Corrected findings
 
+The later September 9 quality pass fixes visibly blocky Watercolor/Oil shape
+fills and overlapping translucent polygon spans. The menu pass covers all
+Home galleries/dropdowns, View/Text/Image ribbons, Quick Access, context menus,
+File panes and ordinary dialogs at normal and compact widths. Concrete fixes
+include keytips over menu labels, the Size tile's dead area, inconsistent
+control borders, clipped dialog actions, unstable Print sizing, shifting image
+previews, and right-clicking Text creating a new box. Full source and manual
+coverage, with hardware exclusions, is recorded in `TESTING.md`.
+
+Image editing now retains source pixels through resizing, arbitrary rotation,
+source cropping and light/color/detail adjustments. The added Image ribbon
+provides grouped commands and original recovery; project version 3 retains
+edits. These are deliberate extensions to Windows 10 Paint. Text and browser
+limitations below still apply; this pass does not establish pixel-for-pixel
+equivalence to Microsoft's brush engine.
+
 The September 9 text/color pass retains the period Text ribbon's Clipboard,
 Font, Background and Colors groups, with Paragraph, Effects and Editing as
 extensions. Point sizes now use the selected face's em metrics and new boxes

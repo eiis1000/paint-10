@@ -1,5 +1,45 @@
 # Paint 10 work in progress
 
+## September 9: active CI, deployment, interface and image-editing pass
+
+- The user explicitly authorizes pushing and checking GitHub. Completion now
+  requires all CI jobs passing on the final pushed commit, successful Pages
+  deployment, and a functional check of the live site. Earlier local-only
+  completion statements below are historical, not the current completion gate.
+- GitHub run `34401937494` at `8483e6c` passes Linux, Windows, macOS, Nix,
+  browser, and Pages deployment. The macOS failures were synthetic shortcuts
+  missing logical Command modifiers; fixture corrections retain the assertions.
+  Deployment now waits for native, Nix, and browser jobs together. The live URL
+  is https://eiis1000.github.io/paint-10/. Subsequent quality changes must pass
+  the same workflow and deployed-site replay; use the run matching main's SHA
+  for current deployment status.
+- The user also requests a full ribbon/menu/dialog polish pass and substantial
+  image editing, including retaining source pixels across resizing and crops.
+  Detailed artwork remains paused. Manual checks use private virtual desktops.
+- Active ownership: root integrates ribbons, manual testing, commits and CI;
+  `ci_platform_fix` fixes platform-aware input regressions; `image_editing`
+  owns retained raster transforms and adjustments; `menu_dialog_polish` owns
+  File, dialogs and shared menu styling. All build output uses
+  `/tmp/paint10-september-ci`; disposable evidence also goes under `/tmp`.
+- Quality commits: `8e95107` replaces blocky fill cells and fixes polygon
+  double-blending; `0f473bf` fixes keytip placement and explicit save formats;
+  `91b84b5` fixes Size hit targets and ribbon controls; `b631688` styles Quick
+  Access; `1e2ec0d` keeps browser F12 from also opening developer tools.
+- Image feature commit `16c9810` retains original source pixels, reversible crops,
+  adjustments and affine transforms. Project version 3 preserves them and
+  still reads v1/v2. Canvas clipping prevents hidden source pixels leaking into
+  later rotations or filters. Local full tests: 170 library + 256 app;
+  strict native Clippy passes, as do both clipboard tests. The final crop
+  coordinate correction accepts Left/Top before editing Width/Height; actual
+  native entry of (90,70) confirmed the crop updates immediately.
+- Actual private desktop ledgers: `/tmp/paint10-root-quality-audit.md`,
+  `/tmp/paint10-menu-audit.md`, `/tmp/paint10-browser-smoke-ledger.md`.
+  Normal and 500×400 layouts, menus, text, fill, image adjustments and actual
+  PNG/JPEG downloads were checked. Native resize 340×220 → 34×22 → 340×220,
+  27° rotation, project save/reopen and Reset image to the original 900×600 all
+  passed. Remote CI/deployment on main and a live browser replay remain the
+  completion criterion; do not infer completion from historical sections below.
+
 ## September 9: reported CI Clippy failure corrected
 
 - CI now uses Rust 1.98; the Nix lock still provides 1.97.1. Updated all six
