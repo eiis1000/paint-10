@@ -23,7 +23,8 @@ export GDK_BACKEND=x11 GTK_USE_PORTAL=0 WINIT_UNIX_BACKEND=x11
 export GALLIUM_DRIVER="${PAINT10_TEST_DRIVER:-softpipe}"
 unset WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS
 
-Xvfb -displayfd 3 -screen 0 1280x900x24 -nolisten tcp \
+# Keep the private screen visible throughout long drawing and capture sessions.
+Xvfb -displayfd 3 -screen 0 1280x900x24 -s 0 -nolisten tcp \
     3>"$paint_test_dir/display" >"$paint_test_dir/xvfb.log" 2>&1 &
 paint_xvfb_pid=$!
 paint_wm_pid=
