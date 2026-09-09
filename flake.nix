@@ -65,6 +65,7 @@
             install -Dm644 assets/paint-10.desktop "$out/share/applications/paint-10.desktop"
             install -Dm644 assets/paint-10.svg "$out/share/icons/hicolor/scalable/apps/paint-10.svg"
             install -Dm644 assets/fonts/DejaVu-LICENSE.txt "$out/share/licenses/paint-10/DejaVu-LICENSE.txt"
+            cp LICENSE assets/licenses/*.txt "$out/share/licenses/paint-10/"
           '';
           preFixup = ''
             gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath (desktopLibs pkgs)})
@@ -103,6 +104,8 @@
             cp web/index.html "$out/index.html"
             cp assets/paint-10.svg assets/paint-10.png assets/paint-10.ico "$out/"
             cp assets/fonts/DejaVu-LICENSE.txt "$out/"
+            mkdir -p "$out/licenses"
+            cp LICENSE assets/fonts/DejaVu-LICENSE.txt assets/licenses/*.txt "$out/licenses/"
             runHook postInstall
           '';
           meta = {

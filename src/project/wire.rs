@@ -1,5 +1,5 @@
-//! All modern project versions share one deduplicated font table. Version 4
-//! stores the layer stack; versions 2 and 3 contain a single raster/object pair.
+//! All modern project versions share one deduplicated font table. Versions 4/5
+//! store layers; version 5 adds math text. Versions 2/3 contain a single layer.
 
 use super::*;
 use crate::document::{Color, ImageEdits, LinearTransform, Point, SourceClip};
@@ -105,6 +105,8 @@ struct WireFace {
 
 #[derive(Serialize, Deserialize)]
 struct WireFormat {
+    #[serde(default)]
+    latex: bool,
     #[serde(flatten)]
     style: WireStyle,
     #[serde(default)]
@@ -232,8 +234,13 @@ impl LayerProject {
                 })
             })
             .collect::<Result<_, String>>()?;
+        let has_math = document
+            .layers()
+            .iter()
+            .flat_map(|layer| &layer.objects)
+            .any(|object| matches!(&object.kind, ObjectKind::Text { format, .. } if format.latex));
         Ok(Self {
-            version: 4,
+            version: if has_math { 5 } else { 4 },
             mono: document.mono,
             resolution: document.resolution,
             active_layer: document.active_layer_index(),
@@ -244,7 +251,7 @@ impl LayerProject {
 
     pub(super) fn into_document(self) -> Result<Document, String> {
         self.resolution.validate()?;
-        if self.version != 4 {
+        if !matches!(self.version, 4 | 5) {
             return Err("Unsupported Paint 10 project version.".into());
         }
         if self.fonts.iter().any(|font| font.is_empty()) {
@@ -265,6 +272,9 @@ impl LayerProject {
                 return Err("Project assets exceed the 128 MB allocation limit.".into());
             }
             if let WireKind::Text { format, .. } = &object.kind {
+                if format.latex && self.version < 5 {
+                    return Err("LaTeX text requires project version 5.".into());
+                }
                 format.validate_references(&self.fonts, &mut referenced)?;
             }
         }
@@ -471,6 +481,7 @@ impl WireFormat {
             .collect::<Result<_, String>>()?;
         Ok(Self {
             style: WireStyle::from_style(format.default_style_ref(), fonts)?,
+            latex: format.latex,
             size_mode: format.size_mode,
             background: format.background,
             width: format.width,
@@ -486,6 +497,7 @@ impl WireFormat {
     fn into_format(self, fonts: &[FontBytes]) -> Result<TextFormat, String> {
         let style = self.style.into_style(fonts)?;
         Ok(TextFormat {
+            latex: self.latex,
             font_name: style.font_name,
             font: style.font,
             font_index: style.font_index,
