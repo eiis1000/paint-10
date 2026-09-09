@@ -167,7 +167,12 @@ impl PaintApp {
                                 .shape_draft
                                 .as_ref()
                                 .and_then(ShapeDraft::line_endpoints);
-                            let handles = if let Some(points) = endpoints {
+                            // A live marquee is not resizable yet. Registering
+                            // its handles would capture the next click using
+                            // the previous frame's one-pixel selection bounds.
+                            let handles = if matches!(self.gesture, Some(Gesture::Select { .. })) {
+                                Vec::new()
+                            } else if let Some(points) = endpoints {
                                 points
                                     .into_iter()
                                     .map(|point| {

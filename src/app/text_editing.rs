@@ -3,6 +3,8 @@ use crate::text::{FontBytes, FontMemory, TextStyle as DocumentTextStyle};
 use egui::text::{CCursor, CCursorRange};
 #[cfg(test)]
 mod history_tests;
+#[cfg(test)]
+mod lifecycle_tests;
 mod unicode_input;
 
 pub(in crate::app) use unicode_input::word_selection;
@@ -234,6 +236,7 @@ impl PaintApp {
             let next_style = active_style(&state);
             self.text_format = state.format.clone();
             self.text_format.set_default_style(&next_style);
+            self.text_format.size_mode = crate::text::TextSizeMode::Em;
             // A new box inherits the current font controls, not the previous box's spans.
             self.text_format.spans.clear();
             if !state.text.is_empty() {
@@ -251,7 +254,6 @@ impl PaintApp {
                 };
                 self.doc.commit();
                 self.object = Some(index);
-                self.tool = Tool::Select;
             } else if let Some(index) = state.index {
                 self.doc.begin();
                 self.doc.objects.remove(index);
