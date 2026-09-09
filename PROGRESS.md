@@ -1,5 +1,34 @@
 # Paint 10 work in progress
 
+## Current September 8 checkpoint, around 21:52 EDT
+
+- Production remains `6baab78`; `f83da5d` documents the color work and
+  `66df0dd` saves two new snow channels and three shoreline polygons. The
+  initial shoreline polygon that crossed the tree was undone and split around
+  it. Art is still stylized and its raster exports are stale.
+- Native and browser immutable Nix packages both pass their source/build
+  audits. Exact handoffs are `tmp/{native,browser}-package-6baab78-handoff.md`.
+  Native has 350 passing release tests; browser has eight adapter tests and
+  strict WASM/build/static/HTTP checks. ARM is evaluation only; Windows/macOS
+  have not been executed locally.
+- Native launcher shell 45195 on private DISPLAY=:1, directory
+  `/tmp/paint10-desktop.SuHYRa`, controller 31474 now runs the installed package
+  `/nix/store/a3381xh695c0s0bb7l443jpxdgvwb397-paint-10-0.1.0/bin/paint-10`.
+  It reopened the saved landscape at 50%. Root is setting up Solid Polygon
+  foliage for the next shape-only naturalism pass. Read the latest ledger and
+  `tmp/landscape-next-naturalism-review.md`; no generated artwork is permitted.
+- Browser controller 38238/private DISPLAY=:2 runs the refreshed 8080 build.
+  Actual named colors, OKLCH Fit, explicit `none` alpha, custom Add, Cancel and
+  F5 persistence all pass. Recalled slot two is exactly 0A001E00; slots one
+  and nine retain purple and fitted FF655180. The browser window is now
+  550×580; its dialog and full mode menu fit. HSV picker replay is underway.
+- A new server 35515 serves the immutable web package at port 8082. The old
+  recorded 8081 server session ID is no longer controllable, so it was left
+  alone. Root has not yet navigated to 8082. No host desktop input was used.
+- All agents' implementation/package work is complete and reviewed. The latest
+  agent critique is read-only. Continue actual package replay, landscape work,
+  export/reopen verification, logical commits and the completion audit.
+
 ## Current September 8 checkpoint: final color palette replay
 
 - Parser, icon and native packaging are committed as `dd11e6a`, `ea50c8c`

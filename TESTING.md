@@ -1,5 +1,59 @@
 # Paint 10 verification log
 
+## September 8: color/icon Nix package builds
+
+Immutable source `6baab78` builds both updated packages from the same captured
+source `/nix/store/jqkw0871k091lis09fsdk11dnz0a9p6l-paint-10-source`:
+
+- Native: `/nix/store/a3381xh695c0s0bb7l443jpxdgvwb397-paint-10-0.1.0`.
+  All 350 release tests pass. Host flake checks and both-system evaluation pass.
+  All 111 included files match the commit; regenerated PNG/ICO assets match,
+  the committed PNG is embedded in the installed binary, and the launcher,
+  desktop assets and 179-path runtime closure pass their checks.
+- Browser: `/nix/store/d6ybwkv413k513rsrr2xp7va15jr4a2k-paint-10-web-0.1.0`.
+  All 101 audited runtime/build/asset files match the commit. HTML, imported
+  JavaScript and three favicon assets match; eight archived adapter tests pass.
+  Its WASM is 10,077,645 bytes, SHA-256
+  `5618d523f1f540157219a1ae822e3cff7d414b8282ac0d4e38625de7a249acbf`.
+
+Exact derivations, manifests and qualifications are in
+`tmp/{native,browser}-package-6baab78-handoff.md`. ARM Linux was evaluated only;
+Windows/macOS were not executed. The browser derivation disables its native
+Cargo test phase; the shared native and adapter gates are separate evidence.
+Actual GUI replay of these installed outputs remains pending.
+
+The mutable browser build separately passes strict WASM Clippy, release build,
+eight adapter tests and source/static/HTTP checks for all served assets at
+port 8080. Logs: `tmp/browser-color-icon-{node,clippy,release,static,http}-gate.log`.
+Actual F5 loads the new titlebar and tab icons; the Edit Colors dialog shows
+all 48 basic and 16 custom swatches. Clipboard-pasting `rebeccapurple` and Add
+sets RGB 102/51/153, stores slot one and updates Home. Pasting
+`oklch(70% .4 30 / 50%)` shows authored coordinates, alpha 128 and the gamut
+warning. Captures, all visually inspected:
+`/tmp/paint10-browser-color-{loaded,open,named-add,oklch}.png`.
+
+Browser Fit produces the same FF655180 as native and Add stores it in slot nine.
+Pasting `rgba(10 none 30 / none)` sets alpha zero while retaining RGB 10/0/30;
+Add stores that in slot two. Cancel restores black. After actual F5, Home
+retains all three recent colors and recalling slot two shows exact 0A001E00,
+including the RGB beneath zero alpha. The purple and fitted colors remain in
+their original slots. These actual captures were visually inspected:
+`/tmp/paint10-browser-color-{fit-add,none-add,cancel,reloaded,recalled}.png`.
+
+Resizing the actual Chromium window to 550×580 keeps the dialog title, exact
+entry and acceptance buttons visible. Its coordinate menu displays all eight
+choices. Selecting HSV coordinates and the HSV visual picker, entering alpha
+128 and clicking the saturation/value plane updates the preview and fields
+while retaining that alpha. Captures, all visually inspected:
+`/tmp/paint10-browser-color-{compact,compact-modes,hsv-picker-menu,hsv-picked}.png`.
+
+The installed native `6baab78` package reopened the latest saved landscape with
+matching appearance and the new icon; exact color entry then prepared a Solid
+Polygon foliage pass. Captures `/tmp/paint10-package-6baab78-landscape.png` and
+`/tmp/paint10-package-pine-setup.png` were visually inspected. Manual painting
+continues in that installed package. The immutable browser package is served
+separately at `http://127.0.0.1:8082/` for its next replay.
+
 ## September 8: full color palette and compact native replay
 
 Commit `6baab78` restores the 48 basic and 16 custom dialog colors established
