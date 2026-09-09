@@ -486,12 +486,12 @@ fn alpha_controls(ui: &mut Ui, state: &mut Editor) {
             ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::click_and_drag());
         canvas::checkerboard(ui.painter(), rect, 5.0);
         gradient_mesh(ui.painter(), rect, 1, 1, |x, _| {
-            Color32::from_rgba_unmultiplied(
+            display::color([
                 state.rgba[0],
                 state.rgba[1],
                 state.rgba[2],
                 (x * 255.0).round() as u8,
-            )
+            ])
         });
         if response.clicked() || response.dragged() {
             if let Some(point) = response.interact_pointer_pos() {
@@ -522,11 +522,8 @@ fn swatch(ui: &mut Ui, color: Color, size: Vec2, label: &str) -> Response {
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     register_button(ui, &response);
     canvas::checkerboard(ui.painter(), rect, 5.0);
-    ui.painter().rect_filled(
-        rect.shrink(1.0),
-        0.0,
-        Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]),
-    );
+    ui.painter()
+        .rect_filled(rect.shrink(1.0), 0.0, display::color(color));
     let active = response.hovered() || response.has_focus();
     ui.painter().rect_stroke(
         rect,

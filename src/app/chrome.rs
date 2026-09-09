@@ -16,7 +16,7 @@ fn app_icon(ctx: &Context) -> TextureHandle {
         .into_rgba8();
     let texture = ctx.load_texture(
         "paint10-app-icon",
-        ColorImage::from_rgba_unmultiplied([size as usize, size as usize], pixels.as_raw()),
+        display::image([size as usize, size as usize], pixels.as_raw()),
         TextureOptions::LINEAR,
     );
     ctx.data_mut(|data| data.insert_temp(cache_key, (size, texture.clone())));

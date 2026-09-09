@@ -119,7 +119,7 @@ fn gradient_preview(painter: &Painter, rect: Rect, gradient: Gradient, colors: [
             );
         }
     }
-    let colors = colors.map(|[r, g, b, a]| Color32::from_rgba_unmultiplied(r, g, b, a));
+    let colors = colors.map(display::color);
     let mut mesh = egui::Mesh::default();
     match gradient {
         Gradient::Vertical | Gradient::Horizontal => {
@@ -1132,12 +1132,7 @@ impl PaintApp {
             ui.painter().rect(
                 swatch,
                 0.,
-                Color32::from_rgba_unmultiplied(
-                    self.colors[i][0],
-                    self.colors[i][1],
-                    self.colors[i][2],
-                    self.colors[i][3],
-                ),
+                display::color(self.colors[i]),
                 Stroke::new(1.0_f32, Color32::from_gray(125)),
                 StrokeKind::Inside,
             );
@@ -1237,8 +1232,7 @@ impl PaintApp {
             ui.painter().rect(
                 r,
                 0.,
-                c.map(|c| Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
-                    .unwrap_or(RIBBON),
+                c.map(display::color).unwrap_or(RIBBON),
                 Stroke::new(1.0_f32, Color32::from_gray(210)),
                 StrokeKind::Inside,
             );

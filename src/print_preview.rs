@@ -138,7 +138,7 @@ impl PrintPreview {
             };
             ui.ctx().load_texture(
                 "print-preview-image",
-                egui::ColorImage::from_rgba_unmultiplied(
+                crate::display::image(
                     [pixels.width() as usize, pixels.height() as usize],
                     pixels.as_raw(),
                 ),

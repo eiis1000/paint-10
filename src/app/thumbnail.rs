@@ -128,7 +128,7 @@ impl PaintApp {
         // Cache only the editable text. The main canvas texture already tracks
         // all committed objects and raster changes without another full image.
         let raster = state.format.render(&state.text);
-        let image = ColorImage::from_rgba_unmultiplied(
+        let image = display::image(
             [raster.width() as usize, raster.height() as usize],
             raster.as_raw(),
         );

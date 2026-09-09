@@ -1123,15 +1123,7 @@ mod tests {
                     let egui::ImageData::Color(image) = &delta.image else {
                         panic!("canvas texture must be RGBA")
                     };
-                    assert_eq!(
-                        image.pixels[8 * 32 + 8],
-                        Color32::from_rgba_unmultiplied(
-                            expected[0],
-                            expected[1],
-                            expected[2],
-                            expected[3]
-                        )
-                    );
+                    assert_eq!(image.pixels[8 * 32 + 8], display::color(expected));
                     app.doc.undo();
                     assert_eq!(app.doc.composite(), source);
                     assert!(!app.doc.can_undo());

@@ -435,7 +435,7 @@ impl PaintApp {
                 // Labels may extend past a tiny canvas so pixel-art measurements
                 // remain readable at 100%; they still stay inside its viewport.
                 ui.painter()
-                    .rect_filled(label_rect, 2.0, Color32::from_white_alpha(235));
+                    .rect_filled(label_rect, 2.0, display::color([255, 255, 255, 235]));
                 ui.painter()
                     .galley(label_rect.min + vec2(3.0, 2.0), galley, Color32::BLACK);
             }

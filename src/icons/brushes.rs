@@ -66,7 +66,7 @@ fn paintbrush(canvas: &Canvas<'_>, brush: Brush) {
     canvas.line(
         (13.0, 12.0),
         (19.0, 4.0),
-        Color32::from_white_alpha(120),
+        crate::display::color([255, 255, 255, 120]),
         1.0,
     );
     canvas.polygon(
