@@ -220,6 +220,33 @@ test('F10 stays with Paint keytips while context-menu and IME shortcuts keep the
     }
 });
 
+test('F12 opens Save As without also opening browser DevTools', async () => {
+    const windowTarget = new Target();
+    globalThis.window = windowTarget;
+    const canvas = new Target();
+    let pageFocused = true;
+    canvas.ownerDocument = { hasFocus: () => pageFocused };
+    adapter.installBrowserEvents(() => {}, canvas);
+
+    for (const [properties, expected] of [
+        [{ target: { tagName: 'CANVAS' } }, true],
+        [{ target: { tagName: 'INPUT' } }, true],
+        [{ shiftKey: true }, false],
+        [{ ctrlKey: true }, false],
+        [{ altKey: true }, false],
+        [{ metaKey: true }, false],
+        [{ isComposing: true }, false],
+        [{ keyCode: 229 }, false],
+        [{ pageFocused: false }, false],
+    ]) {
+        pageFocused = properties.pageFocused ?? true;
+        const key = event({ key: 'F12', ...properties });
+        await windowTarget.dispatch('keydown', key, true);
+        assert.equal(key.prevented, expected, JSON.stringify(properties));
+        assert.equal(key.stopped, false, 'Paint must still receive the Save As shortcut');
+    }
+});
+
 function keyboardBrowser() {
     const windowTarget = new Target();
     globalThis.window = windowTarget;
