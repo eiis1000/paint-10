@@ -453,6 +453,7 @@ impl PaintApp {
         ribbon_focus(ui, &response);
         if response.clicked() {
             self.action(act, ui.ctx());
+            ui.close_menu();
         }
     }
 

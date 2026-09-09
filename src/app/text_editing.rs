@@ -5,6 +5,7 @@ use egui::text::{CCursor, CCursorRange};
 mod history_tests;
 #[cfg(test)]
 mod lifecycle_tests;
+mod ribbon_ui;
 mod unicode_input;
 
 pub(in crate::app) use unicode_input::word_selection;
@@ -335,303 +336,6 @@ impl PaintApp {
         self.text_edit = Some(state);
     }
 
-    pub(in crate::app) fn text_ribbon(&mut self, ui: &mut Ui, origin: Pos2, ctx: &Context) {
-        if self.text_edit.is_none() {
-            return;
-        }
-        let groups = [
-            ribbon_layout::Group {
-                label: "Clipboard",
-                width: 120.0,
-                icon: Icon::Paste,
-                keys: "ZC",
-                popup: "text_clipboard",
-            },
-            ribbon_layout::Group {
-                label: "Font",
-                width: 311.0,
-                icon: Icon::Tool(Tool::Text),
-                keys: "ZF",
-                popup: "text_font",
-            },
-            ribbon_layout::Group {
-                label: "Background",
-                width: 171.0,
-                icon: Icon::Fill,
-                keys: "ZB",
-                popup: "text_background",
-            },
-            ribbon_layout::Group {
-                label: "Colors",
-                width: 347.0,
-                icon: Icon::Colors,
-                keys: "ZK",
-                popup: "text_colors",
-            },
-            ribbon_layout::Group {
-                label: "Caption",
-                width: 181.0,
-                icon: Icon::Tool(Tool::Text),
-                keys: "ZP",
-                popup: "text_caption",
-            },
-            ribbon_layout::Group {
-                label: "Finish",
-                width: 164.0,
-                icon: Icon::Tool(Tool::Text),
-                keys: "ZE",
-                popup: "text_finish",
-            },
-        ];
-        let widths = ribbon_layout::widths(
-            &groups,
-            ui.max_rect().right() - origin.x,
-            // Keep Paint's Clipboard, Font, Background and Colors visible
-            // before spending horizontal space on the added editing controls.
-            &[5, 4, 2, 0, 3, 1],
-        );
-        // Clipboard commands need the live text state so Copy/Cut use its
-        // character selection, and Paste can choose text or image contents.
-        ribbon_layout::show(ui, origin, widths[0], "text", groups[0], |ui, origin| {
-            self.clipboard_group(ui, origin, ctx);
-        });
-        let Some(mut state) = self.text_edit.take() else {
-            return;
-        };
-        let original_style = active_style(&state);
-        let mut style = original_style.clone();
-        let mut done = false;
-        let mut cancel = false;
-        let mut x = origin.x + widths[0];
-        for (index, (group, width)) in groups.into_iter().zip(widths).skip(1).enumerate() {
-            ribbon_layout::show(ui, pos2(x, origin.y), width, "text", group, |ui, origin| {
-                let origin = origin - vec2([0.0, 311.0, 482.0, 0.0, 829.0][index], 0.0);
-                match index {
-                    0 => {
-                        Self::group(ui, origin, 0.0, 310.0, "Font");
-                        ui.scope_builder(
-                            UiBuilder::new().max_rect(Rect::from_min_size(
-                                origin + vec2(12.0, 10.0),
-                                vec2(286.0, 76.0),
-                            )),
-                            |ui| {
-                                self.font_control(ui, &mut style);
-                                ui.add_space(8.0);
-                                ui.horizontal(|ui| {
-                                    let mut points = crate::text::pixels_to_points(style.size);
-                                    let size = ui.add(
-                                        DragValue::new(&mut points)
-                                            .range(crate::text::FONT_POINT_RANGE)
-                                            .update_while_editing(false)
-                                            .suffix(" pt"),
-                                    );
-                                    text_control(ui, &size, "Font size", false);
-                                    if size.changed() {
-                                        style.size = crate::text::points_to_pixels(points);
-                                    }
-                                    for (label, glyph, selected) in [
-                                        ("Bold", RichText::new("B").strong(), &mut style.bold),
-                                        ("Italic", RichText::new("I").italics(), &mut style.italic),
-                                        (
-                                            "Underline",
-                                            RichText::new("U").underline(),
-                                            &mut style.underline,
-                                        ),
-                                        (
-                                            "Strikeout",
-                                            RichText::new("abc").strikethrough(),
-                                            &mut style.strikeout,
-                                        ),
-                                    ] {
-                                        let response = ui.toggle_value(selected, glyph);
-                                        text_control(ui, &response, label, *selected);
-                                    }
-                                });
-                            },
-                        );
-                    }
-                    1 => {
-                        Self::group(ui, origin, 311.0, 170.0, "Background");
-                        ui.scope_builder(
-                            UiBuilder::new().max_rect(Rect::from_min_size(
-                                origin + vec2(323.0, 13.0),
-                                vec2(148.0, 76.0),
-                            )),
-                            |ui| {
-                                for (label, opaque) in [("Opaque", true), ("Transparent", false)] {
-                                    let response = ui.selectable_label(
-                                        state.format.background.is_some() == opaque,
-                                        label,
-                                    );
-                                    text_control(
-                                        ui,
-                                        &response,
-                                        label,
-                                        state.format.background.is_some() == opaque,
-                                    );
-                                    if response.clicked()
-                                        && state.format.background.is_some() != opaque
-                                    {
-                                        let before = TextSnapshot::capture(&state);
-                                        state.format.background = opaque.then_some(self.colors[1]);
-                                        state.history.record(
-                                            before,
-                                            ctx.input(|input| input.time),
-                                            false,
-                                        );
-                                        state.focus = true;
-                                    }
-                                }
-                            },
-                        );
-                    }
-                    2 => self.colors_group_at(ui, origin, 482.0),
-                    3 => self.caption_group(ui, origin, &mut state),
-                    _ => {
-                        Self::group(ui, origin, 829.0, 163.0, "Finish");
-                        ui.scope_builder(
-                            UiBuilder::new().max_rect(Rect::from_min_size(
-                                origin + vec2(842.0, 12.0),
-                                vec2(146.0, 76.0),
-                            )),
-                            |ui| {
-                                ui.label("Select text to format it.");
-                                ui.label("Click outside to finish.");
-                                ui.horizontal(|ui| {
-                                    done = ribbon_controls::command(ui, "Done").clicked();
-                                    let response = ui.button("Cancel");
-                                    ribbon_controls::register(
-                                        ui,
-                                        &response,
-                                        "Q",
-                                        keytips::Kind::Button,
-                                    );
-                                    cancel = response.clicked();
-                                });
-                            },
-                        );
-                    }
-                }
-            });
-            x += width;
-        }
-        if original_style != style {
-            if original_style.color != style.color {
-                self.colors[0] = style.color;
-            }
-            let result = change_style(&mut state, ctx.input(|input| input.time), |selected| {
-                if original_style.font != style.font
-                    || original_style.font_name != style.font_name
-                    || original_style.font_index != style.font_index
-                {
-                    selected.font.clone_from(&style.font);
-                    selected.font_name.clone_from(&style.font_name);
-                    selected.font_index = style.font_index;
-                }
-                if original_style.size != style.size {
-                    selected.size = style.size;
-                }
-                if original_style.color != style.color {
-                    selected.color = style.color;
-                }
-                if original_style.bold != style.bold {
-                    selected.bold = style.bold;
-                }
-                if original_style.italic != style.italic {
-                    selected.italic = style.italic;
-                }
-                if original_style.underline != style.underline {
-                    selected.underline = style.underline;
-                }
-                if original_style.strikeout != style.strikeout {
-                    selected.strikeout = style.strikeout;
-                }
-            });
-            if let Err(error) = result {
-                self.message = error;
-            }
-        }
-        if cancel {
-            self.refresh = true;
-        } else {
-            self.text_edit = Some(state);
-            if done {
-                self.commit_text();
-            }
-        }
-    }
-
-    fn caption_group(&mut self, ui: &mut Ui, origin: Pos2, state: &mut TextEditState) {
-        use crate::text::TextAlignment;
-
-        Self::group(ui, origin, 0.0, 180.0, "Caption");
-        let before = TextSnapshot::capture(state);
-        let original_format = state.format.clone();
-        let max_outline =
-            crate::text::MAX_TEXT_OUTLINE.min(state.format.width.saturating_sub(5) / 2);
-        ui.scope_builder(
-            UiBuilder::new().max_rect(Rect::from_min_size(
-                origin + vec2(8.0, 8.0),
-                vec2(165.0, 82.0),
-            )),
-            |ui| {
-                ui.horizontal(|ui| {
-                    for (label, value, keys) in [
-                        ("Left", TextAlignment::Left, "NL"),
-                        ("Center", TextAlignment::Center, "NC"),
-                        ("Right", TextAlignment::Right, "NR"),
-                    ] {
-                        let response =
-                            ui.selectable_value(&mut state.format.alignment, value, label);
-                        ribbon_controls::register(ui, &response, keys, keytips::Kind::Button);
-                    }
-                });
-                ui.add_space(5.0);
-                ui.horizontal(|ui| {
-                    let mut outlined = state.format.outline_width > 0;
-                    let response = ui.checkbox(&mut outlined, "Outline");
-                    ribbon_controls::register(ui, &response, "NO", keytips::Kind::Button);
-                    if response.changed() {
-                        state.format.outline_width = if outlined { 3.min(max_outline) } else { 0 };
-                    }
-                    let width = ui.add(
-                        DragValue::new(&mut state.format.outline_width)
-                            .range(0..=max_outline)
-                            .update_while_editing(false)
-                            .suffix(" px"),
-                    );
-                    ribbon_controls::register(ui, &width, "NW", keytips::Kind::NumericInput);
-                    width.on_hover_text("Text outline width");
-                });
-                ui.add_space(5.0);
-                ui.horizontal(|ui| {
-                    for (label, color, keys) in [
-                        ("Black", BLACK, "NB"),
-                        ("White", WHITE, "NH"),
-                        ("Color 1", self.colors[0], "NF"),
-                    ] {
-                        let response =
-                            ui.selectable_label(state.format.outline_color == color, label);
-                        ribbon_controls::register(ui, &response, keys, keytips::Kind::Button);
-                        response
-                            .clone()
-                            .on_hover_text(format!("Use {label} for the text outline"));
-                        if response.clicked() {
-                            state.format.outline_color = color;
-                            state.format.outline_width = state.format.outline_width.max(1);
-                        }
-                    }
-                });
-            },
-        );
-        if state.format != original_format {
-            state
-                .history
-                .record(before, ui.input(|input| input.time), false);
-            state.focus = true;
-        }
-    }
-
     fn font_control(&mut self, ui: &mut Ui, style: &mut DocumentTextStyle) {
         let input_id = Id::new("paint10_font_name");
         let draft_id = input_id.with("draft");
@@ -653,7 +357,7 @@ impl PaintApp {
                 let response = ui.add(
                     TextEdit::singleline(&mut draft.value)
                         .id(input_id)
-                        .desired_width(235.0)
+                        .desired_width((ui.available_width() - 34.0).max(80.0))
                         .char_limit(200),
                 );
                 text_control(ui, &response, "Font", false);
@@ -1464,6 +1168,7 @@ mod tests {
     use super::*;
 
     mod picker_scroll_tests;
+    mod ribbon_ui_tests;
 
     fn key(key: Key, modifiers: Modifiers) -> Event {
         Event::Key {
@@ -2731,8 +2436,32 @@ mod tests {
             app.text_edit.as_mut().unwrap().selection = 1..5;
             app.text_edit.as_mut().unwrap().focus = true;
             let frame = |app: &mut PaintApp, events| app_frame_at_width(app, &ctx, events, width);
+            let open_clipboard = |app: &mut PaintApp| {
+                let mut output = frame(app, vec![]);
+                if width < 600.0 {
+                    let clipboard = text_position(&output, "Clipboard");
+                    for pressed in [true, false] {
+                        output = frame(
+                            app,
+                            vec![
+                                Event::PointerMoved(clipboard),
+                                Event::PointerButton {
+                                    pos: clipboard,
+                                    button: PointerButton::Primary,
+                                    pressed,
+                                    modifiers: Modifiers::NONE,
+                                },
+                            ],
+                        );
+                    }
+                    for _ in 0..3 {
+                        output = frame(app, vec![]);
+                    }
+                }
+                output
+            };
             frame(&mut app, vec![]);
-            let output = frame(&mut app, vec![]);
+            let output = open_clipboard(&mut app);
             let nodes = &output
                 .platform_output
                 .accesskit_update
@@ -2758,11 +2487,16 @@ mod tests {
             assert!(copied.platform_output.commands.iter().any(|command| {
                 matches!(command, egui::OutputCommand::CopyText(text) if text == "éllo")
             }));
-            let cut = text_position(&copied, "Cut");
+            frame(&mut app, vec![]);
+            assert!(!keytips::popup_open(&ctx));
+            let reopened = open_clipboard(&mut app);
+            let cut = text_position(&reopened, "Cut");
             frame(&mut app, vec![Event::PointerMoved(cut), press(cut, true)]);
             frame(&mut app, vec![press(cut, false)]);
             assert_eq!(app.text_edit.as_ref().unwrap().text, "H world");
             assert!(app.doc.objects.is_empty());
+            frame(&mut app, vec![]);
+            assert!(!keytips::popup_open(&ctx));
             frame(&mut app, vec![key(Key::Z, Modifiers::CTRL)]);
             assert_eq!(app.text_edit.as_ref().unwrap().text, "Héllo world");
             assert_eq!(app.text_edit.as_ref().unwrap().selection, 1..5);
