@@ -1,5 +1,63 @@
 # Paint 10 verification log
 
+## September 9: smaller builds, temporary outputs and GitHub Pages
+
+Build configuration and script changes are in `3775daa`, Pages in `5c2bfd1`,
+and the rewritten README in `4f7ae97`. The drawing and file-format code is
+unchanged. Measurements use Linux x86_64, pinned Rust 1.97.1, and the same
+application features:
+
+| Artifact | Before, bytes | After, bytes | After, MiB |
+| --- | ---: | ---: | ---: |
+| Development executable | 428,067,344 | 45,726,320 | 43.6 |
+| Native release executable | 27,518,640 | 19,548,760 | 18.6 |
+| Browser WASM after wasm-bindgen | 11,635,487 | 8,112,660 | 7.7 |
+
+The original development executable had 377.8 MiB in `.debug_*` sections.
+`size -A -d` identified type/variable debug information as the main cause.
+The new dev profile keeps line tables, omits dependency debug information,
+and disables incremental compilation. The clean dev build took 2m33s;
+its incremental directory has no files. Release retains speed optimization
+and unwinding, adds thin LTO with one codegen unit, and strips symbols.
+See [Cargo's profile settings](https://doc.rust-lang.org/cargo/reference/profiles.html).
+
+The old Nix release's non-debug symbol tables also accounted for substantial
+space: stripping a temporary copy alone reduced it to 21,606,256 bytes. The
+new optimized release is smaller again. The before Nix outputs were
+`rmnk9paksffl0kxmqb9v5vrifnx696wm-paint-10-0.1.0` and
+`z175l2f2j9qwpb3a2c4wp5m5s4ikd9rl-paint-10-web-0.1.0`.
+
+Verification passed:
+
+- Formatting; all 393 native tests (151 library and 242 app); four native
+  packaging tests; ten browser adapter tests; native release build and archive
+  extraction/startup check; WASM release build and `WebAssembly.validate`.
+- `CARGO_TARGET_DIR=/tmp/paint10-build` kept both build scripts' compiler,
+  site and archive output outside the checkout. The Linux archive is
+  8,594,636 bytes. WASM gzip at level 9 is 3,475,532 bytes, a compression
+  measurement rather than a claim about GitHub's transfer encoding.
+- `nix flake check --no-build` evaluated the native/web packages and shells on
+  x86_64 Linux. No new Nix package build or Windows/macOS execution was done.
+- `actionlint` 1.7.12 passed. Pages deployment is restricted to default-branch
+  pushes/manual runs, with deployment permissions scoped to that job. No
+  repository remote is configured; nothing was pushed or published.
+- Actual private Xvfb input drew a brush line and the caption
+  `Paint 10: smaller builds`, committed text while retaining Text, and saved
+  PNG through the native chooser. The optimized release reopened that PNG.
+  Screenshots and the actual exported image were visually inspected.
+- Actual private Chromium loaded the new build at
+  `http://127.0.0.1:8089/paint-10/`. HTML, JS, its snippet module, WASM and icons
+  all returned HTTP 200 under that subpath. The app opened the native PNG,
+  accepted a blue brush stroke, and downloaded the edited PNG into the private
+  profile's `/tmp` download directory. The downloaded image was visually
+  inspected. This tests the deployed artifact layout locally; the GitHub-hosted
+  workflow still needs its first run after publication and Pages enablement.
+
+The test desktop, Chromium and port 8089 server were closed afterward. Compiler
+intermediates were deleted again. Only the finished archive and static site
+remain in `/tmp/paint10-release/` until reboot; screenshots and small logs are
+also disposable `/tmp/paint10-*` files. Project `target/` remains absent.
+
 ## September 9: generated artifact cleanup
 
 Deleted the accumulated project `target/` and scratch tree after inventorying

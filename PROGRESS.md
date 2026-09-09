@@ -1,6 +1,6 @@
 # Paint 10 work in progress
 
-## September 9: cleanup complete; build size and publishing setup underway
+## September 9: cleanup, build size and publishing setup verified
 
 - User requested cleanup first, then smaller binaries, GitHub Pages setup and
   a proper README. Disposable files must use `/tmp`; a reboot is expected.
@@ -14,10 +14,21 @@
   `tmp/cleanup-manifest.json` lists retained paths and copies recoverable from
   Git. Older `tmp/...` links below are historical: inspect the archive for
   retained notes; binaries, caches, duplicate projects and bulk media are gone.
-- Root owns build profiles, scripts, verification and commits. Agents
-  `pages_setup` and `readme` own the workflow/browser guide and README,
-  respectively. No GitHub publication or push is authorized by this task.
-  Build and GUI scratch output now belongs under `/tmp/paint10-*`.
+- Completed commits: `3775daa` reduces build size and makes both build scripts
+  honor `CARGO_TARGET_DIR`; `5c2bfd1` adds default-branch GitHub Pages deployment;
+  `4f7ae97` rewrites the README. Agent work was reviewed and committed locally.
+  No GitHub remote, publication or push was performed. Enable Settings → Pages
+  → Source: GitHub Actions after publishing, then run Build and test once.
+- Measured executables: development 408.2 → 43.6 MiB; release 26.2 → 18.6 MiB.
+  Browser WASM 11.1 → 7.7 MiB. All 393 native tests, ten browser adapter tests,
+  four packaging tests, release/package/WASM checks, workflow lint, formatting
+  and Nix evaluation pass. Actual private native Save/Open and browser
+  subpath load/Open/brush/download pass; details are at the top of TESTING.md.
+- The new private test desktop, Chromium and port 8089 server are closed.
+  Verification compiler caches were removed again. Finished archive/static site
+  remain under `/tmp/paint10-release/`; all new scratch output is disposable.
+  No artwork work was resumed. This cleanup/build-size/Pages/README task is
+  complete; existing platform/parity limitations remain documented.
 - The existing browser server at `http://127.0.0.1:8088/` serves an immutable
   Nix package, independently of the cleaned directories. It will stop on reboot.
 
