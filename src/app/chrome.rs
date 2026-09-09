@@ -1,6 +1,28 @@
 use super::*;
 use crate::preferences::QuickCommand;
 
+fn app_icon(ctx: &Context) -> TextureHandle {
+    let size = (21.0 * ctx.pixels_per_point()).round().clamp(16.0, 256.0) as u32;
+    let cache_key = Id::new("paint10-app-icon");
+    let cached = ctx.data(|data| data.get_temp::<(u32, TextureHandle)>(cache_key));
+    if let Some((_, texture)) = cached.filter(|(cached_size, _)| *cached_size == size) {
+        return texture;
+    }
+
+    // Resize once at the current display scale so the small mark stays crisp.
+    let pixels = image::load_from_memory(include_bytes!("../../assets/paint-10.png"))
+        .expect("The bundled Paint 10 icon must be a valid PNG")
+        .resize_exact(size, size, image::imageops::FilterType::Lanczos3)
+        .into_rgba8();
+    let texture = ctx.load_texture(
+        "paint10-app-icon",
+        ColorImage::from_rgba_unmultiplied([size as usize, size as usize], pixels.as_raw()),
+        TextureOptions::LINEAR,
+    );
+    ctx.data_mut(|data| data.insert_temp(cache_key, (size, texture.clone())));
+    texture
+}
+
 impl PaintApp {
     pub(in crate::app) fn quick_action(&mut self, command: QuickCommand, ctx: &Context) {
         match command {
@@ -202,10 +224,11 @@ impl PaintApp {
             .frame(Frame::NONE.fill(Color32::WHITE))
             .show(ctx, |ui| {
                 let r = ui.max_rect();
-                icons::draw(
-                    ui.painter(),
+                ui.painter().image(
+                    app_icon(ctx).id(),
                     Rect::from_min_size(r.min + vec2(8., 5.), vec2(21., 21.)),
-                    Icon::Colors,
+                    Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
+                    Color32::WHITE,
                 );
                 let quick_width = if self.quick_access.below_ribbon {
                     0.0

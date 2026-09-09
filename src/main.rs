@@ -22,6 +22,10 @@ fn main() -> eframe::Result {
         eframe::egui::ViewportBuilder::default()
             .with_title("Untitled - Paint 10")
             .with_app_id("paint-10")
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../assets/paint-10.png"))
+                    .expect("The bundled Paint 10 icon must be a valid PNG"),
+            )
             .with_inner_size([1180.0, 800.0])
             .with_min_inner_size([500.0, 400.0])
             .with_decorations(false),
