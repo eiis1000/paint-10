@@ -103,6 +103,10 @@ Oval shapes add unequal lobes to the clouds. Two shallow translucent blue-gray
 Ovals shade their undersides. They use only the shape tools and preserve the
 existing mountain composition; the landscape remains a work in progress.
 
+Three further solid Polygon shapes give the smaller pine unequal upper-left,
+middle-right and lower-left branches. They were drawn and saved in the installed
+Nix package, with the neighboring foliage sampled using Color Picker.
+
 ## Ant-colony simulation slide
 
 [Editable project](ant-colony-simulation.p10) ·
