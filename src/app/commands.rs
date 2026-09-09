@@ -111,6 +111,7 @@ impl PaintApp {
         match action {
             Action::New => {
                 self.doc = Document::new(900, 600);
+                self.measure.reset();
                 self.file = None;
                 self.clear_selection();
                 self.refresh = true;
