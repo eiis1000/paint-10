@@ -66,6 +66,29 @@ fn all_spaces_roundtrip_a_representative_rgb_cube() {
 }
 
 #[test]
+fn paint_hue_wraps_at_red_and_preserves_the_legacy_primary_coordinates() {
+    for (rgb, values) in [
+        ([255, 0, 0], [0.0, 240.0, 120.0, 0.0]),
+        ([255, 255, 0], [40.0, 240.0, 120.0, 0.0]),
+        ([0, 255, 0], [80.0, 240.0, 120.0, 0.0]),
+        ([0, 255, 255], [120.0, 240.0, 120.0, 0.0]),
+        ([0, 0, 255], [160.0, 240.0, 120.0, 0.0]),
+        ([255, 0, 255], [200.0, 240.0, 120.0, 0.0]),
+    ] {
+        assert_eq!(coordinates(Space::PaintHsl, rgb), values);
+        assert_eq!(from_coordinates(Space::PaintHsl, values).rgb, rgb);
+    }
+    for rgb in [[255, 0, 1], [235, 0, 1], [255, 1, 0]] {
+        let values = coordinates(Space::PaintHsl, rgb);
+        assert_eq!(values[0], 0.0);
+        let converted = from_coordinates(Space::PaintHsl, values);
+        for (actual, expected) in converted.rgb.into_iter().zip(rgb) {
+            assert!(actual.abs_diff(expected) <= 1);
+        }
+    }
+}
+
+#[test]
 fn transfer_functions_use_the_srgb_linear_segment_and_extended_sign() {
     near(srgb_to_linear(0.04045), 0.04045 / 12.92, 1e-12);
     near(linear_to_srgb(0.0031308), 0.0031308 * 12.92, 1e-12);
@@ -183,4 +206,10 @@ fn parsed_perceptual_coordinates_retain_the_requested_out_of_gamut_color() {
     assert_eq!(parsed.rgba[3], 64);
     let lab = parse_color_with_alpha("oklab(50% -50% 25%)").unwrap();
     assert_eq!(lab.coordinates, Some((Space::Oklab, [0.5, -0.2, 0.1, 0.0])));
+    let negative_chroma = parse_color_with_alpha("oklch(50% -25% 30)").unwrap();
+    assert_eq!(
+        negative_chroma.coordinates,
+        Some((Space::Oklch, [0.5, 0.0, 30.0, 0.0]))
+    );
+    assert_eq!(negative_chroma.rgba, [99, 99, 99, 255]);
 }
