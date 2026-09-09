@@ -377,6 +377,23 @@ pub(super) fn command(canvas: &Canvas<'_>, icon: Icon) {
         }
         Icon::Fill => bucket(canvas),
         Icon::Colors => colors(canvas),
+        Icon::ZoomIn | Icon::ZoomOut => {
+            canvas.circle((9.0, 9.0), 6.5, LIGHT_BLUE, BLUE);
+            canvas.line((14.0, 14.0), (22.0, 22.0), INK, 3.0);
+            canvas.line((5.5, 9.0), (12.5, 9.0), INK, 1.5);
+            if matches!(icon, Icon::ZoomIn) {
+                canvas.line((9.0, 5.5), (9.0, 12.5), INK, 1.5);
+            }
+        }
+        Icon::ActualSize => {
+            canvas.rect((2.0, 3.0), (22.0, 21.0), Color32::WHITE, BLUE);
+            canvas.path(&[(5.0, 9.0), (8.0, 7.0), (8.0, 17.0)], INK, 1.5, false);
+            canvas.line((5.0, 17.0), (10.0, 17.0), INK, 1.5);
+            canvas.circle((12.0, 10.0), 0.6, INK, CLEAR);
+            canvas.circle((12.0, 15.0), 0.6, INK, CLEAR);
+            canvas.path(&[(15.0, 9.0), (18.0, 7.0), (18.0, 17.0)], INK, 1.5, false);
+            canvas.line((15.0, 17.0), (20.0, 17.0), INK, 1.5);
+        }
         Icon::ChevronDown => canvas.path(&[(5.0, 8.0), (12.0, 15.0), (19.0, 8.0)], INK, 1.8, false),
         Icon::ChevronUp => canvas.path(&[(5.0, 16.0), (12.0, 9.0), (19.0, 16.0)], INK, 1.8, false),
         Icon::Tool(_) | Icon::Brush(_) => {

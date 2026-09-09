@@ -37,6 +37,9 @@ pub enum Icon {
     Outline,
     Fill,
     Colors,
+    ZoomIn,
+    ZoomOut,
+    ActualSize,
     ChevronDown,
     ChevronUp,
 }
@@ -73,6 +76,9 @@ impl Icon {
             Self::Outline => "Outline",
             Self::Fill => "Fill",
             Self::Colors => "Edit colors",
+            Self::ZoomIn => "Zoom in",
+            Self::ZoomOut => "Zoom out",
+            Self::ActualSize => "Actual size",
             Self::ChevronDown => "Expand",
             Self::ChevronUp => "Collapse",
         }
@@ -146,15 +152,17 @@ pub fn button(
     }
     draw(&painter, icon_rect, icon);
     if !label.is_empty() {
-        let text = painter.layout(
+        let mut job = egui::text::LayoutJob::simple(
             label.to_owned(),
             FontId::proportional(12.0),
             Color32::from_gray(35),
             (rect.width() - 4.0).max(1.0),
         );
+        job.halign = Align::Center;
+        let text = painter.layout_job(job);
         painter.galley(
             pos2(
-                rect.center().x - text.size().x / 2.0,
+                rect.center().x,
                 rect.bottom() - 4.0 - text.size().y,
             ),
             text,

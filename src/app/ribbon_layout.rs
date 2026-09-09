@@ -92,6 +92,7 @@ pub(super) fn show(
         |ui| {
             let scope = Scope::new(group.popup, group.label);
             controls::scope(ui, scope, |ui| {
+                theme::restore_widget_chrome(ui);
                 ui.set_min_size(vec2(group.width, 112.0));
                 let origin = ui.cursor().min;
                 ui.allocate_space(vec2(group.width, 112.0));

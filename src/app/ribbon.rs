@@ -1044,65 +1044,88 @@ impl PaintApp {
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(702., 8.), vec2(53., 85.))),
             |ui| {
-                let r = Rect::from_min_size(ui.cursor().min, vec2(47., 39.));
-                for (j, w) in [1.0_f32, 2., 3., 5.].into_iter().enumerate() {
+                let menu = egui::menu::menu_custom_button(
+                    ui,
+                    Button::new("").min_size(vec2(53.0, 84.0)),
+                    |ui| {
+                        theme::menu(ui);
+                        controls::scope(ui, Scope::new("size", "Size"), |ui| {
+                            let sizes = match self.tool {
+                                Tool::Pencil => [1, 2, 3, 4],
+                                Tool::Eraser => [4, 6, 8, 10],
+                                _ => [1, 3, 5, 8],
+                            };
+                            for size in sizes {
+                                let label = format!("{size} px");
+                                let choice = ui.add(
+                                    theme::MenuItem::new(&label)
+                                        .selected(self.size == size)
+                                        .width(220.0),
+                                );
+                                controls::named(ui, &choice, &label);
+                                let right = choice.rect.right_center() - vec2(15.0, 0.0);
+                                ui.painter().line_segment(
+                                    [right - vec2(100.0, 0.0), right],
+                                    Stroke::new(size as f32, Color32::from_gray(42)),
+                                );
+                                self.preview_shape_style(&choice, shapes::StylePreview::Size(size));
+                                if choice.clicked() {
+                                    self.size = size;
+                                    self.accept_shape_style(ui.ctx());
+                                    ui.close_menu();
+                                }
+                            }
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                theme::restore_widget_chrome(ui);
+                                ui.label("Custom size");
+                                let size = ui.add(
+                                    DragValue::new(&mut self.size)
+                                        .range(1..=500)
+                                        .update_while_editing(false)
+                                        .suffix(" px"),
+                                );
+                                size.widget_info(|| {
+                                    WidgetInfo::labeled(
+                                        WidgetType::DragValue,
+                                        ui.is_enabled(),
+                                        "Custom size",
+                                    )
+                                });
+                                controls::register(ui, &size, "C", keytips::Kind::NumericInput);
+                                if size.changed() {
+                                    self.accept_shape_style(ui.ctx());
+                                }
+                            });
+                        });
+                    },
+                );
+                controls::register(
+                    ui,
+                    &menu.response,
+                    "W",
+                    keytips::Kind::Menu { scope: "size" },
+                );
+                let rect = menu.response.rect;
+                for (row, width) in [1.0_f32, 2.0, 3.0, 5.0].into_iter().enumerate() {
+                    let y = rect.top() + 8.0 + row as f32 * 10.0;
                     ui.painter().line_segment(
-                        [
-                            r.min + vec2(4., 4. + j as f32 * 10.),
-                            r.min + vec2(41., 4. + j as f32 * 10.),
-                        ],
-                        Stroke::new(w, Color32::from_gray(40)),
+                        [pos2(rect.left() + 8.0, y), pos2(rect.right() - 8.0, y)],
+                        Stroke::new(width, Color32::from_gray(40)),
                     );
                 }
-                ui.add_space(46.);
-                let menu = ribbon_menu_button(ui, "Size", "W", "size", None, |ui| {
-                    let sizes = match self.tool {
-                        Tool::Pencil => [1, 2, 3, 4],
-                        Tool::Eraser => [4, 6, 8, 10],
-                        _ => [1, 3, 5, 8],
-                    };
-                    for size in sizes {
-                        let label = format!("{size} px");
-                        let choice = ui.add(
-                            theme::MenuItem::new(&label)
-                                .selected(self.size == size)
-                                .width(220.0),
-                        );
-                        controls::named(ui, &choice, &label);
-                        let right = choice.rect.right_center() - vec2(15.0, 0.0);
-                        ui.painter().line_segment(
-                            [right - vec2(100.0, 0.0), right],
-                            Stroke::new(size as f32, Color32::from_gray(42)),
-                        );
-                        self.preview_shape_style(&choice, shapes::StylePreview::Size(size));
-                        if choice.clicked() {
-                            self.size = size;
-                            self.accept_shape_style(ui.ctx());
-                            ui.close_menu();
-                        }
-                    }
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.label("Custom size");
-                        let size = ui.add(
-                            DragValue::new(&mut self.size)
-                                .range(1..=500)
-                                .update_while_editing(false)
-                                .suffix(" px"),
-                        );
-                        size.widget_info(|| {
-                            WidgetInfo::labeled(
-                                WidgetType::DragValue,
-                                ui.is_enabled(),
-                                "Custom size",
-                            )
-                        });
-                        controls::register(ui, &size, "C", keytips::Kind::NumericInput);
-                        if size.changed() {
-                            self.accept_shape_style(ui.ctx());
-                        }
-                    });
-                });
+                ui.painter().text(
+                    rect.center_top() + vec2(0.0, 59.0),
+                    Align2::CENTER_CENTER,
+                    "Size",
+                    FontId::proportional(12.0),
+                    Color32::from_gray(35),
+                );
+                icons::draw(
+                    ui.painter(),
+                    Rect::from_center_size(rect.center_bottom() - vec2(0.0, 8.0), vec2(10.0, 10.0)),
+                    Icon::ChevronDown,
+                );
                 menu.response.widget_info(|| {
                     WidgetInfo::labeled(
                         WidgetType::Button,
@@ -1426,12 +1449,16 @@ impl PaintApp {
 
     fn zoom_group(&mut self, ui: &mut Ui, o: Pos2) {
         Self::group(ui, o, 0., 228., "Zoom");
-        for (i, label, factor) in [(0, "Zoom in", 2.), (1, "Zoom out", 0.5), (2, "100%", 0.)] {
+        for (i, label, factor, icon) in [
+            (0, "Zoom in", 2.0, Icon::ZoomIn),
+            (1, "Zoom out", 0.5, Icon::ZoomOut),
+            (2, "100%", 0.0, Icon::ActualSize),
+        ] {
             if controls::button(
                 ui,
                 label,
                 Rect::from_min_size(o + vec2(7. + i as f32 * 72., 6.), vec2(65., 77.)),
-                Icon::Tool(Tool::Magnifier),
+                icon,
                 label,
                 false,
                 true,
@@ -1966,6 +1993,37 @@ mod gradient_tests {
                 settle(&mut app, &context);
             }
         }
+    }
+
+    #[test]
+    fn clicking_the_size_stroke_sample_opens_its_menu() {
+        let context = Context::default();
+        context.enable_accesskit();
+        let mut app = PaintApp::new_with_context(&context, false);
+        let output = settle(&mut app, &context);
+        let node = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|(_, node)| {
+                node.label()
+                    .is_some_and(|label| label.starts_with("Brush and outline size,"))
+            })
+            .unwrap();
+        let bounds = node.1.bounds().unwrap();
+        let stroke_sample = pos2(
+            ((bounds.x0 + bounds.x1) / 2.0) as f32,
+            bounds.y0 as f32 + 10.0,
+        );
+        click(&mut app, &context, stroke_sample);
+        let popup = settle(&mut app, &context);
+        assert!(keytips::popup_open(&context));
+        assert!(has_label(&popup, "Custom size"));
+        assert!(has_label(&popup, "8 px"));
+        assert!(!app.doc.dirty());
     }
 
     #[test]
