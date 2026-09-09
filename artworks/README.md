@@ -98,6 +98,11 @@ was kept. The haze color also exposed a light-alpha preview bug in the
 application; its numeric color is correct, and the display correction is
 being tested separately.
 
+After fixing and verifying that display discrepancy, five overlapping radial
+Oval shapes add unequal lobes to the clouds. Two shallow translucent blue-gray
+Ovals shade their undersides. They use only the shape tools and preserve the
+existing mountain composition; the landscape remains a work in progress.
+
 ## Ant-colony simulation slide
 
 [Editable project](ant-colony-simulation.p10) ·
