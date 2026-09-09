@@ -4,8 +4,8 @@
 
 A Rust drawing app inspired by Windows 10 Paint, with its familiar ribbon,
 brushes, shapes, selections, and shortcuts. Paint 10 adds editable text and image
-objects, optional layers, arbitrary rotation, transparent canvases, pixel art tools, and a richer
-color editor. The desktop and WebAssembly builds share the same drawing engine
+objects, optional layers, arbitrary rotation, transparent canvases, pixel art
+tools, and a richer color editor. The desktop and WebAssembly builds share the same drawing engine
 and interface, built with egui/eframe.
 
 **[Open Paint 10 in your browser](https://eiis1000.github.io/paint-10/)** ·
@@ -17,11 +17,17 @@ See [platform status and limits](#platform-status-and-limits).
 
 ## Get started
 
-Run these commands from a checkout of this repository.
-
 ### Linux with Nix
 
-With Nix flakes enabled:
+With Nix flakes enabled, run directly from GitHub; no checkout is needed:
+
+```sh
+nix run github:eiis1000/paint-10#paint-10
+# Or open an existing picture or Paint 10 project:
+nix run github:eiis1000/paint-10#paint-10 -- /path/to/picture.png
+```
+
+To run your local changes from a checkout:
 
 ```sh
 nix run path:.
@@ -37,7 +43,7 @@ NixOS and Home Manager installation is covered [below](#install-in-nixos-or-home
 ### In your browser
 
 Use the [hosted app](https://eiis1000.github.io/paint-10/), or build and serve
-the static site on Linux with the pinned Nix environment:
+the static site from a checkout on Linux with the pinned Nix environment:
 
 ```sh
 nix develop .#web -c bash scripts/build-web.sh
@@ -56,7 +62,7 @@ without Nix, font loading, downloads, and clipboard permissions.
 
 ### Linux, Windows, or macOS with Cargo
 
-Install Rust and your platform's native build dependencies:
+From a checkout, install Rust and your platform's native build dependencies:
 
 | Platform | Build prerequisites |
 | --- | --- |
@@ -333,10 +339,30 @@ Regenerate its native/browser assets with
   PDFs for a viewer. Paint 10 never sends email itself.
 - **Document limits:** 16 megapixels, at most 16,384 pixels on either axis,
   bounded undo memory, and up to 1,000 project objects / 128 MB of object data.
+  Projects support up to 64 layers with a combined 192 MiB layer/asset budget.
   Native windows require at least 500×400; smaller browser layouts need work.
 
-Brush rendering, fonts, native dialogs, and some keyboard presentation differ
-from Microsoft Paint. Complete behavioral or visual equivalence is not claimed.
+## Differences from Windows 10 Paint
+
+This list tracks intentional additions and known differences from the Windows 10
+ribbon version of Microsoft Paint. Update it when a feature or workflow changes;
+[PARITY_AUDIT.md](PARITY_AUDIT.md) keeps the detailed comparison and verification
+history. Complete behavioral or visual equivalence is not claimed.
+
+| Area | Paint 10 behavior |
+| --- | --- |
+| Editable text | Finished boxes can be reopened, moved, and reformatted. Mixed formatting, paragraph alignment, strikeout, and caption outlines are available. Transformed text uses an upright editor while typing, then restores its transform. |
+| Editable images | Inserted pictures retain their original pixels for repeated scaling, arbitrary rotation, reversible source crops, color/detail adjustments, and Reset image. |
+| Layers | Optional, initially hidden View pane with explicit layer creation, ordering, visibility, opacity, locking, duplication, and merging. Drawing affects the active layer. |
+| Transparency | Full alpha is supported on the canvas, in colors, and in suitable exports. Erasing a transparent layer reveals the layers beneath it. |
+| Color editor | Adds HSV, linear RGB, approximate CMYK, OKLab/OKLCH, CSS color entry, alpha, and gamut fitting alongside familiar RGB/HSL controls. |
+| Shapes and precision | Adds gradient fills, arbitrary-angle rotation, remembered tool widths, 3200% zoom, nearest-neighbor scaling, and a distance/angle measurement tool. |
+| Projects and exports | `.p10` keeps editable objects, source images, embedded fonts, and layers. Raster saves flatten visible content; Save a copy and Save selection as preserve the working destination. WebP, ICO, and PDF output are also available. |
+| Interface | Adds an Image ribbon and extra Text controls; narrow windows collapse ribbon groups into menus. Icons and keytip mappings are independently implemented. |
+| Rendering | Brush dynamics, textured fills, font rasterization, and native dialogs differ; matching Microsoft's exact pixels is not guaranteed. |
+| Platforms | Runs on Linux, Windows, macOS, and in a browser. System integration and native dialogs depend on the platform; Windows/macOS printing produces a PDF for a viewer. |
+| Browser files and fonts | Saving downloads a file and retains the unsaved-work indicator. Fonts are bundled or imported instead of enumerating installed system fonts; some shortcuts remain reserved by the browser. |
+| Limits | Canvas, object, layer, and undo memory limits apply; see [platform status and limits](#platform-status-and-limits). |
 
 ## License
 
