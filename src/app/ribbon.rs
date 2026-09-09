@@ -1227,13 +1227,17 @@ impl PaintApp {
             ribbon_focus(ui, &response);
             response.on_hover_text(name);
         }
-        for i in 0..10 {
+        let mut recalled_custom = None;
+        for i in 0..crate::preferences::RECENT_CUSTOM_COLOR_COUNT {
             let r = Rect::from_min_size(o + vec2(863. + i as f32 * 20., 54.), vec2(18., 20.));
-            let c = self.custom_colors.get(i).copied();
+            let c = self.recent_custom_colors.get(i).copied();
+            if c.is_some_and(|color| color[3] < 255) {
+                canvas::checkerboard(ui.painter(), r.shrink(1.0), 4.0);
+            }
             ui.painter().rect(
                 r,
                 0.,
-                c.map(|c| Color32::from_rgb(c[0], c[1], c[2]))
+                c.map(|c| Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
                     .unwrap_or(RIBBON),
                 Stroke::new(1.0_f32, Color32::from_gray(210)),
                 StrokeKind::Inside,
@@ -1249,6 +1253,7 @@ impl PaintApp {
             );
             if response.clicked() || response.secondary_clicked() {
                 if let Some(c) = c {
+                    recalled_custom = Some(c);
                     self.colors[if response.secondary_clicked() {
                         1
                     } else {
@@ -1287,6 +1292,10 @@ impl PaintApp {
             );
             ribbon_focus(ui, &response);
             response.on_hover_text(name);
+        }
+        if let Some(color) = recalled_custom {
+            self.remember_custom_color(color);
+            ui.ctx().request_repaint();
         }
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(863.0, 77.0), vec2(196.0, 19.0))),

@@ -5,6 +5,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const MAX_PREFERENCES_BYTES: usize = 1024 * 1024;
+pub const CUSTOM_COLOR_COUNT: usize = 16;
+pub const RECENT_CUSTOM_COLOR_COUNT: usize = 10;
 #[cfg(target_arch = "wasm32")]
 const BROWSER_STORAGE_KEY: &str = "paint-10.preferences.v1";
 
@@ -14,6 +16,7 @@ struct Preferences {
     #[cfg_attr(target_arch = "wasm32", serde(skip))]
     recent_files: Vec<PathBuf>,
     custom_colors: Vec<Color>,
+    recent_custom_colors: Option<Vec<Color>>,
     quick_access: QuickAccess,
 }
 
@@ -123,7 +126,19 @@ fn decode_preferences(bytes: &[u8]) -> Preferences {
     }
     let mut preferences: Preferences = serde_json::from_slice(bytes).unwrap_or_default();
     preferences.recent_files.truncate(10);
-    preferences.custom_colors.truncate(10);
+    preferences.custom_colors.truncate(CUSTOM_COLOR_COUNT);
+    let recent = preferences
+        .recent_custom_colors
+        .take()
+        .unwrap_or_else(|| preferences.custom_colors.iter().rev().copied().collect());
+    let mut unique_colors = Vec::new();
+    for color in recent {
+        if !unique_colors.contains(&color) {
+            unique_colors.push(color);
+        }
+    }
+    unique_colors.truncate(RECENT_CUSTOM_COLOR_COUNT);
+    preferences.recent_custom_colors = Some(unique_colors);
     let mut unique = Vec::new();
     for command in preferences.quick_access.commands {
         if !unique.contains(&command) {
@@ -202,13 +217,32 @@ pub fn record_file(_path: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(Vec::new())
 }
 
-pub fn custom_colors() -> Vec<Color> {
-    read_preferences().custom_colors
+pub fn custom_palette() -> (Vec<Color>, Vec<Color>) {
+    let preferences = read_preferences();
+    let mut slots = preferences.custom_colors;
+    slots.resize(CUSTOM_COLOR_COUNT, crate::document::WHITE);
+    (slots, preferences.recent_custom_colors.unwrap_or_default())
 }
 
-pub fn save_custom_colors(colors: &[Color]) -> Result<(), String> {
+pub fn remember_custom_color(recent: &mut Vec<Color>, color: Color) {
+    recent.retain(|existing| *existing != color);
+    recent.insert(0, color);
+    recent.truncate(RECENT_CUSTOM_COLOR_COUNT);
+}
+
+pub fn save_custom_palette(colors: &[Color], recent: &[Color]) -> Result<(), String> {
     let mut preferences = read_preferences();
-    preferences.custom_colors = colors.iter().copied().take(10).collect();
+    preferences.custom_colors = colors.iter().copied().take(CUSTOM_COLOR_COUNT).collect();
+    preferences
+        .custom_colors
+        .resize(CUSTOM_COLOR_COUNT, crate::document::WHITE);
+    preferences.recent_custom_colors = Some(
+        recent
+            .iter()
+            .copied()
+            .take(RECENT_CUSTOM_COLOR_COUNT)
+            .collect(),
+    );
     write_preferences(&preferences)
 }
 
@@ -269,7 +303,7 @@ mod tests {
     #[test]
     fn bounded_preferences_preserve_colors_and_toolbar_without_duplicate_commands() {
         let preferences = Preferences {
-            custom_colors: vec![[12, 34, 56, 78]; 12],
+            custom_colors: vec![[12, 34, 56, 78]; 20],
             quick_access: QuickAccess {
                 commands: vec![QuickCommand::Save, QuickCommand::Undo, QuickCommand::Save],
                 below_ribbon: true,
@@ -277,7 +311,10 @@ mod tests {
             ..Default::default()
         };
         let decoded = decode_preferences(&encode_preferences(&preferences).unwrap());
-        assert_eq!(decoded.custom_colors, vec![[12, 34, 56, 78]; 10]);
+        assert_eq!(
+            decoded.custom_colors,
+            vec![[12, 34, 56, 78]; CUSTOM_COLOR_COUNT]
+        );
         assert_eq!(
             decoded.quick_access.commands,
             vec![QuickCommand::Save, QuickCommand::Undo]
@@ -288,6 +325,40 @@ mod tests {
         assert_eq!(
             decode_preferences(b"invalid").quick_access.commands,
             QuickAccess::default().commands
+        );
+    }
+
+    #[test]
+    fn custom_slots_and_recent_colors_round_trip_without_overwriting_legacy_slots() {
+        let slots: Vec<_> = (0..CUSTOM_COLOR_COUNT)
+            .map(|index| [index as u8, 40, 80, 100 + index as u8])
+            .collect();
+        let mut recent = Vec::new();
+        for color in &slots {
+            remember_custom_color(&mut recent, *color);
+        }
+        assert_eq!(recent.len(), RECENT_CUSTOM_COLOR_COUNT);
+        assert_eq!(recent[0], slots[15]);
+        remember_custom_color(&mut recent, slots[8]);
+        assert_eq!(recent[0], slots[8]);
+        assert_eq!(recent.iter().filter(|color| **color == slots[8]).count(), 1);
+
+        let preferences = Preferences {
+            custom_colors: slots.clone(),
+            recent_custom_colors: Some(recent.clone()),
+            ..Default::default()
+        };
+        let decoded = decode_preferences(&encode_preferences(&preferences).unwrap());
+        assert_eq!(decoded.custom_colors, slots);
+        assert_eq!(decoded.recent_custom_colors, Some(recent));
+
+        let legacy =
+            serde_json::to_vec(&serde_json::json!({ "custom_colors": &slots[..10] })).unwrap();
+        let decoded = decode_preferences(&legacy);
+        assert_eq!(decoded.custom_colors, slots[..10]);
+        assert_eq!(
+            decoded.recent_custom_colors.unwrap(),
+            slots[..10].iter().rev().copied().collect::<Vec<_>>()
         );
     }
 }
