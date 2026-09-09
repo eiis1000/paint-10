@@ -336,11 +336,7 @@ fn indexed_pixels(image: &RgbaImage, colors: usize) -> (Vec<[u8; 3]>, Vec<u8>) {
         return (palette, indices);
     }
     let quantizer = color_quant::NeuQuant::new(10, colors, image.as_raw());
-    let palette = quantizer
-        .color_map_rgb()
-        .chunks_exact(3)
-        .map(|rgb| [rgb[0], rgb[1], rgb[2]])
-        .collect();
+    let palette = quantizer.color_map_rgb().as_chunks::<3>().0.to_vec();
     let indices = image
         .pixels()
         .map(|pixel| quantizer.index_of(&pixel.0) as u8)

@@ -1558,7 +1558,7 @@ mod tests {
         let mut bytes = epaint_default_fonts::HACK_REGULAR.to_vec();
         let count = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
         let mut removed = false;
-        for entry in bytes[12..].chunks_exact_mut(16).take(count) {
+        for entry in bytes[12..].as_chunks_mut::<16>().0.iter_mut().take(count) {
             if &entry[..4] == b"glyf" {
                 entry[..4].copy_from_slice(b"TEST");
                 removed = true;
