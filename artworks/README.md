@@ -10,11 +10,14 @@ imported or generated as a substitute for using the application.
 - Self portrait: complete, exported, reopened, and text editing retested.
 - Mona Lisa recreation: complete, exported, reopened, and rotated text retested.
 - AirSense 10 with AirFit P30i pixel art: complete, exports checked, reopened.
-- Photorealistic landscape using only shapes: underway.
+- Photorealistic landscape using only shapes: paused at the user's request.
 - Widescreen ant-colony simulation slide: painted, exported and reopened; PowerPoint render verified.
 
 Each finished exercise will include an editable `.p10` project, raster exports,
 the tools used, and any defects or improvements discovered.
+
+Detailed artwork is paused while interface polish and functionality receive
+short, focused manual tests. Existing paintings and export evidence are retained.
 
 ## Self portrait
 
@@ -84,9 +87,8 @@ destination. Read-only checks confirm exact project/PNG/WebP RGBA agreement
 at 1920 × 1080 and matching JPEG dimensions. The JPEG was visually inspected,
 and the fresh WebP reopened in Paint 10 with the same composition.
 
-This alpine picture remains deliberately geometric in appearance. A separate
-coastal study is underway for the shape-only realism exercise; this painting
-and its refreshed exports are preserved.
+This alpine picture remains geometric in appearance. It and its refreshed
+exports are preserved alongside the paused coastal study.
 
 ## Coastal landscape in progress
 
@@ -96,7 +98,10 @@ A second 1920 × 1080 landscape uses Rectangle gradients for the sky and sea,
 translucent radial Ovals for the light, and a thin Line for the horizon. Dragging
 the reflection Oval's handles extends its gradient beyond the right and bottom
 canvas edges. This initial foundation was saved through the native project
-dialog and visually inspected. Wave and cloud detail is still underway.
+dialog and visually inspected. Fifteen translucent, pencil-outlined Curve
+shapes add wave detail; a pencil-filled Rectangle adds subtle water grain.
+These additions are saved. The study is paused before further detailing and
+raster exports while text, color editing and interface polish are addressed.
 
 ## Ant-colony simulation slide
 

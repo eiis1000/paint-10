@@ -1,5 +1,49 @@
 # Paint 10 work in progress
 
+## Current September 9 checkpoint: text, color editor and interface polish
+
+- The user has paused detailed artwork. Continue short, focused tests of real
+  Paint workflows; prioritize text behavior, the Text ribbon and color editing.
+  Do not resume elaborate artwork as a completion gate unless requested.
+- The coastal project is saved with its wave Curves and subtle pencil grain.
+  The preceding artwork and export checks remain useful evidence; this study
+  is a preserved unfinished checkpoint, not a claim of photorealism.
+- `new_status` owns text-tool persistence and its lifecycle tests;
+  `text_sharpness` owns rendering/sizing investigation; `popup_modal` owns
+  coordinate-dependent color planes. Root owns Text ribbon UI, private GUI
+  replay, integration, documentation and logical local commits.
+- Popup/input correction passed 368 native tests, strict Clippy, formatting
+  and build. Its stable replay executable is `tmp/popup-modal-native/paint-10`.
+  Native launcher 58707/controller 62092 use private DISPLAY=:1. The installed
+  old package has closed cleanly after saving; the stable test binary is open
+  on a blank picture. No host desktop input is used.
+
+## Earlier September 9 checkpoint: coastal painting and menu input correction
+
+- The New status correction is committed as `047e872`, with 21 focused tests
+  passing. Agent `popup_modal` owns a reproduced gradient-keytip/click ordering
+  defect, stale ribbon menu state over dialogs, and the related handoff of
+  queued input to a keytip-opened dialog. Its final native gate is underway.
+  Root owns source review, GUI replay, docs, artwork and Git.
+- Native launcher session 58707 and controller 62092 remain on private DISPLAY=:1,
+  `/tmp/paint10-desktop.ZV79Sn`, running the installed `a292591` package.
+  Root is using actual shape tools and XTEST only. No host desktop input.
+- Alpine pine refinements are committed as `2abbdda`. Snow/gradient slope
+  refinements and fresh PNG/JPEG/WebP exports are committed as `a6a99da`.
+  `tmp/artwork-export-check-september9.log` passes exact project/PNG/WebP RGBA,
+  JPEG dimensions, portrait text counts, Mona PNG/TIFF and all CPAP checks.
+  Fresh WebP actually reopens; JPEG and live app screenshots were inspected.
+- The alpine study is preserved and still looks geometric. The separate
+  1920 × 1080 coastal foundation is saved and committed as `f96fc86`.
+  Its sky/sea gradients, horizon Line and resized light Ovals are fully opaque.
+  Wave detail is being drawn through Curve shapes and is currently unsaved.
+  Current hand-input ledger: `tmp/coastal-artwork-ledger.md`. A sunset photo
+  was viewed separately, never imported; its source is in `artworks/REFERENCES.md`.
+- The other four required exercises have been visually inspected again and
+  retain their previous export/reopen evidence. Continue coastal painting,
+  actual exports/reopens, the input corrections, and logical commits.
+  Do not claim completion while that artwork exercise remains unfinished.
+
 ## Current September 9 checkpoint after session reset, around 02:25 EDT
 
 - The user's continuation followed termination of both private test desktops.
