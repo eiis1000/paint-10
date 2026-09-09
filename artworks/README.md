@@ -83,6 +83,11 @@ shapes. An initial shoreline pass that crossed the foreground pine was undone
 and redrawn on either side of the tree. This remains a stylized study; the
 photorealism exercise and refreshed raster exports are still in progress.
 
+The foliage pass gives the large pine two unequal branch masses and replaces
+the pale star-shaped plants with eight bent Curve shapes. Natural pencil
+outlines at five pixels provide their broken edges. These were painted in
+the installed Nix package and visually inspected on the actual canvas.
+
 ## Ant-colony simulation slide
 
 [Editable project](ant-colony-simulation.p10) ·
