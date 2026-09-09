@@ -1,106 +1,164 @@
 # Paint 10
 
-Paint 10 is a native Rust desktop drawing application built around the Windows 10 Paint ribbon and workflow. It targets Linux, Windows, and macOS using egui/eframe. Linux supports Wayland and X11 and uses GTK file dialogs.
+<img src="assets/paint-10.svg" width="96" height="96" align="right" alt="Paint 10 palette and brush icon">
 
-## Run
+A Rust drawing app inspired by Windows 10 Paint, with its familiar ribbon,
+brushes, shapes, selections, and shortcuts. Paint 10 adds editable text and image
+objects, arbitrary rotation, transparent canvases, pixel art tools, and a richer
+color editor. The desktop and WebAssembly builds share the same drawing engine
+and interface, built with egui/eframe.
 
-With Nix and flakes enabled, run from this directory:
+Paint 10 is an independent project. Linux and the browser have been exercised
+locally; Windows and macOS have build targets and CI jobs but remain unverified
+locally. See [platform status and limits](#platform-status-and-limits).
+
+## Get started
+
+Run these commands from a checkout of this repository.
+
+### Linux with Nix
+
+With Nix flakes enabled:
 
 ```sh
 nix run path:.
-```
-
-To open a picture at startup:
-
-```sh
+# Or open an existing picture or Paint 10 project:
 nix run path:. -- /path/to/picture.png
 ```
 
-The explicit `path:.` also works when the directory is not a Git checkout. `flake.lock` pins the development and packaging dependencies. The package includes the scanner and camera helper programs and installs a desktop launcher and icon. Building does not install or activate the launcher in your desktop profile.
+To build separately, use `nix build path:.` and then `./result/bin/paint-10`.
+The flake supports `x86_64-linux` and `aarch64-linux`, with dependencies pinned
+in `flake.lock`. Running the native app requires a graphical desktop and OpenGL.
+NixOS and Home Manager installation is covered [below](#install-in-nixos-or-home-manager).
+
+### In your browser
+
+On Linux, build and serve the static site with the pinned Nix environment:
 
 ```sh
-nix build path:.
-./result/bin/paint-10
+nix develop .#web -c bash scripts/build-web.sh
+nix develop .#web -c python3 -m http.server 8080 --bind 127.0.0.1 --directory target/web
 ```
 
-The flake provides packages and development shells for `x86_64-linux` and `aarch64-linux`. A graphical desktop session and working OpenGL driver are needed to run the application. Printing, wallpaper settings, and email drafts use your desktop's XDG portals; availability depends on the portal backend and installed applications.
+Open **http://127.0.0.1:8080/** while the server is running. Use a current desktop
+browser with WebGL. The site processes pictures on your device; it does not
+upload them to a server. `nix build .#paint-10-web` produces a packaged static site.
 
-To include it in a NixOS configuration, add this checkout or its Git location
-as a flake input named `paint10`, pass your inputs to the module, and use:
+To publish on GitHub Pages, follow the [deployment guide](web/README.md#publish-with-github-pages).
+The checked-in workflow deploys your default branch after Pages is configured
+to use **GitHub Actions**. The [browser guide](web/README.md) also covers building
+without Nix, font loading, downloads, and clipboard permissions.
 
-```nix
-{ inputs, pkgs, ... }:
-{
-  environment.systemPackages = [
-    inputs.paint10.packages.${pkgs.stdenv.hostPlatform.system}.paint-10
-  ];
-}
+### Linux, Windows, or macOS with Cargo
+
+Install Rust and your platform's native build dependencies:
+
+| Platform | Build prerequisites |
+| --- | --- |
+| Linux | C/C++ build tools, `pkg-config`, GTK 3, and X11/Wayland/OpenGL development libraries; see the [Ubuntu packages in CI](.github/workflows/build.yml) |
+| Windows | Visual Studio C++ build tools and the Rust MSVC toolchain |
+| macOS | Xcode Command Line Tools and Rust |
+
+```sh
+cargo build --locked --release
 ```
 
-Home Manager can put the same package in `home.packages`. The flake also
-exports `overlays.default` if you prefer to install it as `pkgs.paint-10`.
-Adding the package installs the application and launcher; it does not change
-desktop settings or configure scanners, cameras, or portal services.
+Run `target/release/paint-10` on Linux/macOS or `target/release/paint-10.exe` on
+Windows. Pass an image or `.p10` path to open it. These are the default output
+paths; `CARGO_TARGET_DIR` overrides `target/`.
 
-## Draw and edit
+For a distributable archive, run `python3 scripts/package-native.py` with Python
+3.12 or newer (`python` on Windows). It produces a ZIP on Windows or a tar.gz on
+Linux/macOS in the Cargo target directory. The macOS archive contains
+**Paint 10.app**. Linux archives require the corresponding system libraries
+at runtime.
 
-Use the Home ribbon for brushes, shapes, fill, eraser, text, selections, colors, and image transformations. Color 1 is the foreground; Color 2 is the background. Right-click a palette swatch to choose Color 2. The View ribbon controls zoom, rulers, gridlines, and picture view. Above 100% zoom, enable Thumbnail to navigate the picture through a floating preview.
+## Drawing and editing
 
-Shapes remain adjustable until applied; press Enter to apply a finished shape.
-The Fill menu also offers vertical, horizontal, and radial gradients from
-Color 1 to Color 2. A transparent Color 2 gives a soft edge for light and mist.
-These optional fills use V, H, and R keytips after opening Fill; the original
-Paint fill choices retain their numeric keytips.
+- **Paint tools:** Pencil, fill, eraser, eyedropper, magnifier, nine brushes, and
+  all 23 Paint shapes, including polygons and two-bend curves. Shapes have
+  adjustable drafts, textured outlines and fills, and optional linear/radial
+  gradients. Press Enter to apply a finished shape.
+- **Selections and images:** rectangle/free-form and transparent selections,
+  cut/copy/paste, crop, resize, skew, flips, and arbitrary-angle rotation.
+  Inserted images remain movable and resizable objects.
+- **Editable text:** mixed formatting, searchable font families, point sizes,
+  bold, italic, underline, strikeout, alignment, colored outlines, and transparent
+  or opaque backgrounds. Text supports shaped scripts, mixed writing directions,
+  and Unicode selection and deletion.
+- **Pixel art:** a 1-pixel Pencil, zoom up to 3200%, pixel grid, separate remembered
+  tool widths, nearest-neighbor scaling, and transparent backgrounds.
+- **Color tools:** Paint HSL, RGB, HSL, HSV, linear RGB, CMYK, OKLab, and OKLCH;
+  visual coordinate planes, alpha, CSS color entry, gamut fitting, 48 basic
+  colors, and 16 persistent custom colors.
+- **Precision and output:** rulers, DPI-aware properties, distance measurements,
+  a thumbnail navigator, image/project exports, page setup, tiled print preview,
+  and PDF generation.
 
-The title-bar dropdown customizes the Quick Access Toolbar and moves it below the ribbon. Its commands and placement persist. Alt+1, Alt+2, and subsequent numbers invoke the commands in their current order.
+The Home ribbon contains drawing and image tools; View contains navigation and
+measurement controls. Color 1 is the foreground and Color 2 is the background.
+Right-click a palette swatch to set Color 2. Ribbon groups collapse into menus
+at narrow widths. The title-bar dropdown customizes the Quick Access Toolbar.
 
-**Edit colors** opens with Paint's RGB fields and its original HSL coordinates
-(hue 0–239, saturation and luminosity 0–240). The Coordinates menu also offers
-RGB, HSL in degrees and percentages, HSV, linear RGB, CMYK, OKLab and OKLCH.
-Choose either the Paint spectrum or an HSV picker. Alpha has a numeric field,
-a checkerboard slider and a transparent preview; changing RGB preserves it.
+**Captions and memes:** choose Text and drag a box. Format selected words
+independently, or use a bold, centered caption with a contrasting outline over
+a photograph. Drag the box border to move it and its handles to reflow it.
+Ctrl+Enter finishes the box and keeps Text selected. Double-click a retained
+text object to edit it again. Native builds discover installed fonts; browser
+**Font list → Load font** imports TTF, OTF, and TTC files. Projects embed used
+fonts so captions remain editable elsewhere. The live preview and exported
+picture use the same text rendering.
 
-Color text accepts short or full hex, all 148 CSS color names, `rgb()`, `hsl()`,
-`oklab()`, `oklch()`, and `color(srgb …)` / `color(srgb-linear …)`. For example,
-`#66339980` sets half-transparent purple. The canvas uses 8-bit sRGB; an
-out-of-gamut color retains its authored perceptual coordinates and offers
-**Fit to sRGB**, which reduces chroma while preserving lightness and hue.
-CMYK is an unprofiled approximation for choosing colors, not an ICC print proof.
+**Pixel art:** use a 1-pixel Pencil, enable **View → Gridlines**, and zoom in.
+**Transparent Color 2** lets clear, erase, and fill remove opacity. Select
+**Keep hard pixel edges (pixel art)** in Resize for nearest-neighbor enlargement.
 
-The dialog has 48 basic colors and 16 persistent custom slots. Click a custom
-slot to recall it and select where **Add to custom colors** stores the next
-color. Home shows the ten most recently used custom colors. Cancel restores
-the original drawing color; explicitly added custom colors remain saved.
+**Measurements:** enable **View → Measure distance** and drag between pixel
+centers. Adjust either endpoint with the mouse or arrows (Shift: ten pixels).
+The readout shows distance, horizontal/vertical displacement, and angle;
+physical units use the image's DPI. Delete resets it, and Escape leaves the
+tool. Measurements never appear in saved pictures.
 
-At narrow widths, ribbon groups collapse into buttons that open their full controls. Alt or F10 displays keytips on the actual commands; type the displayed letters to activate them. Tab moves between groups, arrows navigate within a group, and Escape returns through open menus.
+**Color editing:** Space changes both the numeric fields and the visible
+color plane; Slice selects its fixed axis where applicable. Color text accepts
+hex, CSS names, `rgb()`, `hsl()`, `oklab()`, `oklch()`, and `color(srgb …)` /
+`color(srgb-linear …)`. For example, `#66339980` is half-transparent purple.
+RGB edits preserve alpha. The canvas is 8-bit sRGB; **Fit to sRGB** reduces
+out-of-gamut chroma while preserving lightness and hue. CMYK is an unprofiled
+selection approximation, not a print proof.
 
-Text and inserted images remain editable objects. Select an object to move or resize it; double-click a text object to edit its contents. While typing, drag the box border to move it or its handles to reflow the text. The text ribbon offers typed/searchable installed fonts, size, styles, the Paint palette, and an opaque or transparent background. Home clipboard commands act on selected characters while a text box is active. Rotation includes arbitrary angles as well as the familiar quarter turns and flips; object resizing and flips preserve editable text.
+## Saving your work
 
-For meme captions, the Text ribbon includes left/center/right alignment and adjustable text outlines. The editable preview uses the same text layout and pixels as the saved picture. A white bold caption with a black outline stays legible over a photograph.
+**Use `.p10` for work you want to keep editing.** Standard image formats save
+the visible pixels; reopening them gives a flattened picture.
 
-For pixel art, use the 1-pixel Pencil, enable Gridlines, and zoom up to 3200%. Pencil, brush, eraser, and shape widths are remembered separately. Resize's **Keep hard pixel edges (pixel art)** option uses nearest-neighbor scaling. **Transparent Color 2** lets you clear, erase, fill, or grow a transparent canvas; right-click with Fill to use Color 2. The checkerboard shows empty pixels. Fill and eraser operations that remove opacity from existing objects can merge their visible pixels into the raster; one Undo restores the pixels and editable objects.
+| Format | Best use and behavior |
+| --- | --- |
+| Paint 10 project (`.p10`) | Retains editable text, embedded fonts, image objects, transforms, and canvas pixels |
+| PNG | Lossless pictures and pixel art with full transparency |
+| JPEG (`.jpg`, `.jpeg`, `.jpe`) | Photographs; lossy, with transparency composited over white |
+| BMP (`.bmp`, `.dib`) | Monochrome, 16-color, 256-color, or 24-bit output; transparency composited over white |
+| GIF | Indexed color with a transparent palette entry |
+| TIFF | Raster pictures with full transparency |
+| WebP | Lossless raster pictures with full transparency |
+| ICO | Icon images with transparency |
+| PDF | Printable pages using Page Setup, generated through the print/PDF commands |
 
-For precise distances, enable **View → Measure distance** and drag between two
-pixel centers. Drag either endpoint to adjust it, or use arrow keys to move the
-active endpoint by one pixel (Shift: ten). The readout shows distance, horizontal
-and vertical displacement, and angle. Millimeters, centimeters and inches use
-the picture's horizontal and vertical DPI. Delete resets the measurement;
-Escape leaves Measure. The ruler is an overlay and does not alter saved pixels
-or undo history.
+**Save a copy** preserves the current filename and saved revision.
+**Save selection as** exports only the selected pixels or object. Page Setup
+provides paper presets and custom sizes, margins, orientation, centering,
+actual-size scaling, and fitting across multiple pages.
 
-Save as a **Paint 10 project (`.p10`)** to retain editable text, image objects, and their transforms. Saving PNG, JPEG, BMP, GIF, or TIFF exports the visible raster picture; reopening those formats gives a flattened image. Undo history is kept for the current session and is not stored in project files. Destructive raster operations, including lifting a raster selection or transforming the whole canvas, can merge editable objects; undo can restore the previous state while it remains in history.
+Undo history is limited to the current session and is not stored in `.p10`.
+Raster operations such as lifting a pixel selection, transforming the whole
+canvas, or erasing through objects can merge editable objects into pixels;
+Undo restores them while that operation remains in history.
 
-Projects embed the fonts used by their captions, so those captions remain
-editable on another computer or in the browser. Version 2 projects store each
-font once, even when many captions use it; older version 1 projects still open.
-Text editing supports mixed writing directions, shaped scripts, Unicode word
-selection, and deletion of complete characters including combining marks.
-
-The Save As format selector updates the filename extension and supports monochrome, 16-color, 256-color, and 24-bit BMP files, as well as PNG, JPEG, GIF, TIFF, WebP, icons, and editable projects. JPEG aliases such as `.jpe` and bitmap files named `.dib` are accepted. Indexed BMP export reduces the picture to the selected number of colors.
-
-Page Setup offers Letter, Legal, Tabloid, Executive, Statement, A0–A6, ISO B4/B5, photo and envelope presets, plus custom dimensions in millimeters. Orientation, individual margins, centering, actual-size scaling, and fitting across multiple pages apply to both print preview and PDF export. Actual size uses the image's DPI. Invalid dimensions or margins disable printing and export until corrected.
-
-The canvas is limited to 16 megapixels and 16,384 pixels on either axis. Undo history has a memory budget. Editable projects support up to 1,000 objects and 128 MB of object data; invalid or oversized saves preserve the existing destination. Large scanned pictures may need a lower capture resolution.
+**In the browser, Save downloads a file.** It cannot automatically replace the
+original or confirm that the download completed, so the picture stays marked
+as modified. Before New/Open, check the downloaded file and then choose
+**Don't save** in the pending prompt. Pictures are not automatically saved in
+browser storage. See [browser file handling](web/README.md#files-text-and-clipboard).
 
 ## Keyboard shortcuts
 
@@ -108,140 +166,37 @@ The canvas is limited to 16 megapixels and 16,384 pixels on either axis. Undo hi
 | --- | --- |
 | New / Open / Save | Ctrl+N / Ctrl+O / Ctrl+S |
 | Save as | F12 or Ctrl+Shift+S |
-| Undo / Redo | Ctrl+Z / Ctrl+Y |
+| Undo / Redo | Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z |
 | Cut / Copy / Paste | Ctrl+X / Ctrl+C / Ctrl+V |
-| Alternative Cut / Copy / Paste | Shift+Delete / Ctrl+Insert / Shift+Insert |
-| Paste from a file | Ctrl+Shift+V |
-| Select all | Ctrl+A |
-| Resize and skew | Ctrl+W |
-| Image properties | Ctrl+E |
-| Crop selection | Ctrl+Shift+X |
-| Invert colors / Clear picture | Ctrl+Shift+I / Ctrl+Shift+N |
+| Paste from a file / Select all | Ctrl+Shift+V / Ctrl+A |
+| Resize and skew / Image properties | Ctrl+W / Ctrl+E |
+| Crop / Invert colors / Clear picture | Ctrl+Shift+X / Ctrl+Shift+I / Ctrl+Shift+N |
 | Print | Ctrl+P |
 | Gridlines / Rulers | Ctrl+G / Ctrl+R |
-| Zoom | Ctrl+mouse wheel |
-| Zoom in / out | Ctrl+PageUp / Ctrl+PageDown |
+| Zoom | Ctrl+mouse wheel or Ctrl+PageUp / Ctrl+PageDown |
 | Increase / decrease tool size | Ctrl+Plus / Ctrl+Minus |
-| Cancel or deselect | Escape |
-| Picture view | F11 |
-| Ribbon command navigation | Alt or F10; Alt+F / H / V |
-| Selection context menu | Shift+F10 |
-| Cycle Home / View / contextual Text | Ctrl+Tab / Ctrl+Shift+Tab |
-| Focus canvas / ribbon | F6 |
-| Collapse the ribbon | Ctrl+F1 |
+| Bold / Italic / Underline in text | Ctrl+B / Ctrl+I / Ctrl+U |
+| Finish text / Apply shape | Ctrl+Enter / Enter |
+| Cancel or deselect / Picture view | Escape / F11 |
+| Show ribbon keytips / Context menu | Alt or F10 / Shift+F10 |
+| Cycle ribbon tabs / Focus canvas or ribbon | Ctrl+Tab / F6 |
+| Collapse ribbon / Quick Access command | Ctrl+F1 / Alt+1, Alt+2, … |
 
-In a text box, Ctrl+B, Ctrl+I and Ctrl+U format the selection; Ctrl+Z/Ctrl+Y undo and redo text edits. Ctrl+Enter commits the box. Home, View and Text remain available while editing. Dialogs support Enter to accept and Escape to cancel.
+On macOS, Command works for the corresponding document and text shortcuts.
+Cmd+W/Q closes through the unsaved-work prompt; use physical Ctrl+W for Resize.
+Browsers reserve some keys, such as Ctrl+N and Ctrl+PageUp/PageDown; use the
+equivalent ribbon command. With the canvas focused, Ctrl+R toggles rulers;
+F5 remains available to reload the page.
 
-On macOS, Command works for the corresponding document and text shortcuts, including clipboard, formatting, undo/redo, and zoom; physical Ctrl remains available. Cmd+W and Cmd+Q close through the unsaved-change prompt. Use physical Ctrl+W for Paint's Resize and skew command.
+## Install in NixOS or Home Manager
 
-## Devices and desktop integration
-
-Scanner import uses SANE's `scanimage`; camera capture uses FFmpeg's V4L2 input. The Nix environment supplies both. Device drivers, scanner configuration, and access permissions belong to your host system. Device discovery does not take a picture; capturing requires choosing a device and starting the operation.
-
-Wallpaper actions open the desktop portal with a preview. Email integration opens a draft with a PNG attachment for you to address and send. Paint 10 does not send mail itself. These integrations require supporting desktop services; hardware and portal behavior cannot be guaranteed solely by the Rust build.
-
-## Development and verification
-
-```sh
-nix develop path:. -c cargo run
-nix develop path:. -c cargo test
-nix develop path:. -c cargo fmt --check
-nix develop path:. -c cargo clippy --all-targets
-nix flake check path:.
-```
-
-The development shell supplies Rust, native libraries, GTK schemas, and the capture helpers without modifying your desktop settings. The packaged executable carries its runtime environment in a wrapper.
-
-The [verification log](TESTING.md) records source-specific native and browser
-checks, Nix package builds, and actual isolated mouse/keyboard workflows.
-Windows/macOS native execution remains unverified locally. Artwork acceptance
-and any remaining implementation work are tracked separately in
-[PROGRESS.md](PROGRESS.md).
-
-For manual testing on an isolated desktop:
-
-```sh
-nix develop path:.#test -c scripts/headless-desktop.sh
-```
-
-This starts Paint 10 on a private Xvfb display with its own D-Bus session, GTK settings, and temporary user directories. The script prints the display number and log directory. The test shell includes mouse/keyboard control and screenshot tools. To run an existing binary instead, pass its command after the script name.
-
-[FEATURES.md](FEATURES.md) tracks implementation coverage; [TESTING.md](TESTING.md) records actual automated and manual verification. [PARITY_AUDIT.md](PARITY_AUDIT.md) records corrected failures and remaining differences, including brush rendering and untested hardware integration. The aim is familiar Paint behavior with useful editing improvements. This project is an independent implementation and does not claim complete behavioral or visual equivalence with Microsoft Paint.
-
-The ordinary GUI pixel exercise verified an exact RGBA PNG copy, an exact 2× nearest-neighbor resize preserving all three colors and transparency, and an exact 18×18 WebP selection export. Reopening the PNG retained transparency. The final 500px package replay also verified the palette keytips and wrapped Edit colors label. The five artwork acceptance exercises form a separate verification pass.
-
-## Source layout
-
-`src/lib.rs` exposes the document model, raster tools, text rendering, project format, image codecs, metadata and printing. The native binary and browser library compile the same `src/app/` modules for gestures, selections, text editing, ribbon controls, dialogs, keyboard commands and file operations. `src/icons/` contains vector artwork without a dependency on symbol fonts. The small vendored egui-winit patch preserves image paste and Paint's modified clipboard shortcuts; its rationale and upstream licenses are included alongside the source.
-
-## Browser
-
-The same Rust application also compiles to WebAssembly and runs locally in a
-desktop browser with WebGL. Pictures are processed on your device; the browser
-target is a static site and does not upload images to a server.
-
-```sh
-nix develop path:.#web -c bash scripts/build-web.sh
-nix develop path:.#web -c python3 -m http.server 8080 --bind 127.0.0.1 --directory target/web
-```
-
-Open `http://127.0.0.1:8080/`. `nix build .#paint-10-web` produces the packaged
-static site. The [browser guide](web/README.md) also covers building without Nix.
-
-Open imports pictures and editable `.p10` projects. Save, Save as, Save a copy,
-and Save selection download files in the shared raster/project formats;
-Download PDF uses the shared page layout. Font list → Load font imports local
-TTF, OTF, and TTC files, and used fonts are embedded in saved projects. Opening
-a project makes its embedded font families available in the font list. Browser
-preferences preserve custom colors and Quick Access settings.
-
-Browsers cannot confirm that a download dialog finished, so downloading keeps
-the document marked as modified. Before New/Open, verify the downloaded file
-and then choose **Don't save** in the pending prompt. Reloading or closing a
-modified picture triggers the browser's unsaved-work warning. Clipboard access
-depends on browser permissions; standard paste events and explicit Paste from
-remain available. Native desktop integrations require the desktop application.
-
-## Windows, macOS, and portable exports
-
-The Rust application targets Linux, Windows, and macOS. Linux has been built and exercised locally; the Windows and macOS native builds are covered by the checked-in [build workflow](.github/workflows/build.yml), which must run on those systems before their results can be claimed. With a Rust toolchain and the platform's C/C++ build tools installed:
-
-```sh
-cargo build --locked --release
-cargo test --locked --all-targets
-```
-
-The executable is `target/release/paint-10` on Linux/macOS and `target/release/paint-10.exe` on Windows. Windows requires the Visual Studio C++ build tools; macOS requires Xcode Command Line Tools. On Linux outside Nix, install GTK 3 development files, `pkg-config`, and X11/Wayland/OpenGL development libraries. The workflow lists the Ubuntu packages used for its Linux build.
-
-Windows builds embed Paint 10's icon in the executable. To create a native
-archive after the release build, run `python3 scripts/package-native.py` with
-Python 3.12 or newer (`python` on Windows). It produces a ZIP on Windows or a
-tar.gz on Linux/macOS under `target/`. The macOS archive contains **Paint 10.app**
-with its application icon; Unix archives preserve executable permissions.
-The script checks the platform's icon resources and runs the extracted
-executable's file-dialog helper without opening a window. CI uses this same
-packaging path. Windows/macOS execution, signing and notarization remain
-unverified locally.
-
-The icon's source is [assets/paint-10.svg](assets/paint-10.svg).
-`nix develop .#test -c bash scripts/build-icons.sh` regenerates its PNG and ICO
-assets, shared by the native window, desktop launcher, macOS bundle and browser.
-
-Linux Save As uses GTK's native format selector. Windows and macOS first show all eleven formats, including each BMP color depth, then open the native destination dialog. This keeps BMP depth explicit even though the variants share `.bmp`. Preferences use `%APPDATA%` on Windows, `~/Library/Application Support` on macOS, and `~/.config` on Linux; an absolute `XDG_CONFIG_HOME` overrides those locations.
-
-File → **Save a copy…** writes another file while preserving the current filename and saved revision. **Save selection as…** exports only the selected pixels or object. Both offer the existing raster and project formats. PNG, TIFF, WebP, and icons preserve RGBA pixels; GIF supports a transparent palette entry; JPEG and BMP composite transparency over white. Opening transparent images retains their alpha. Saving a `.p10` copy retains the document's editable objects.
-
-Scanner/camera capture, wallpaper, and email attachment integration currently use Linux services. On Windows/macOS, those hardware/desktop integrations are unavailable; Print offers a printable PDF to save and print using a PDF application. Drawing, editing, image/project files, page layout, and PDF generation use the shared Rust implementation.
-
-## Use from a NixOS flake
-
-The flake exports `packages.<system>.paint-10` and an identical `default`, for `x86_64-linux` and `aarch64-linux`. Add this checkout or its repository as a flake input, then include the package in a NixOS module:
+Add Paint 10 as a flake input, replacing `OWNER/REPO` with the published
+repository. A minimal NixOS example, using your existing `configuration.nix`:
 
 ```nix
 {
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  inputs.paint10.url = "path:/path/to/paint";
-  # For a remote checkout, replace the path input with its actual Git URL.
+  inputs.paint10.url = "github:OWNER/REPO";
 
   outputs = inputs@{ nixpkgs, ... }: {
     nixosConfigurations.my-machine = nixpkgs.lib.nixosSystem {
@@ -259,4 +214,92 @@ The flake exports `packages.<system>.paint-10` and an identical `default`, for `
 }
 ```
 
-Alternatively, add `inputs.paint10.overlays.default` to `nixpkgs.overlays` and install `pkgs.paint-10`. The overlay builds against the consuming package set. The package includes runtime wrappers, a desktop entry, and the application icon; installing it does not activate any scanner, camera, or desktop operation. Use `nix build .#paint-10` to build the named package locally.
+For a local checkout, use `inputs.paint10.url = "path:/absolute/path/to/paint"`.
+For Home Manager, use the same package in `home.packages`; make `inputs`
+available through your flake's surrounding scope or `extraSpecialArgs`:
+
+```nix
+home.packages = [
+  inputs.paint10.packages.${pkgs.stdenv.hostPlatform.system}.paint-10
+];
+```
+
+The flake also exports `overlays.default` to provide `pkgs.paint-10` using your
+package set. Installation includes the runtime wrapper, desktop launcher, and
+icon. It does not configure scanners, cameras, or desktop portal services.
+
+## Development
+
+The Nix shells supply Rust, native libraries, and Linux capture helpers.
+The web shell additionally includes Node, Python, and WebAssembly build tools.
+
+```sh
+nix develop .#web -c cargo run
+nix develop .#web -c cargo test --locked --all-targets
+nix develop .#web -c cargo fmt --check
+nix develop .#web -c cargo clippy --locked --all-targets -- -D warnings
+nix develop .#web -c node web/browser-events.test.mjs
+nix flake check
+```
+
+To keep disposable build artifacts under `/tmp` on Linux:
+
+```sh
+export CARGO_TARGET_DIR=/tmp/paint-10-target
+nix develop .#web -c bash scripts/build-web.sh
+nix develop .#web -c python3 -m http.server 8080 --bind 127.0.0.1 --directory "$CARGO_TARGET_DIR/web"
+```
+
+Cargo, the web builder, and native packaging honor that directory. Keep source,
+projects, and anything that must survive a reboot elsewhere. Development builds
+retain line information for backtraces, omit dependency debug information, and
+disable incremental caches; variable-level debugging requires a debug profile
+override. Release builds use link-time optimization and stripped symbols.
+
+For manual testing on a private desktop:
+
+```sh
+nix develop .#test -c scripts/headless-desktop.sh
+```
+
+This creates an isolated Xvfb display, D-Bus session, and temporary user
+directories under `/tmp`, and prints its display number and log location.
+Pass a command after the script name to test an existing binary. GUI automation
+should use that private display and session.
+
+The [build workflow](.github/workflows/build.yml) runs native and browser checks
+and packages native archives. [TESTING.md](TESTING.md) records actual verification;
+[FEATURES.md](FEATURES.md) tracks coverage, and [PARITY_AUDIT.md](PARITY_AUDIT.md)
+records differences from Windows Paint. Shared engine code lives in `src/`, the
+GUI in `src/app/`, and the browser host in `web/`. Vector toolbar icons are in
+`src/icons/`; [assets/paint-10.svg](assets/paint-10.svg) is the application icon.
+Regenerate its native/browser assets with
+`nix develop .#test -c bash scripts/build-icons.sh`.
+
+## Platform status and limits
+
+- **Linux:** built and manually tested locally on x86_64. Wayland and X11 are
+  supported. The ARM Linux flake output evaluates but has not been built or run
+  locally.
+- **Windows and macOS:** native code and CI build/package jobs are present;
+  execution on those systems has not been verified locally. Signing and
+  notarization are not configured.
+- **Browser:** uses the shared Rust drawing, editing, project, and export code.
+  Clipboard access requires browser permission and HTTPS or localhost. Installed
+  system fonts cannot be enumerated; local font imports are available instead.
+- **Desktop integrations:** scanner/camera capture, email drafts, wallpaper, and
+  system printing use Linux helpers or portals. Physical devices and host portal
+  operations have not been exercised. Windows/macOS and browser printing generate
+  PDFs for a viewer. Paint 10 never sends email itself.
+- **Document limits:** 16 megapixels, at most 16,384 pixels on either axis,
+  bounded undo memory, and up to 1,000 project objects / 128 MB of object data.
+  Native windows require at least 500×400; smaller browser layouts need work.
+
+Brush rendering, fonts, native dialogs, and some keyboard presentation differ
+from Microsoft Paint. Complete behavioral or visual equivalence is not claimed.
+
+## License
+
+Paint 10 is [MIT licensed](LICENSE). Bundled fonts have their own
+[redistribution notices](assets/fonts/DejaVu-LICENSE.txt); the vendored
+[egui-winit patch](vendor/egui-winit/PAINT10-PATCH.md) retains its upstream licenses.
