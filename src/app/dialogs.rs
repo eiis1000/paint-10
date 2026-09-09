@@ -208,17 +208,6 @@ fn defer_modal_keyboard(ctx: &Context, events: &mut Vec<Event>) {
     }
 }
 
-#[derive(Clone)]
-struct ColorDialogState {
-    original: Color,
-    rgb: [u8; 3],
-    hsl: [u16; 3],
-}
-
-fn color_dialog_key() -> Id {
-    Id::new("paint10-color-dialog")
-}
-
 fn settle_dialog_geometry(ctx: &Context, response: &Response) {
     // An anchored egui window positions itself using its previous frame's size.
     // Repaint after content changes so its controls settle before the next click.
@@ -232,170 +221,6 @@ fn settle_dialog_geometry(ctx: &Context, response: &Response) {
     if previous != Some(size) {
         ctx.request_repaint();
     }
-}
-
-fn rgb_to_hsl(rgb: [u8; 3]) -> [u16; 3] {
-    let [red, green, blue] = rgb.map(|channel| f64::from(channel) / 255.0);
-    let maximum = red.max(green).max(blue);
-    let minimum = red.min(green).min(blue);
-    let difference = maximum - minimum;
-    let lightness = (maximum + minimum) / 2.0;
-    if difference == 0.0 {
-        return [160, 0, (lightness * 240.0).round() as u16];
-    }
-    let hue = if maximum == red {
-        ((green - blue) / difference).rem_euclid(6.0)
-    } else if maximum == green {
-        (blue - red) / difference + 2.0
-    } else {
-        (red - green) / difference + 4.0
-    };
-    let saturation = difference / (1.0 - (2.0 * lightness - 1.0).abs());
-    [
-        ((hue * 40.0).round() as u16) % 240,
-        (saturation * 240.0).round() as u16,
-        (lightness * 240.0).round() as u16,
-    ]
-}
-
-fn hsl_to_rgb([hue, saturation, lightness]: [u16; 3]) -> [u8; 3] {
-    let hue = f64::from(hue % 240) / 40.0;
-    let saturation = f64::from(saturation.min(240)) / 240.0;
-    let lightness = f64::from(lightness.min(240)) / 240.0;
-    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
-    let secondary = chroma * (1.0 - (hue % 2.0 - 1.0).abs());
-    let base = lightness - chroma / 2.0;
-    let channels = match hue as u8 {
-        0 => [chroma, secondary, 0.0],
-        1 => [secondary, chroma, 0.0],
-        2 => [0.0, chroma, secondary],
-        3 => [0.0, secondary, chroma],
-        4 => [secondary, 0.0, chroma],
-        _ => [chroma, 0.0, secondary],
-    };
-    channels.map(|channel| ((channel + base) * 255.0).round().clamp(0.0, 255.0) as u8)
-}
-
-fn color_spectrum(ui: &mut Ui, hsl: &mut [u16; 3]) -> bool {
-    let before = *hsl;
-    let (rect, response) = ui.allocate_exact_size(vec2(250.0, 166.0), Sense::click_and_drag());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, true, "Hue and saturation"));
-    if response.clicked() || response.dragged() {
-        if let Some(point) = response.interact_pointer_pos() {
-            hsl[0] =
-                (((point.x - rect.left()) / rect.width()).clamp(0.0, 1.0) * 239.0).round() as u16;
-            hsl[1] = ((1.0 - (point.y - rect.top()) / rect.height()).clamp(0.0, 1.0) * 240.0)
-                .round() as u16;
-        }
-    }
-    let mut mesh = egui::Mesh::default();
-    for row in 0..=8 {
-        for column in 0..=24 {
-            let rgb = hsl_to_rgb([column * 10, 240 - row * 30, 120]);
-            mesh.colored_vertex(
-                rect.min
-                    + vec2(
-                        column as f32 / 24.0 * rect.width(),
-                        row as f32 / 8.0 * rect.height(),
-                    ),
-                Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
-            );
-            if row < 8 && column < 24 {
-                let index = u32::from(row * 25 + column);
-                mesh.add_triangle(index, index + 1, index + 25);
-                mesh.add_triangle(index + 1, index + 26, index + 25);
-            }
-        }
-    }
-    ui.painter().add(mesh);
-    ui.painter().rect_stroke(
-        rect,
-        0.0,
-        Stroke::new(1.0_f32, Color32::from_gray(140)),
-        StrokeKind::Inside,
-    );
-    let position = rect.min
-        + vec2(
-            hsl[0] as f32 / 239.0 * rect.width(),
-            (1.0 - hsl[1] as f32 / 240.0) * rect.height(),
-        );
-    let painter = ui.painter().with_clip_rect(rect);
-    painter.circle_stroke(position, 5.0, Stroke::new(3.0_f32, Color32::WHITE));
-    painter.circle_stroke(position, 5.0, Stroke::new(1.0_f32, Color32::BLACK));
-    response.on_hover_text(
-        "Choose hue and saturation. The numeric fields provide exact keyboard entry.",
-    );
-    before != *hsl
-}
-
-fn luminosity_strip(ui: &mut Ui, hsl: &mut [u16; 3]) -> bool {
-    let before = *hsl;
-    let (rect, response) = ui.allocate_exact_size(vec2(20.0, 166.0), Sense::click_and_drag());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, true, "Luminosity"));
-    if response.clicked() || response.dragged() {
-        if let Some(point) = response.interact_pointer_pos() {
-            hsl[2] = ((1.0 - (point.y - rect.top()) / rect.height()).clamp(0.0, 1.0) * 240.0)
-                .round() as u16;
-        }
-    }
-    for row in 0..166 {
-        let rgb = hsl_to_rgb([
-            hsl[0],
-            hsl[1],
-            240 - (row as f32 / 165.0 * 240.0).round() as u16,
-        ]);
-        ui.painter().rect_filled(
-            Rect::from_min_size(rect.min + vec2(0.0, row as f32), vec2(rect.width(), 1.0)),
-            0.0,
-            Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
-        );
-    }
-    let y = rect.top() + (1.0 - hsl[2] as f32 / 240.0) * rect.height();
-    let marker = Rect::from_center_size(pos2(rect.center().x, y), vec2(24.0, 4.0));
-    ui.painter().rect_stroke(
-        marker,
-        0.0,
-        Stroke::new(2.0_f32, Color32::WHITE),
-        StrokeKind::Middle,
-    );
-    ui.painter().rect_stroke(
-        marker,
-        0.0,
-        Stroke::new(1.0_f32, Color32::BLACK),
-        StrokeKind::Middle,
-    );
-    response.on_hover_text("Adjust luminosity from black to white.");
-    before != *hsl
-}
-
-fn color_swatch(ui: &mut Ui, color: Color, size: Vec2, label: &str) -> Response {
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    register_button(ui, &response);
-    canvas::checkerboard(ui.painter(), rect, 5.0);
-    ui.painter().rect_filled(
-        rect.shrink(1.0),
-        0.0,
-        Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]),
-    );
-    ui.painter().rect_stroke(
-        rect,
-        0.0,
-        Stroke::new(
-            if response.hovered() || response.has_focus() {
-                2.0_f32
-            } else {
-                1.0_f32
-            },
-            if response.hovered() || response.has_focus() {
-                BLUE
-            } else {
-                Color32::from_gray(140)
-            },
-        ),
-        StrokeKind::Inside,
-    );
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
-    response.on_hover_text(label)
 }
 
 fn prepare_modal(ctx: &Context, kind: &str) -> bool {
@@ -494,7 +319,7 @@ fn take_initial_focus(ui: &Ui) -> bool {
     })
 }
 
-fn register_button(ui: &Ui, response: &Response) {
+pub(in crate::app) fn register_button(ui: &Ui, response: &Response) {
     ui.ctx().data_mut(|data| {
         data.get_temp_mut_or_default::<ModalKeys>(modal_key())
             .buttons
@@ -698,11 +523,7 @@ impl PaintApp {
         if let Some(kind) = kind {
             if prepare_modal(ctx, kind) {
                 if self.dialog == Some(Dialog::Colors) {
-                    if let Some(state) =
-                        ctx.data(|data| data.get_temp::<ColorDialogState>(color_dialog_key()))
-                    {
-                        self.colors[self.active_color] = state.original;
-                    }
+                    color_editor::restore(self, ctx);
                 }
                 if self.dialog == Some(Dialog::Import) {
                     self.job_cancel
@@ -714,7 +535,7 @@ impl PaintApp {
                 self.dialog_error = None;
                 ctx.data_mut(|data| data.remove::<Vec<Event>>(pending_modal_input_key()));
                 ctx.data_mut(|data| data.remove::<ModalKeys>(modal_key()));
-                ctx.data_mut(|data| data.remove::<ColorDialogState>(color_dialog_key()));
+                color_editor::clear(ctx);
                 return;
             }
         } else {
@@ -787,8 +608,10 @@ impl PaintApp {
                     }) {
                         self.dialog_error = Some("Enter a valid, finite number.".into());
                     }
-                    if let Some(error) = &self.dialog_error {
-                        ui.colored_label(Color32::RED, error);
+                    if dialog != Dialog::Colors {
+                        if let Some(error) = &self.dialog_error {
+                            ui.colored_label(Color32::RED, error);
+                        }
                     }
                 });
             if let Some(shown) = shown {
@@ -801,11 +624,7 @@ impl PaintApp {
                         .store(true, std::sync::atomic::Ordering::Relaxed);
                 }
                 if !open && dialog == Dialog::Colors {
-                    if let Some(state) =
-                        ctx.data(|data| data.get_temp::<ColorDialogState>(color_dialog_key()))
-                    {
-                        self.colors[self.active_color] = state.original;
-                    }
+                    color_editor::restore(self, ctx);
                 }
                 self.dialog = None;
                 self.dialog_error = None;
@@ -814,7 +633,7 @@ impl PaintApp {
         if self.pending.is_none() && self.dialog.is_none() {
             self.dialog_error = None;
             ctx.data_mut(|data| data.remove::<ModalKeys>(modal_key()));
-            ctx.data_mut(|data| data.remove::<ColorDialogState>(color_dialog_key()));
+            color_editor::clear(ctx);
         }
     }
 
@@ -950,200 +769,6 @@ impl PaintApp {
                 close = true;
             }
         });
-
-        close
-    }
-
-    fn colors_dialog(&mut self, ui: &mut Ui) -> bool {
-        let mut close = false;
-
-        let c = self.colors[self.active_color];
-        let mut rgb = [c[0], c[1], c[2]];
-        let mut state = ui
-            .ctx()
-            .data(|data| data.get_temp::<ColorDialogState>(color_dialog_key()))
-            .unwrap_or_else(|| ColorDialogState {
-                original: c,
-                rgb,
-                hsl: rgb_to_hsl(rgb),
-            });
-        ui.set_width(430.0);
-        ui.horizontal_top(|ui| {
-            let spectrum_changed = color_spectrum(ui, &mut state.hsl);
-            let luminosity_changed = luminosity_strip(ui, &mut state.hsl);
-            if spectrum_changed || luminosity_changed {
-                rgb = hsl_to_rgb(state.hsl);
-            }
-            ui.add_space(4.0);
-            Grid::new("paint_color_channels")
-                .num_columns(2)
-                .spacing(vec2(8.0, 6.0))
-                .show(ui, |ui| {
-                    for (index, label) in ["Red", "Green", "Blue"].into_iter().enumerate() {
-                        ui.label(label);
-                        let previous_rgb = rgb;
-                        let response = numeric_input(ui, DragValue::new(&mut rgb[index]));
-                        if index == 0 {
-                            initial_focus(ui, &response);
-                        }
-                        if previous_rgb != rgb {
-                            state.hsl = rgb_to_hsl(rgb);
-                        }
-                        ui.end_row();
-                    }
-                    for (index, label, maximum) in [
-                        (0, "Hue", 239),
-                        (1, "Saturation", 240),
-                        (2, "Luminosity", 240),
-                    ] {
-                        ui.label(label);
-                        let previous_hsl = state.hsl;
-                        numeric_input(ui, DragValue::new(&mut state.hsl[index]).range(0..=maximum));
-                        if previous_hsl != state.hsl {
-                            rgb = hsl_to_rgb(state.hsl);
-                        }
-                        ui.end_row();
-                    }
-                });
-        });
-        ui.add_space(8.0);
-        ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
-                ui.label("Basic colors");
-                Grid::new("dialog_basic_colors")
-                    .num_columns(10)
-                    .min_col_width(19.0)
-                    .spacing(vec2(4.0, 4.0))
-                    .show(ui, |ui| {
-                        for (index, color) in ribbon::PALETTE.into_iter().enumerate() {
-                            if color_swatch(
-                                ui,
-                                [color[0], color[1], color[2], 255],
-                                vec2(19.0, 19.0),
-                                ribbon::PALETTE_NAMES[index],
-                            )
-                            .clicked()
-                            {
-                                rgb = color;
-                                state.hsl = rgb_to_hsl(rgb);
-                            }
-                            if index % 10 == 9 {
-                                ui.end_row();
-                            }
-                        }
-                    });
-                ui.label("Custom colors");
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    for index in 0..10 {
-                        let saved = self.custom_colors.get(index).copied();
-                        let label = saved.map_or_else(
-                            || format!("Empty custom color {}", index + 1),
-                            |[r, g, b, _]| {
-                                format!("Custom color {}: #{r:02X}{g:02X}{b:02X}", index + 1)
-                            },
-                        );
-                        if color_swatch(
-                            ui,
-                            saved.unwrap_or([255, 255, 255, 255]),
-                            vec2(19.0, 19.0),
-                            &label,
-                        )
-                        .clicked()
-                        {
-                            if let Some(color) = saved {
-                                rgb = [color[0], color[1], color[2]];
-                                state.hsl = rgb_to_hsl(rgb);
-                            }
-                        }
-                    }
-                });
-            });
-            ui.add_space(12.0);
-            ui.vertical(|ui| {
-                ui.label("Current");
-                if color_swatch(
-                    ui,
-                    state.original,
-                    vec2(68.0, 40.0),
-                    "Restore the original color",
-                )
-                .clicked()
-                {
-                    rgb = [state.original[0], state.original[1], state.original[2]];
-                    state.hsl = rgb_to_hsl(rgb);
-                }
-            });
-            ui.vertical(|ui| {
-                ui.label("New");
-                color_swatch(
-                    ui,
-                    [rgb[0], rgb[1], rgb[2], 255],
-                    vec2(68.0, 40.0),
-                    "New color",
-                );
-            });
-        });
-        if rgb != [c[0], c[1], c[2]] {
-            self.colors[self.active_color] = [rgb[0], rgb[1], rgb[2], 255];
-            self.hex = format!("{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2]);
-        }
-        ui.horizontal(|ui| {
-            ui.label("Hex #");
-            if ui.text_edit_singleline(&mut self.hex).changed() {
-                if let Ok(v) = u32::from_str_radix(self.hex.trim_start_matches('#'), 16) {
-                    if self.hex.trim_start_matches('#').len() == 6 {
-                        self.colors[self.active_color] =
-                            [(v >> 16) as u8, (v >> 8) as u8, v as u8, 255];
-                        rgb = [(v >> 16) as u8, (v >> 8) as u8, v as u8];
-                        state.hsl = rgb_to_hsl(rgb);
-                    }
-                }
-            }
-        });
-        state.rgb = rgb;
-        ui.ctx()
-            .data_mut(|data| data.insert_temp(color_dialog_key(), state.clone()));
-        let hex = self.hex.trim_start_matches('#');
-        let valid_hex = hex.len() == 6 && u32::from_str_radix(hex, 16).is_ok();
-        if !valid_hex {
-            ui.colored_label(
-                Color32::RED,
-                "Enter six hexadecimal digits, such as 00A2E8.",
-            );
-        }
-        let add = ui.add_enabled(valid_hex, Button::new("Add to custom colors"));
-        register_button(ui, &add);
-        if add.clicked() {
-            if self.custom_colors.len() == 10 {
-                self.custom_colors.remove(0);
-            }
-            self.custom_colors.push(self.colors[self.active_color]);
-            if let Err(error) = crate::preferences::save_custom_colors(&self.custom_colors) {
-                self.dialog_error = Some(format!("Could not save custom colors: {error}"));
-            }
-        }
-        ui.add_space(6.0);
-        ui.allocate_ui_with_layout(
-            vec2(ui.available_width(), 28.0),
-            Layout::right_to_left(Align::Center),
-            |ui| {
-                ui.spacing_mut().interact_size = vec2(76.0, 28.0);
-                if dialog_button(ui, "Cancel") {
-                    self.colors[self.active_color] = state.original;
-                    close = true;
-                }
-                if default_button(ui, "OK", valid_hex) {
-                    close = true;
-                }
-            },
-        );
-
-        if self.colors[self.active_color] != c {
-            // Palette and Hex edits occur after the RGB/HSL controls are drawn.
-            // Repaint once so every preview and channel reflects the new color.
-            ui.ctx().request_repaint();
-        }
 
         close
     }
@@ -1500,43 +1125,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paint_hls_matches_primary_colors_and_gray() {
-        for (rgb, hsl) in [
-            ([255, 0, 0], [0, 240, 120]),
-            ([255, 255, 0], [40, 240, 120]),
-            ([0, 255, 0], [80, 240, 120]),
-            ([0, 255, 255], [120, 240, 120]),
-            ([0, 0, 255], [160, 240, 120]),
-            ([255, 0, 255], [200, 240, 120]),
-            ([0, 0, 0], [160, 0, 0]),
-            ([255, 255, 255], [160, 0, 240]),
-        ] {
-            assert_eq!(rgb_to_hsl(rgb), hsl);
-            assert_eq!(hsl_to_rgb(hsl), rgb);
-        }
-        for hue in 0..240 {
-            assert_eq!(hsl_to_rgb([hue, 0, 120]), [128, 128, 128]);
-        }
-    }
-
-    #[test]
-    fn paint_hls_round_trip_stays_within_integer_quantization() {
-        for red in (0..=255).step_by(17) {
-            for green in (0..=255).step_by(17) {
-                for blue in (0..=255).step_by(17) {
-                    let rgb = [red, green, blue];
-                    let hsl = rgb_to_hsl(rgb);
-                    assert!(hsl[0] < 240 && hsl[1] <= 240 && hsl[2] <= 240);
-                    let restored = hsl_to_rgb(hsl);
-                    for (original, restored) in rgb.into_iter().zip(restored) {
-                        assert!(original.abs_diff(restored) <= 4, "{rgb:?} -> {hsl:?}");
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
     fn color_dialog_fits_500_pixels_and_cancel_restores_the_original_rgba() {
         let ctx = Context::default();
         ctx.enable_accesskit();
@@ -1627,7 +1215,7 @@ mod tests {
             }],
         );
         assert_ne!(app.colors[0], original);
-        assert_eq!(app.colors[0][3], 255);
+        assert_eq!(app.colors[0][3], 128);
         frame(
             &mut app,
             vec![Event::Key {
@@ -1752,42 +1340,37 @@ mod tests {
         );
         assert_eq!(app.colors, [[0x15, 0x3e, 0x3b, 255], WHITE]);
         assert_eq!(app.hex, "FFFFFF");
-        let mut channels: Vec<_> = reopened
+        let nodes = &reopened
             .platform_output
             .accesskit_update
             .as_ref()
             .unwrap()
-            .nodes
-            .iter()
-            .filter(|(_, node)| node.role() == egui::accesskit::Role::SpinButton)
-            .map(|(_, node)| node)
-            .collect();
-        channels.sort_by(|left, right| {
-            left.bounds()
-                .unwrap()
-                .y0
-                .total_cmp(&right.bounds().unwrap().y0)
-        });
-        let channels: Vec<_> = channels
-            .into_iter()
-            .map(|node| {
-                (
-                    node.value().unwrap_or_default(),
-                    node.numeric_value().unwrap(),
-                )
-            })
-            .collect();
-        assert_eq!(
-            channels,
-            vec![
-                ("255", 255.0),
-                ("255", 255.0),
-                ("255", 255.0),
-                ("160", 160.0),
-                ("0", 0.0),
-                ("240", 240.0)
-            ]
-        );
+            .nodes;
+        for (label, expected) in [
+            ("Red", 255.0),
+            ("Green", 255.0),
+            ("Blue", 255.0),
+            ("Hue", 160.0),
+            ("Saturation", 0.0),
+            ("Luminosity", 240.0),
+            ("Alpha", 255.0),
+        ] {
+            let label_ids: Vec<_> = nodes
+                .iter()
+                .filter(|(_, node)| node.label() == Some(label) || node.value() == Some(label))
+                .map(|(id, _)| *id)
+                .collect();
+            let node = nodes
+                .iter()
+                .find(|(_, node)| node.labelled_by().iter().any(|id| label_ids.contains(id)))
+                .unwrap_or_else(|| panic!("Missing numeric field {label}"));
+            assert_eq!(node.1.numeric_value(), Some(expected), "{label}");
+            assert_eq!(
+                node.1.value().unwrap().parse::<f64>().unwrap(),
+                expected,
+                "{label} draft"
+            );
+        }
         frame(&mut app, vec![Event::Text("128".into())]);
         frame(&mut app, vec![]);
         assert_eq!(app.colors, [[0x15, 0x3e, 0x3b, 255], [128, 255, 255, 255]]);
@@ -1813,12 +1396,12 @@ mod tests {
         let mut app = PaintApp::new_with_context(&ctx, false);
         app.dialog = Some(Dialog::Colors);
 
+        let mut previous = None;
         for error in [
             None,
             Some("Choose a color.\nChoose a color.\nChoose a color."),
         ] {
             app.dialog_error = error.map(str::to_owned);
-            let mut previous = None;
             let mut settled = false;
             for _ in 0..12 {
                 let mut input = RawInput {

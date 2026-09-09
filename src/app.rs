@@ -1,5 +1,6 @@
 mod canvas;
 mod chrome;
+mod color_editor;
 mod commands;
 mod dialogs;
 mod file_menu;
@@ -169,6 +170,8 @@ pub struct PaintApp {
     colors: [Color; 2],
     active_color: usize,
     custom_colors: Vec<Color>,
+    recent_custom_colors: Vec<Color>,
+    persist_preferences: bool,
     outline: PaintStyle,
     fill: PaintStyle,
     fill_gradient: Option<Gradient>,
@@ -261,6 +264,14 @@ impl PaintApp {
         }
         let font_names = text_editing::font_families(&font_db);
         let rendered = doc.image.clone();
+        let (custom_colors, recent_custom_colors) = if load_environment {
+            crate::preferences::custom_palette()
+        } else {
+            (
+                vec![WHITE; crate::preferences::CUSTOM_COLOR_COUNT],
+                Vec::new(),
+            )
+        };
         let mut app = Self {
             doc,
             rendered,
@@ -272,11 +283,9 @@ impl PaintApp {
             tool_sizes: [3, 1, 8, 3],
             colors: [BLACK, WHITE],
             active_color: 0,
-            custom_colors: if load_environment {
-                crate::preferences::custom_colors()
-            } else {
-                Vec::new()
-            },
+            custom_colors,
+            recent_custom_colors,
+            persist_preferences: load_environment,
             outline: PaintStyle::Solid,
             fill: PaintStyle::None,
             fill_gradient: None,
