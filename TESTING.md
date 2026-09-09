@@ -1,5 +1,27 @@
 # Paint 10 verification log
 
+## September 9: Rust 1.98 Clippy compatibility
+
+CI's `stable` toolchain reported `chunks_exact_to_as_chunks`, which the pinned
+Nix Rust 1.97.1 had not reported. All six constant-size chunk operations now
+use `as_chunks` / `as_chunks_mut`: display RGBA conversion, polygon intersection
+pairs, TIFF directory entries, PDF RGB rows, indexed palettes and the font-table
+test fixture. Complete groups and ignored remainders retain their previous
+semantics; array copies replace the redundant per-slice conversions.
+
+Strict native `cargo clippy --locked --all-targets -- -D warnings` passes on
+both Rust 1.97.1 and Rust 1.98.1 (Clippy 0.1.98). The latter also passes strict
+WASM Clippy with `--lib --target wasm32-unknown-unknown`. Formatting and all
+393 native tests pass (151 library, 242 app), including the existing pixel,
+polygon, malformed TIFF, PDF alpha, indexed export and font fallback checks.
+
+Rust 1.98.1 was downloaded from the official distribution with manifest SHA-256
+verification and installed only under `/tmp`. Its application test executable
+needed the GTK/GLib runtime paths from `pkg-config` on NixOS; after supplying
+those paths, all 242 app tests ran successfully. The system toolchain and Nix
+lock were unchanged. Temporary compiler installations and build caches were
+removed afterward; small verification logs remain disposable `/tmp` files.
+
 ## September 9: smaller builds, temporary outputs and GitHub Pages
 
 Build configuration and script changes are in `3775daa`, Pages in `5c2bfd1`,

@@ -1,5 +1,16 @@
 # Paint 10 work in progress
 
+## September 9: reported CI Clippy failure corrected
+
+- CI now uses Rust 1.98; the Nix lock still provides 1.97.1. Updated all six
+  constant-sized chunk loops to the array chunk API required by the new lint.
+- Strict native Clippy passes with 1.97.1 and 1.98.1; strict WASM Clippy passes
+  with 1.98.1. Formatting and all 393 native tests pass. Details are at the top
+  of TESTING.md. Temporary downloaded tools and compiler caches were removed.
+- The user has configured `origin` as `git@github.com:eiis1000/paint-10.git`.
+  This fix is committed locally; no push or workflow dispatch was performed.
+  Previous cleanup, build-size and Pages setup checkpoints remain below.
+
 ## September 9: cleanup, build size and publishing setup verified
 
 - User requested cleanup first, then smaller binaries, GitHub Pages setup and

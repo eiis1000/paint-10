@@ -1228,7 +1228,7 @@ pub fn styled_polygon(
                 }
             }
             intersections.sort_by(f64::total_cmp);
-            for pair in intersections.chunks_exact(2) {
+            for pair in intersections.as_chunks::<2>().0 {
                 for x in (pair[0].ceil() as i32).max(0)
                     ..=(pair[1].floor() as i32).min(img.width() as i32 - 1)
                 {

@@ -336,10 +336,7 @@ fn tiff_directory(bytes: &[u8]) -> Option<TiffDirectory> {
     let offset = endian.u32(bytes, 4)? as usize;
     let count = endian.u16(bytes, offset)? as usize;
     let table = bytes.get(offset.checked_add(2)?..offset.checked_add(2 + count * 12)?)?;
-    let entries = table
-        .chunks_exact(12)
-        .map(|entry| entry.try_into().unwrap())
-        .collect();
+    let entries = table.as_chunks::<12>().0.to_vec();
     Some(TiffDirectory {
         endian,
         entries,

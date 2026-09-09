@@ -38,10 +38,7 @@ pub fn image(size: [usize; 2], rgba: &[u8]) -> ColorImage {
     );
     ColorImage {
         size,
-        pixels: rgba
-            .chunks_exact(4)
-            .map(|pixel| color([pixel[0], pixel[1], pixel[2], pixel[3]]))
-            .collect(),
+        pixels: rgba.as_chunks::<4>().0.iter().copied().map(color).collect(),
     }
 }
 

@@ -308,7 +308,7 @@ pub fn pdf(img: &RgbaImage, settings: &PageSettings) -> Result<Vec<u8>, String> 
     let mut rgb = ZlibEncoder::new(Vec::new(), Compression::default());
     let mut row = vec![0; img.width() as usize * 3];
     for pixels in img.rows() {
-        for (pixel, output) in pixels.zip(row.chunks_exact_mut(3)) {
+        for (pixel, output) in pixels.zip(row.as_chunks_mut::<3>().0) {
             let alpha = u32::from(pixel[3]);
             for (value, result) in pixel.0[..3].iter().zip(output) {
                 *result = ((u32::from(*value) * alpha + 255 * (255 - alpha) + 127) / 255) as u8;
