@@ -13,6 +13,7 @@ The target is Windows 10's ribbon-based Paint. A checked feature means implement
 - [x] Selection resize handles and invert selection
 - [x] New/open/save/save-as, common raster formats, unsaved changes guard, file drop
 - [x] Editable project format and persistent recent files/custom colors
+- [x] Paint HSL, RGB, HSL, HSV, linear RGB, approximate CMYK, OKLab and OKLCH color coordinates; alpha, CSS literals, gamut fitting, 48 basic colors and 16 custom slots
 - [x] Resize in pixels/percent, aspect ratio, skew, canvas resize handles
 - [x] Rotate 90/180/270, flips, arbitrary-angle rotation
 - [x] Text/image objects remain selectable and movable during editing
@@ -29,6 +30,7 @@ The target is Windows 10's ribbon-based Paint. A checked feature means implement
 - [x] Scanner/camera import, email drafts and desktop background integration where supported
 - [x] Context menus, keyboard command navigation and Paint keyboard shortcuts
 - [x] Crisp vector icons, brush previews, keyboard focus and accessible control labels
+- [x] Shared palette-and-brush application icon, Windows executable resources, macOS application bundle, browser favicons and archived native builds
 - [x] Repeated isolated manual passes, Rust regressions and Nix package verification
 
 Implementation notes: native and browser targets share the Rust eframe/egui application. Standard raster saves flatten objects; `.p10` preserves them. Text spans can be formatted independently, and shapes remain adjustable until committed. Image transparency keys preserve the original pixels. History and image inputs have memory limits. Browser downloads preserve the unsaved-work guard because completion cannot be confirmed; browser permissions govern clipboard access and file selection. See [web/README.md](web/README.md) for browser-specific workflows and limits.
