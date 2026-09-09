@@ -15,7 +15,13 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn read_image(path: &std::path::Path) -> Result<RgbaImage, String> {
-        crate::raster_io::decode(path)
+        if crate::raster_io::detect_format(path) == Some(RasterFormat::Project) {
+            // Paste from and file drop insert a project's visible picture.
+            // Open retains its editable objects through the document loader.
+            crate::project::load(path).map(|document| document.composite())
+        } else {
+            crate::raster_io::decode(path)
+        }
     }
 
     fn remember_file(&mut self, path: &std::path::Path) {
@@ -231,6 +237,95 @@ fn read_document(path: &std::path::Path, format: Option<RasterFormat>) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn importing_a_project_inserts_its_composite_as_one_movable_undoable_picture() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source.p10");
+        let mut source = Document::new(80, 60);
+        let mut picture = Object::new(
+            ObjectKind::Image(RgbaImage::from_pixel(12, 8, Rgba([30, 90, 160, 128]))),
+            (5, 6),
+        );
+        picture.angle = 90.0;
+        source.add_object(picture);
+        source.add_object(Object::new(
+            ObjectKind::Text {
+                text: "Caption".into(),
+                format: crate::text::TextFormat {
+                    width: 70,
+                    ..Default::default()
+                },
+            },
+            (2, 24),
+        ));
+        let expected = source.composite();
+        let source_bytes = crate::project::encode(&source).unwrap();
+        std::fs::write(&path, &source_bytes).unwrap();
+
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.doc = Document::new(100, 80);
+        let original = app.doc.composite();
+        let working_file = directory.path().join("working.p10");
+        app.file = Some(working_file.clone());
+        app.doc.mark_saved();
+
+        // Both native Paste from and native file drop use this import path.
+        let imported = PaintApp::read_image(&path).unwrap();
+        assert_eq!(imported, expected);
+        app.insert_image(imported);
+        assert_eq!(app.file, Some(working_file));
+        let selected = app.object.expect("the imported picture is selected");
+        assert_eq!(app.doc.objects[selected].render(), expected);
+        assert!(matches!(
+            app.doc.objects[selected].kind,
+            ObjectKind::Image(_)
+        ));
+        assert_eq!(
+            app.doc
+                .objects
+                .iter()
+                .filter(|object| !matches!(object.kind, ObjectKind::Raster(_)))
+                .count(),
+            1,
+            "the original raster backdrop is separate from the inserted picture"
+        );
+        assert!(app.doc.dirty());
+
+        app.action(Action::Undo, &ctx);
+        assert_eq!(app.doc.composite(), original);
+        assert!(app.doc.objects.is_empty());
+        assert!(!app.doc.dirty());
+        assert_eq!(std::fs::read(&path).unwrap(), source_bytes);
+    }
+
+    #[test]
+    fn image_import_detects_project_contents_and_preserves_raster_alpha() {
+        let directory = tempfile::tempdir().unwrap();
+        let image = RgbaImage::from_fn(8, 5, |x, y| {
+            Rgba([x as u8 * 30, y as u8 * 50, 17, (x * 31) as u8])
+        });
+        let project = directory.path().join("project-without-extension");
+        std::fs::write(
+            &project,
+            crate::project::encode(&Document::from_image(image.clone())).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(PaintApp::read_image(&project).unwrap(), image);
+
+        let raster = directory.path().join("sprite.png");
+        std::fs::write(
+            &raster,
+            crate::raster_io::encode(&image, RasterFormat::Png).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(PaintApp::read_image(&raster).unwrap(), image);
+
+        let invalid = directory.path().join("broken.p10");
+        std::fs::write(&invalid, b"PAINT10\0incomplete project").unwrap();
+        assert!(PaintApp::read_image(&invalid).is_err());
+    }
 
     #[test]
     fn explicit_save_as_formats_reach_the_chooser_without_changing_the_open_file() {
