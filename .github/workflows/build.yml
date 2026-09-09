@@ -16,13 +16,13 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact: paint-10-linux
-            binary: target/release/paint-10
+            package: target/paint-10-linux.tar.gz
           - os: windows-latest
             artifact: paint-10-windows
-            binary: target/release/paint-10.exe
+            package: target/paint-10-windows.zip
           - os: macos-latest
             artifact: paint-10-macos
-            binary: target/release/paint-10
+            package: target/paint-10-macos.tar.gz
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +30,11 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test native package structure and icon assets
+        run: python -m unittest discover -s scripts/tests -v
       - name: Install Linux development libraries
         if: runner.os == 'Linux'
         run: |
@@ -41,10 +46,14 @@ jobs:
       - name: Test native clipboard shortcut patch
         run: cargo test --locked -p egui-winit --lib paint10_clipboard_tests
       - run: cargo build --locked --release
+      - name: Package and verify native release
+        # Checks every Windows PE icon image, macOS plist/ICNS, and startup of
+        # the extracted executable. Archives retain Unix executable permissions.
+        run: python scripts/package-native.py
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.binary }}
+          path: ${{ matrix.package }}
           if-no-files-found: error
 
   nix-package:

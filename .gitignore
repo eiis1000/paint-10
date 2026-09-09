@@ -4,6 +4,9 @@
 /result-*
 /.direnv/
 
+# Native packaging scripts use Python's standard library.
+__pycache__/
+
 # Cargo's local registry markers are not part of the vendored source.
 /vendor/**/.cargo-ok
 /vendor/**/.cargo_vcs_info.json
