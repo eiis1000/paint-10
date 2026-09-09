@@ -185,7 +185,7 @@ pub(super) fn consume_shortcut(input: &mut InputState, modifiers: Modifiers, key
     consumed
 }
 
-fn shortcut_modifiers_match(pressed: Modifiers, expected: Modifiers) -> bool {
+pub(super) fn shortcut_modifiers_match(pressed: Modifiers, expected: Modifiers) -> bool {
     // egui's command flag is Command on macOS and Ctrl on Windows/Linux.
     // Keep physical Ctrl working without treating Linux Super as Command.
     pressed.matches_exact(expected)
