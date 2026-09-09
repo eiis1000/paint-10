@@ -6,6 +6,7 @@
 
 mod named;
 mod parse;
+pub mod plane;
 
 pub use parse::{parse_color, parse_color_with_alpha, ParsedColor};
 
