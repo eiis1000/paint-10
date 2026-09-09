@@ -34,6 +34,7 @@ struct Target {
     focusable: bool,
     visible: bool,
     left_parent: Option<Id>,
+    badge_anchor: Option<Pos2>,
 }
 
 #[derive(Clone)]
@@ -105,6 +106,9 @@ pub(super) fn register(
         focusable: response.sense.is_focusable(),
         visible: ui.is_visible() && !ui.is_sizing_pass(),
         left_parent: None,
+        badge_anchor: ui
+            .ctx()
+            .data(|data| data.get_temp(response.id.with("paint10_keytip_anchor"))),
     };
     ui.ctx().data_mut(|data| {
         let state = data.get_temp_mut_or_default::<State>(Id::new(STATE));
@@ -136,6 +140,14 @@ pub(super) fn register(
     if response.gained_focus() {
         response.scroll_to_me(None);
     }
+}
+
+/// Menu rows reserve an icon gutter; put their badges there instead of over
+/// the caption. Custom widgets can provide the same explicit layout contract.
+pub(super) fn set_badge_anchor(ui: &Ui, response: &Response, anchor: Pos2) {
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(response.id.with("paint10_keytip_anchor"), anchor);
+    });
 }
 
 /// Associate a side-pane choice with the command that opened that pane.
@@ -1176,7 +1188,9 @@ pub(super) fn finish_frame(ctx: &Context) {
                     },
                 );
                 let size = text.size() + vec2(if compact { 4.0 } else { 6.0 }, 2.0);
-                let center = if target.rect.width() <= 36.0 {
+                let center = if let Some(anchor) = target.badge_anchor {
+                    anchor
+                } else if target.rect.width() <= 36.0 {
                     target.rect.center()
                 } else if target.rect.height() <= 24.0 {
                     target.rect.right_center() - vec2(size.x / 2.0 + 2.0, 0.0)
@@ -1958,6 +1972,58 @@ mod tests {
                 assert!(
                     !badge.intersects(*other),
                     "Overlapping badges: {badge:?} and {other:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn menu_keytip_badges_stay_in_the_icon_gutter_and_leave_captions_readable() {
+        for (scope, keys) in [
+            ("fill", vec![Key::F10, Key::H, Key::L]),
+            ("outline", vec![Key::F10, Key::H, Key::O]),
+            ("select", vec![Key::F10, Key::H, Key::Z, Key::S]),
+            ("rotate", vec![Key::F10, Key::H, Key::R, Key::O]),
+        ] {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            app.set_tool(Tool::Rectangle);
+            app_warm(&mut app, &ctx, 1200.0);
+            app_keys(&mut app, &ctx, 1200.0, &keys);
+            app_warm(&mut app, &ctx, 1200.0);
+            let output = app_frame(&mut app, &ctx, 1200.0, vec![]);
+            let state = read(&ctx);
+            let targets: Vec<_> = state
+                .targets
+                .iter()
+                .filter(|target| {
+                    target.scope == scope
+                        && target.visible
+                        && target.focusable
+                        && !target.keys.is_empty()
+                })
+                .collect();
+            assert!(!targets.is_empty(), "{scope} menu must be open");
+            let badges: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Rect(rect)
+                        if rect.fill == Color32::from_rgb(255, 255, 228) =>
+                    {
+                        Some(rect.rect)
+                    }
+                    _ => None,
+                })
+                .collect();
+            for target in targets {
+                let badge = badges
+                    .iter()
+                    .find(|badge| target.rect.contains_rect(**badge))
+                    .expect("each visible menu command should have a keytip");
+                assert!(
+                    badge.right() <= target.rect.left() + 28.0,
+                    "{scope}: badge covers a caption: {badge:?}"
                 );
             }
         }
