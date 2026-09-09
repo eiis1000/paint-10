@@ -61,6 +61,26 @@ export function installBrowserEvents(notify, canvas) {
         && target === canvas.ownerDocument.activeElement
         && (target === canvas || (target.tagName === 'INPUT' && target.type === 'text'));
 
+    // eframe forwards history keys without canceling the hidden input's native
+    // Undo/Redo. That second history can emit old characters as fresh text.
+    // Keep the key event for Rust while preventing the browser's own edit.
+    window.addEventListener('keydown', event => {
+        const key = event.key.toLowerCase();
+        const command = (event.ctrlKey && !event.metaKey)
+            || (event.metaKey && !event.ctrlKey);
+        if (
+            command
+            && (key === 'z' || (key === 'y' && !event.shiftKey))
+            && !event.altKey
+            && !event.isComposing
+            && event.keyCode !== 229
+            && !event.getModifierState?.('AltGraph')
+            && focusedPaintTarget(event.target)
+        ) {
+            event.preventDefault();
+        }
+    }, { capture: true });
+
     window.addEventListener('keydown', event => {
         if (!plainAlt(event) || !focusedPaintTarget(event.target)) {
             cancelAltTap();

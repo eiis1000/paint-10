@@ -272,6 +272,83 @@ function keyboardBrowser() {
     };
 }
 
+test('Paint history keys prevent browser-native edits while reaching the Rust backend', () => {
+    for (const targetName of ['canvas', 'input']) {
+        for (const command of [{ ctrlKey: true }, { metaKey: true }]) {
+            for (const shortcut of [
+                { key: 'z' },
+                { key: 'y' },
+                { key: 'Z', shiftKey: true },
+                { key: 'z', repeat: true },
+            ]) {
+                const browser = keyboardBrowser();
+                const target = browser[targetName];
+                browser.document.activeElement = target;
+                const key = browser.send('keydown', {
+                    altKey: false,
+                    ...command,
+                    ...shortcut,
+                });
+                assert.equal(key.prevented, true, `${targetName}: ${JSON.stringify(shortcut)}`);
+                assert.equal(key.stopped, false, 'Rust must still receive the history command');
+                assert.equal(browser.received.length, 1);
+                assert.equal(browser.received[0].key, shortcut.key);
+                assert.equal(browser.received[0].target, target);
+                assert.equal(browser.received[0].prevented, true);
+            }
+        }
+    }
+});
+
+test('history capture preserves IME, other shortcuts, and unrelated or unfocused targets', () => {
+    for (const properties of [
+        { ctrlKey: false },
+        { shiftKey: true, key: 'Y' },
+        { metaKey: true },
+        { altKey: true },
+        { isComposing: true },
+        { keyCode: 229 },
+        { getModifierState: name => name === 'AltGraph' },
+        { key: 'a' },
+        { key: 'c' },
+        { key: 'v' },
+        { key: 'x' },
+        { key: 'F5' },
+    ]) {
+        const browser = keyboardBrowser();
+        const key = browser.send('keydown', {
+            key: 'z',
+            ctrlKey: true,
+            altKey: false,
+            ...properties,
+        });
+        assert.equal(key.prevented, false, JSON.stringify(properties));
+        assert.equal(key.stopped, false);
+    }
+
+    for (const [name, configure] of [
+        ['unfocused page', browser => browser.focusPage(false)],
+        ['inactive target', browser => { browser.document.activeElement = browser.canvas; }],
+        ['removed target', browser => { browser.input.isConnected = false; }],
+        ['foreign document', browser => { browser.input.ownerDocument = {}; }],
+        ['file chooser', browser => { browser.input.type = 'file'; }],
+        ['unrelated textarea', browser => { browser.input.tagName = 'TEXTAREA'; }],
+        ['unrelated canvas', browser => { browser.input.tagName = 'CANVAS'; }],
+    ]) {
+        const browser = keyboardBrowser();
+        browser.document.activeElement = browser.input;
+        configure(browser);
+        const key = browser.send('keydown', {
+            target: browser.input,
+            key: 'z',
+            ctrlKey: true,
+            altKey: false,
+        });
+        assert.equal(key.prevented, false, name);
+        assert.equal(key.stopped, false, name);
+    }
+});
+
 test('a standalone Alt tap queues exactly one keytip toggle before subsequent letters', async () => {
     for (const targetName of ['canvas', 'input']) {
         for (const pause of [false, true]) {
