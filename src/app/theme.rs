@@ -152,6 +152,7 @@ impl Widget for MenuItem<'_> {
             .max(natural.size().x + shortcut.size().x + 58.0)
             .min(available);
         let (rect, response) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+        keytips::set_badge_anchor(ui, &response, rect.left_center() + vec2(14.0, 0.0));
         response.widget_info(|| {
             WidgetInfo::selected(
                 WidgetType::Button,

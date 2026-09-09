@@ -78,6 +78,11 @@ impl Widget for FileItem<'_> {
         };
         let height = (text_height + 14.0).max(minimum);
         let (rect, response) = ui.allocate_exact_size(vec2(self.width, height), Sense::click());
+        keytips::set_badge_anchor(
+            ui,
+            &response,
+            rect.left_center() + vec2(if self.compact { 13.0 } else { 19.0 }, 0.0),
+        );
         response
             .widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), self.label));
         if response.gained_focus() {
@@ -409,8 +414,29 @@ impl PaintApp {
                 Icon::Gif,
             ),
             (
+                "WebP picture",
+                "Lossless color and transparency.",
+                "W",
+                Some(RasterFormat::WebP),
+                Icon::Png,
+            ),
+            (
+                "TIFF picture",
+                "Full-quality pictures for publishing.",
+                "D",
+                Some(RasterFormat::Tiff),
+                Icon::OtherFormats,
+            ),
+            (
+                "Paint 10 project",
+                "Keep text and original images editable.",
+                "Q",
+                Some(RasterFormat::Project),
+                Icon::Save,
+            ),
+            (
                 "Other formats",
-                "Choose TIFF, WebP, icons, BMP depth, or an editable Paint 10 project.",
+                "Choose Windows icons or bitmap color depth.",
                 "F",
                 None,
                 Icon::OtherFormats,
