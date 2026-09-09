@@ -64,6 +64,7 @@
           postInstall = ''
             install -Dm644 assets/paint-10.desktop "$out/share/applications/paint-10.desktop"
             install -Dm644 assets/paint-10.svg "$out/share/icons/hicolor/scalable/apps/paint-10.svg"
+            install -Dm644 assets/fonts/DejaVu-LICENSE.txt "$out/share/licenses/paint-10/DejaVu-LICENSE.txt"
           '';
           preFixup = ''
             gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath (desktopLibs pkgs)})
@@ -101,6 +102,7 @@
             wasm-bindgen --target web --out-dir "$out/pkg" --out-name paint_10 target/wasm32-unknown-unknown/release/paint_10.wasm
             cp web/index.html "$out/index.html"
             cp assets/paint-10.svg assets/paint-10.png assets/paint-10.ico "$out/"
+            cp assets/fonts/DejaVu-LICENSE.txt "$out/"
             runHook postInstall
           '';
           meta = {

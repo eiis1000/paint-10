@@ -71,7 +71,10 @@ fn font_picker_does_not_scroll_from_movement_before_a_press() {
     settle(&mut app, &ctx);
     let edit = app.text_edit.as_ref().unwrap();
     assert_eq!(edit.text, "Caption stays editable");
-    assert_eq!(edit.format.style_at(0).font_name, "Sans serif");
+    assert_eq!(
+        edit.format.style_at(0).font_name,
+        crate::text::DEFAULT_FONT_NAME
+    );
     assert!(!keytips::popup_open(&ctx));
 }
 

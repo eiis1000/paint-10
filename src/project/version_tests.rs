@@ -25,7 +25,7 @@ fn unpacked(bytes: &[u8]) -> serde_json::Value {
 fn collection() -> FontBytes {
     let fonts: [&[u8]; 2] = [
         epaint_default_fonts::HACK_REGULAR,
-        include_bytes!("../../assets/test-fonts/DejaVuSans.ttf"),
+        crate::text::DEFAULT_FONT,
     ];
     let mut collection = b"ttcf\0\x01\0\0\0\0\0\x02".to_vec();
     collection.resize(20, 0);
@@ -161,7 +161,10 @@ fn empty_default_fonts_need_no_table_entry_and_keep_identical_pixels() {
     document.objects.push(Object::new(
         ObjectKind::Text {
             text: "Default".into(),
-            format: TextFormat::default(),
+            format: TextFormat {
+                font: FontBytes::default(),
+                ..Default::default()
+            },
         },
         (2, 3),
     ));
@@ -172,6 +175,36 @@ fn empty_default_fonts_need_no_table_entry_and_keep_identical_pixels() {
     let reopened = decode(&bytes).unwrap();
     assert!(reopened.objects == document.objects);
     assert_eq!(reopened.composite(), document.composite());
+}
+
+#[test]
+fn both_project_versions_preserve_legacy_and_em_text_size_modes() {
+    for mode in [
+        crate::text::TextSizeMode::FontHeight,
+        crate::text::TextSizeMode::Em,
+    ] {
+        let mut document = caption_document(FontBytes::from(epaint_default_fonts::UBUNTU_LIGHT), 1);
+        let ObjectKind::Text { format, .. } = &mut document.objects[0].kind else {
+            panic!("caption");
+        };
+        format.size_mode = mode;
+        let expected = document.composite();
+        for bytes in [legacy(&document), encode(&document).unwrap()] {
+            let reopened = decode(&bytes).unwrap();
+            assert!(reopened.objects == document.objects);
+            assert_eq!(reopened.composite(), expected);
+            if mode == crate::text::TextSizeMode::FontHeight {
+                let mut old_json = unpacked(&bytes);
+                old_json["objects"][0]["kind"]["Text"]["format"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("size_mode");
+                let old = decode(&packed(&old_json)).unwrap();
+                assert!(old.objects == document.objects);
+                assert_eq!(old.composite(), expected);
+            }
+        }
+    }
 }
 
 #[test]
