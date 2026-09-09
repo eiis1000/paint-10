@@ -304,20 +304,26 @@ impl PaintApp {
                             ribbon_layout::close_groups(ctx);
                         }
                     });
-                    for (index, label) in [(0, "   Home   "), (1, "   View   "), (2, "   Text   ")]
-                    {
-                        if index == 2 && self.text_edit.is_none() {
+                    for (index, label) in [
+                        (0, "   Home   "),
+                        (1, "   View   "),
+                        (2, "   Image   "),
+                        (3, "   Text   "),
+                    ] {
+                        if index == 3 && self.text_edit.is_none() {
                             continue;
                         }
                         let selected = match index {
-                            0 => !self.view_tab && !self.text_tab,
-                            1 => self.view_tab && !self.text_tab,
+                            0 => !self.view_tab && !self.image_tab && !self.text_tab,
+                            1 => self.view_tab && !self.image_tab && !self.text_tab,
+                            2 => self.image_tab && !self.text_tab,
                             _ => self.text_tab,
                         };
                         let response = controls::selectable(ui, selected, label);
                         let (keys, scope) = match index {
                             0 => ("H", "home"),
                             1 => ("V", "view"),
+                            2 => ("I", "image"),
                             _ => ("T", "text"),
                         };
                         keytips::register(
@@ -336,10 +342,16 @@ impl PaintApp {
                                 label.trim(),
                             )
                         });
+                        ctx.accesskit_node_builder(response.id, |node| {
+                            node.set_role(egui::accesskit::Role::Tab);
+                            node.clear_toggled();
+                            node.set_selected(selected);
+                        });
                         if response.clicked() {
                             ribbon_layout::close_groups(ctx);
                             self.view_tab = index == 1;
-                            self.text_tab = index == 2;
+                            self.image_tab = index == 2;
+                            self.text_tab = index == 3;
                             revealed = self.collapsed;
                             tab_activated = true;
                         }
@@ -432,6 +444,8 @@ impl PaintApp {
         ui.allocate_space(vec2(ui.available_width(), 112.0));
         if self.text_tab && self.text_edit.is_some() {
             self.text_ribbon(ui, origin, ctx);
+        } else if self.image_tab {
+            self.image_ribbon(ui, origin, ctx);
         } else if self.view_tab {
             self.view_ribbon(ui, origin, ctx);
         } else {

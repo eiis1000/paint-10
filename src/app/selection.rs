@@ -1,6 +1,100 @@
 use super::*;
 
 impl PaintApp {
+    /// The source image and current adjustment settings, without committing an
+    /// active shape or text draft merely because a dialog was opened.
+    pub(in crate::app) fn image_edit_target(&self) -> Option<(d::ImageEdits, (u32, u32))> {
+        if self.text_edit.is_some() {
+            return None;
+        }
+        if let Some(object) = self.object.and_then(|index| self.doc.objects.get(index)) {
+            return matches!(object.kind, ObjectKind::Image(_))
+                .then(|| (object.image_edits, object.source_dimensions()));
+        }
+        let dimensions = self
+            .selected_region()
+            .map(|region| (region.w, region.h))
+            .unwrap_or(self.doc.image.dimensions());
+        Some((d::ImageEdits::default(), dimensions))
+    }
+
+    pub(in crate::app) fn image_edit_object(&self) -> Result<Object, String> {
+        if self.text_edit.is_some() {
+            return Err("Finish editing the text before adjusting a picture.".into());
+        }
+        if let Some(object) = self.object.and_then(|index| self.doc.objects.get(index)) {
+            return if matches!(object.kind, ObjectKind::Image(_)) {
+                Ok(object.clone())
+            } else {
+                Err("Select a picture or an area of the canvas to edit its image.".into())
+            };
+        }
+        let position = self
+            .selected_region()
+            .map(|region| (region.x as i32, region.y as i32))
+            .unwrap_or((0, 0));
+        let source = self
+            .selected_image()
+            .unwrap_or_else(|| self.doc.composite());
+        Ok(Object::new(ObjectKind::Image(source), position))
+    }
+
+    pub(in crate::app) fn apply_image_edits(&mut self, edits: d::ImageEdits) -> Result<(), String> {
+        let mut object = self.image_edit_object()?;
+        object.set_image_edits(edits)?;
+        if let Some(index) = self.object {
+            if self.doc.objects[index] == object {
+                return Ok(());
+            }
+            self.doc.begin();
+            self.doc.objects[index] = object;
+        } else {
+            if let Some(bounds) = self.finish_editing() {
+                self.selection = Some(bounds);
+            }
+            self.doc.begin();
+            if let Some(region) = self.selection {
+                let selected = self
+                    .selected_image()
+                    .ok_or("The selection is no longer available.")?;
+                self.doc.flatten();
+                self.clear_selected_pixels(region, &selected);
+            } else {
+                self.doc.objects.clear();
+                self.doc.image = RgbaImage::new(self.doc.image.width(), self.doc.image.height());
+            }
+            let index = self.doc.add_object(object);
+            self.select_object(index);
+        }
+        self.doc.commit();
+        self.tool = Tool::Select;
+        self.select_image_options();
+        self.refresh = true;
+        Ok(())
+    }
+
+    pub(in crate::app) fn reset_image_edits(&mut self) -> Result<(), String> {
+        let Some(index) = self.object else {
+            return Ok(());
+        };
+        let mut object = self.image_edit_object()?;
+        object.image_edits = Default::default();
+        object.source_clip = None;
+        object.angle = 0.0;
+        object.scale = 1.0;
+        object.transform = Default::default();
+        object.color_key = None;
+        if self.doc.objects[index] == object {
+            return Ok(());
+        }
+        self.doc.begin();
+        self.doc.objects[index] = object;
+        self.doc.commit();
+        self.select_image_options();
+        self.refresh = true;
+        Ok(())
+    }
+
     pub(in crate::app) fn selection_contains(&self, point: Point) -> bool {
         let Some(region) = self.selection.filter(|region| region.contains(point)) else {
             return false;
@@ -219,8 +313,6 @@ impl PaintApp {
             return;
         }
         self.finish_editing();
-        let mut opaque = RgbaImage::from_pixel(img.width(), img.height(), Rgba(self.colors[1]));
-        imageops::overlay(&mut opaque, &img, 0, 0);
         self.doc.begin();
         if img.width() > self.doc.image.width() || img.height() > self.doc.image.height() {
             if let Err(error) =
@@ -233,12 +325,22 @@ impl PaintApp {
             }
         }
         let i = self.doc.add_object(Object {
-            kind: ObjectKind::Image(opaque),
+            kind: ObjectKind::Image(img),
             pos: (0, 0),
             angle: 0.,
             scale: 1.,
             color_key: self.transparent.then_some(self.colors[1]),
             transform: Default::default(),
+            image_edits: d::ImageEdits {
+                matte: Some(self.colors[1]),
+                sampling: if self.pixel_resize {
+                    d::ImageSampling::Nearest
+                } else {
+                    d::ImageSampling::Smooth
+                },
+                ..Default::default()
+            },
+            source_clip: None,
         });
         self.doc.commit();
         self.tool = Tool::Select;
@@ -295,6 +397,8 @@ impl PaintApp {
             scale: 1.,
             color_key: self.transparent.then_some(self.colors[1]),
             transform: Default::default(),
+            image_edits: Default::default(),
+            source_clip: None,
         });
         self.select_object(i);
         Some(i)
@@ -393,6 +497,68 @@ fn inside_polygon(p: Point, points: &[Point]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_dialog_preview_is_read_only_and_reset_recovers_source_pixels() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let source = RgbaImage::from_fn(19, 13, |x, y| Rgba([x as u8 * 11, y as u8 * 17, 90, 128]));
+        app.insert_image(source.clone());
+        let index = app.object.unwrap();
+        let before = app.doc.objects[index].clone();
+        let edits = d::ImageEdits {
+            crop: Some(Region {
+                x: 2,
+                y: 3,
+                w: 8,
+                h: 7,
+            }),
+            brightness: 25.0,
+            saturation: -35.0,
+            matte: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            app.image_edit_object()
+                .unwrap()
+                .preview_image_edits(edits, 64)
+                .unwrap()
+                .dimensions(),
+            (8, 7)
+        );
+        assert!(app.doc.objects[index] == before);
+        app.apply_image_edits(edits).unwrap();
+        app.resize_picture(2, 2, 0.0, 0.0).unwrap();
+        app.rotate_picture(33.0, true);
+        let before_reset = app.doc.objects[index].clone();
+        app.reset_image_edits().unwrap();
+        assert_eq!(app.doc.objects[index].render(), source);
+        assert!(
+            matches!(&app.doc.objects[index].kind, ObjectKind::Image(original) if *original == source)
+        );
+        app.doc.undo();
+        assert!(app.doc.objects[index] == before_reset);
+    }
+
+    #[test]
+    fn canvas_adjustments_are_undoable_and_do_not_require_a_prior_selection() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        let original = RgbaImage::from_pixel(8, 6, Rgba([35, 80, 130, 255]));
+        app.doc = Document::from_image(original.clone());
+        app.apply_image_edits(d::ImageEdits {
+            invert: true,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            app.doc.composite().get_pixel(3, 2),
+            &Rgba([220, 175, 125, 255])
+        );
+        assert!(app.object.is_some());
+        app.doc.undo();
+        assert_eq!(app.doc.composite(), original);
+    }
 
     #[test]
     fn visible_object_selection_is_an_intersection_without_phantom_edge_pixels() {

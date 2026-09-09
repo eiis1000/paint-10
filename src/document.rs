@@ -12,6 +12,11 @@ pub const MAX_PIXELS: u64 = 16_777_216;
 pub const DEFAULT_CANVAS_SIZE: (u32, u32) = (900, 600);
 const HISTORY_BYTES: usize = 128 * 1024 * 1024;
 
+mod image_edit;
+pub use image_edit::{ImageEdits, ImageSampling};
+mod source_clip;
+pub use source_clip::SourceClip;
+
 #[cfg(test)]
 mod history_tests;
 
@@ -275,7 +280,7 @@ impl ShapeFill {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Region {
     pub x: u32,
     pub y: u32,
@@ -339,6 +344,10 @@ pub struct Object {
     pub color_key: Option<Color>,
     #[serde(default)]
     pub transform: LinearTransform,
+    #[serde(default)]
+    pub image_edits: ImageEdits,
+    #[serde(default)]
+    pub source_clip: Option<SourceClip>,
 }
 
 /// A linear transform in canvas coordinates, applied after legacy rotation/scale.
@@ -433,6 +442,8 @@ impl Object {
             scale: 1.0,
             color_key: None,
             transform: Default::default(),
+            image_edits: Default::default(),
+            source_clip: None,
         }
     }
 
@@ -447,6 +458,83 @@ impl Object {
         self.render_with_key(None)
     }
 
+    pub fn source_dimensions(&self) -> (u32, u32) {
+        match &self.kind {
+            ObjectKind::Raster(image) | ObjectKind::Image(image) => image.dimensions(),
+            ObjectKind::Text { text, format } => format.dimensions(text),
+        }
+    }
+
+    fn cropped_dimensions(&self) -> (u32, u32) {
+        if matches!(self.kind, ObjectKind::Image(_)) {
+            self.image_edits.dimensions(self.source_dimensions())
+        } else {
+            self.source_dimensions()
+        }
+    }
+
+    pub fn set_image_edits(&mut self, edits: ImageEdits) -> Result<(), String> {
+        if !matches!(self.kind, ObjectKind::Image(_)) {
+            return Err("Select a picture to adjust its image settings.".into());
+        }
+        edits.validate(self.source_dimensions())?;
+        let previous = self.image_edits;
+        self.image_edits = edits;
+        if self.rendered_dimensions().is_none() {
+            self.image_edits = previous;
+            return Err("The adjusted image would exceed the 16 megapixel limit.".into());
+        }
+        if previous.invert != edits.invert {
+            self.color_key = self
+                .color_key
+                .map(|[r, g, b, a]| [255 - r, 255 - g, 255 - b, a]);
+        }
+        Ok(())
+    }
+
+    pub fn preview_image_edits(
+        &self,
+        edits: ImageEdits,
+        max_edge: u32,
+    ) -> Result<RgbaImage, String> {
+        let ObjectKind::Image(source) = &self.kind else {
+            return Err("Select a picture to preview its image settings.".into());
+        };
+        let key = if self.image_edits.invert != edits.invert {
+            self.color_key
+                .map(|[r, g, b, a]| [255 - r, 255 - g, 255 - b, a])
+        } else {
+            self.color_key
+        };
+        edits.preview_clipped(source, key, max_edge, self.source_clip.as_ref())
+    }
+
+    /// Skew the displayed image without replacing its source pixels.
+    pub fn skew_rendered(&mut self, x_degrees: f32, y_degrees: f32) -> Result<(), String> {
+        if !x_degrees.is_finite()
+            || !y_degrees.is_finite()
+            || x_degrees.abs() >= 90.0
+            || y_degrees.abs() >= 90.0
+        {
+            return Err("Skew angles must be between -89 and 89 degrees.".into());
+        }
+        let skew = LinearTransform {
+            xy: f64::from(x_degrees).to_radians().tan(),
+            yx: f64::from(y_degrees).to_radians().tan(),
+            ..Default::default()
+        };
+        if skew.determinant().abs() < 0.001 {
+            return Err("These skew angles collapse the picture into a line.".into());
+        }
+        let previous = self.transform;
+        self.transform = self.transform.then(skew);
+        if self.rendered_dimensions().is_none() {
+            self.transform = previous;
+            return Err("The skewed object would exceed the supported image size.".into());
+        }
+        Ok(())
+    }
+
     fn combined_transform(&self) -> LinearTransform {
         LinearTransform::scale(self.scale as f64, self.scale as f64)
             .then(LinearTransform::rotation(self.angle))
@@ -457,10 +545,7 @@ impl Object {
         if !self.angle.is_finite() || !self.scale.is_finite() || self.scale <= 0.0 {
             return None;
         }
-        let (width, height) = match &self.kind {
-            ObjectKind::Raster(image) | ObjectKind::Image(image) => image.dimensions(),
-            ObjectKind::Text { text, format } => format.dimensions(text),
-        };
+        let (width, height) = self.cropped_dimensions();
         if self.transform == LinearTransform::default() {
             let scaled_width = (width as f64 * self.scale as f64).round().max(1.0) as u32;
             let scaled_height = (height as f64 * self.scale as f64).round().max(1.0) as u32;
@@ -482,10 +567,7 @@ impl Object {
             return Ok(());
         }
         let previous = self.transform;
-        let (source_width, source_height) = match &self.kind {
-            ObjectKind::Image(image) | ObjectKind::Raster(image) => image.dimensions(),
-            ObjectKind::Text { text, format } => format.dimensions(text),
-        };
+        let (source_width, source_height) = self.cropped_dimensions();
         let current = self.combined_transform();
         let extent_width =
             current.xx.abs() * source_width as f64 + current.xy.abs() * source_height as f64;
@@ -524,10 +606,17 @@ impl Object {
 
     fn render_with_key(&self, color_key: Option<Color>) -> RgbaImage {
         let mut raw = match &self.kind {
-            ObjectKind::Raster(img) | ObjectKind::Image(img) => img.clone(),
+            ObjectKind::Raster(img) => img.clone(),
+            ObjectKind::Image(img) => match &self.source_clip {
+                Some(clip) => self.image_edits.apply_clipped(img, color_key, Some(clip)),
+                None => self.image_edits.apply(img, color_key),
+            },
             ObjectKind::Text { text, format } => format.render(text),
         };
-        if let Some(key) = color_key {
+        if let Some(clip) = &self.source_clip {
+            clip.apply(&mut raw, self.source_crop_offset());
+        }
+        if let Some(key) = color_key.filter(|_| !matches!(self.kind, ObjectKind::Image(_))) {
             for pixel in raw.pixels_mut() {
                 if pixel.0[..3] == key[..3] {
                     pixel[3] = 0;
@@ -535,35 +624,78 @@ impl Object {
             }
         }
         if self.transform != LinearTransform::default() {
-            return transform_image(&raw, self.combined_transform()).unwrap_or(raw);
+            return transform_image(&raw, self.combined_transform(), self.image_sampling())
+                .unwrap_or(raw);
         }
         let raw = if self.scale.is_finite() && (self.scale - 1.).abs() > 0.001 {
             let (w, h) = scaled_size(raw.width(), raw.height(), self.scale);
-            imageops::resize(&raw, w, h, imageops::FilterType::CatmullRom)
+            if self.image_sampling() == ImageSampling::Smooth {
+                image_edit::resize_smooth(&raw, w, h)
+            } else {
+                let filter = if matches!(self.kind, ObjectKind::Text { .. }) {
+                    imageops::FilterType::CatmullRom
+                } else {
+                    imageops::FilterType::Nearest
+                };
+                imageops::resize(&raw, w, h, filter)
+            }
         } else {
             raw
         };
         if self.angle.abs() > 0.01 {
-            rotate(&raw, self.angle, [0, 0, 0, 0])
+            if self.image_sampling() == ImageSampling::Smooth {
+                transform_image(
+                    &raw,
+                    LinearTransform::rotation(self.angle),
+                    ImageSampling::Smooth,
+                )
+                .unwrap_or(raw)
+            } else {
+                rotate(&raw, self.angle, [0, 0, 0, 0])
+            }
         } else {
             raw
         }
     }
+
+    fn image_sampling(&self) -> ImageSampling {
+        if matches!(self.kind, ObjectKind::Image(_) | ObjectKind::Raster(_)) {
+            self.image_edits.sampling
+        } else {
+            ImageSampling::Nearest
+        }
+    }
 }
 
-fn transform_image(image: &RgbaImage, transform: LinearTransform) -> Option<RgbaImage> {
+fn transform_image(
+    image: &RgbaImage,
+    transform: LinearTransform,
+    sampling: ImageSampling,
+) -> Option<RgbaImage> {
     let (width, height) = transform.output_size(image.width(), image.height())?;
+    if sampling == ImageSampling::Smooth
+        && transform.xy == 0.0
+        && transform.yx == 0.0
+        && transform.xx > 0.0
+        && transform.yy > 0.0
+    {
+        return Some(image_edit::resize_smooth(image, width, height));
+    }
     let determinant = transform.determinant();
     let mut output = RgbaImage::new(width, height);
     for (x, y, pixel) in output.enumerate_pixels_mut() {
         let dx = x as f64 - (width as f64 - 1.0) / 2.0;
         let dy = y as f64 - (height as f64 - 1.0) / 2.0;
-        let source_x = ((transform.yy * dx - transform.xy * dy) / determinant
-            + (image.width() as f64 - 1.0) / 2.0)
-            .round() as i64;
-        let source_y = ((transform.xx * dy - transform.yx * dx) / determinant
-            + (image.height() as f64 - 1.0) / 2.0)
-            .round() as i64;
+        let source_x = (transform.yy * dx - transform.xy * dy) / determinant
+            + (image.width() as f64 - 1.0) / 2.0;
+        let source_y = (transform.xx * dy - transform.yx * dx) / determinant
+            + (image.height() as f64 - 1.0) / 2.0;
+        if sampling == ImageSampling::Smooth {
+            *pixel = image_edit::sample_smooth(image, source_x, source_y);
+            continue;
+        }
+        let source_x = source_x.round() as i64;
+        let source_y = source_y.round() as i64;
         if source_x >= 0
             && source_y >= 0
             && source_x < image.width() as i64
@@ -613,6 +745,144 @@ impl Document {
                     || s.mono != self.mono
                     || s.resolution != self.resolution
             })
+    }
+
+    /// Resize the canvas and retained objects together. Repeated reductions
+    /// never become the input to a later enlargement.
+    pub fn resize_content(
+        &mut self,
+        width: u32,
+        height: u32,
+        sampling: ImageSampling,
+    ) -> Result<(), String> {
+        if !valid_size(width, height) {
+            return Err("Dimensions must be positive and fit within 16 megapixels.".into());
+        }
+        let (old_width, old_height) = self.image.dimensions();
+        if (width, height) == (old_width, old_height) {
+            return Ok(());
+        }
+        let x_scale = width as f64 / old_width as f64;
+        let y_scale = height as f64 / old_height as f64;
+        let mut objects = self.objects.clone();
+        if self.image.pixels().any(|pixel| pixel[3] > 0) {
+            objects.push(Object::new(ObjectKind::Raster(self.image.clone()), (0, 0)));
+        }
+        for object in &mut objects {
+            object.clip_to_canvas([0.0, 0.0, old_width as f64, old_height as f64])?;
+            object.transform = object
+                .transform
+                .then(LinearTransform::scale(x_scale, y_scale));
+            object.image_edits.sampling = sampling;
+            object.pos = (
+                (object.pos.0 as f64 * x_scale).round() as i32,
+                (object.pos.1 as f64 * y_scale).round() as i32,
+            );
+            if object.rendered_dimensions().is_none() {
+                return Err("A retained object would exceed the image size limit.".into());
+            }
+        }
+        self.objects = objects;
+        self.image = RgbaImage::new(width, height);
+        Ok(())
+    }
+
+    /// Clip the view of retained objects, keeping their off-canvas source data.
+    pub fn crop_canvas(&mut self, crop: Region) -> Result<(), String> {
+        ImageEdits {
+            crop: Some(crop),
+            ..Default::default()
+        }
+        .validate(self.image.dimensions())?;
+        let mut objects = self.objects.clone();
+        if self.image.pixels().any(|pixel| pixel[3] > 0) {
+            objects.push(Object::new(ObjectKind::Raster(self.image.clone()), (0, 0)));
+        }
+        for object in &mut objects {
+            object.clip_to_canvas([
+                crop.x as f64,
+                crop.y as f64,
+                (crop.x + crop.w) as f64,
+                (crop.y + crop.h) as f64,
+            ])?;
+            object.pos.0 = object
+                .pos
+                .0
+                .checked_sub(crop.x as i32)
+                .ok_or("The crop moves an object outside supported coordinates.")?;
+            object.pos.1 = object
+                .pos
+                .1
+                .checked_sub(crop.y as i32)
+                .ok_or("The crop moves an object outside supported coordinates.")?;
+        }
+        self.objects = objects;
+        self.image = RgbaImage::new(crop.w, crop.h);
+        Ok(())
+    }
+
+    pub fn rotate_content(&mut self, angle: f32, background: Color) -> Result<(), String> {
+        let (old_width, old_height) = self.image.dimensions();
+        let (width, height) = rotation_size(old_width, old_height, angle)
+            .ok_or("The rotated picture would exceed the image size limit.")?;
+        let rotation = LinearTransform::rotation(angle);
+        let mut objects = self.objects.clone();
+        if self.image.pixels().any(|pixel| pixel[3] > 0) {
+            objects.push(Object::new(ObjectKind::Raster(self.image.clone()), (0, 0)));
+        }
+        for object in &mut objects {
+            object.clip_to_canvas([0.0, 0.0, old_width as f64, old_height as f64])?;
+            let (object_width, object_height) = object
+                .rendered_dimensions()
+                .ok_or("Invalid object dimensions.")?;
+            let center_x = object.pos.0 as f64 + (object_width as f64 - old_width as f64) / 2.0;
+            let center_y = object.pos.1 as f64 + (object_height as f64 - old_height as f64) / 2.0;
+            object.rotate_to(object.angle + angle)?;
+            let (object_width, object_height) = object
+                .rendered_dimensions()
+                .ok_or("The rotated object exceeds the image size limit.")?;
+            object.pos = (
+                (rotation.xx * center_x
+                    + rotation.xy * center_y
+                    + (width as f64 - object_width as f64) / 2.0)
+                    .round() as i32,
+                (rotation.yx * center_x
+                    + rotation.yy * center_y
+                    + (height as f64 - object_height as f64) / 2.0)
+                    .round() as i32,
+            );
+        }
+        // Keep the exposed corner background above off-canvas retained data.
+        let corners = rotate(&RgbaImage::new(old_width, old_height), angle, background);
+        self.objects = objects;
+        self.image = corners;
+        Ok(())
+    }
+
+    pub fn flip_content(&mut self, horizontal: bool) {
+        for object in &mut self.objects {
+            let Some((width, height)) = object.rendered_dimensions() else {
+                continue;
+            };
+            if horizontal {
+                object.transform.xx = -object.transform.xx;
+                object.transform.xy = -object.transform.xy;
+                object.pos.0 =
+                    (i64::from(self.image.width()) - i64::from(object.pos.0) - i64::from(width))
+                        .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+            } else {
+                object.transform.yx = -object.transform.yx;
+                object.transform.yy = -object.transform.yy;
+                object.pos.1 =
+                    (i64::from(self.image.height()) - i64::from(object.pos.1) - i64::from(height))
+                        .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+            }
+        }
+        self.image = if horizontal {
+            imageops::flip_horizontal(&self.image)
+        } else {
+            imageops::flip_vertical(&self.image)
+        };
     }
     pub fn mark_saved(&mut self) {
         self.saved_revision = self.revision;
@@ -833,6 +1103,8 @@ impl Document {
                 scale: 1.,
                 color_key: None,
                 transform: Default::default(),
+                image_edits: Default::default(),
+                source_clip: None,
             });
             self.image = RgbaImage::new(self.image.width(), self.image.height());
         }
@@ -847,11 +1119,14 @@ impl Snapshot {
             + self
                 .objects
                 .iter()
-                .map(|o| match &o.kind {
-                    ObjectKind::Raster(img) | ObjectKind::Image(img) => img.as_raw().len(),
-                    ObjectKind::Text { text, format } => {
-                        text.len() + format.memory_bytes_with_fonts(fonts)
-                    }
+                .map(|o| {
+                    o.source_clip.as_ref().map_or(0, SourceClip::memory_bytes)
+                        + match &o.kind {
+                            ObjectKind::Raster(img) | ObjectKind::Image(img) => img.as_raw().len(),
+                            ObjectKind::Text { text, format } => {
+                                text.len() + format.memory_bytes_with_fonts(fonts)
+                            }
+                        }
                 })
                 .sum::<usize>()
     }
@@ -1951,6 +2226,8 @@ mod tests {
             scale: 1.0,
             color_key: None,
             transform: Default::default(),
+            image_edits: Default::default(),
+            source_clip: None,
         });
         img = doc.composite();
         assert_eq!(img.get_pixel(7, 7).0, BLACK);
@@ -2202,6 +2479,8 @@ mod tests {
             angle: 0.,
             color_key: None,
             transform: Default::default(),
+            image_edits: Default::default(),
+            source_clip: None,
         });
         doc.commit();
         doc.mark_saved();

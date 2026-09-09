@@ -1,5 +1,7 @@
 use super::*;
 
+mod image_dialogs;
+
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::app) enum DownloadAction {
@@ -328,7 +330,8 @@ pub(in crate::app) fn register_button(ui: &Ui, response: &Response) {
 }
 
 pub(in crate::app) fn dialog_button(ui: &mut Ui, label: &str) -> bool {
-    let response = ui.add(Button::new(label).min_size(ui.spacing().interact_size));
+    let size = ui.spacing().interact_size.max(vec2(80.0, 28.0));
+    let response = ui.add(Button::new(label).min_size(size));
     register_button(ui, &response);
     if response.enabled() && take_initial_focus(ui) {
         response.request_focus();
@@ -339,7 +342,7 @@ pub(in crate::app) fn dialog_button(ui: &mut Ui, label: &str) -> bool {
 pub(in crate::app) fn default_button(ui: &mut Ui, label: &str, enabled: bool) -> bool {
     let response = ui.add_enabled(
         enabled,
-        Button::new(label).min_size(ui.spacing().interact_size),
+        Button::new(label).min_size(ui.spacing().interact_size.max(vec2(80.0, 28.0))),
     );
     register_button(ui, &response);
     if response.enabled() && take_initial_focus(ui) {
@@ -383,6 +386,33 @@ pub(in crate::app) fn default_button(ui: &mut Ui, label: &str, enabled: bool) ->
         return false;
     }
     true
+}
+
+/// Keep the conventional left-to-right action order, aligned to the dialog edge.
+pub(in crate::app) fn dialog_actions(
+    ui: &mut Ui,
+    labels: &[&str],
+    add_contents: impl FnOnce(&mut Ui),
+) {
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let font = TextStyle::Button.resolve(ui.style());
+        let width = labels
+            .iter()
+            .map(|label| {
+                let text = ui.painter().layout_no_wrap(
+                    (*label).to_owned(),
+                    font.clone(),
+                    ui.visuals().text_color(),
+                );
+                (text.size().x + 2.0 * ui.spacing().button_padding.x).max(80.0)
+            })
+            .sum::<f32>()
+            + labels.len().saturating_sub(1) as f32 * 8.0;
+        ui.add_space((ui.available_width() - width).max(0.0));
+        add_contents(ui);
+    });
 }
 
 impl PaintApp {
@@ -515,6 +545,8 @@ impl PaintApp {
             self.dialog.map(|dialog| match dialog {
                 Dialog::Resize => "Resize and Skew",
                 Dialog::Rotate => "Rotate",
+                Dialog::ImageAdjustments => "Edit Image",
+                Dialog::ImageCrop => "Crop Image",
                 Dialog::Colors => "Edit Colors",
                 Dialog::Properties => "Image Properties",
                 Dialog::About => "About Paint 10",
@@ -539,6 +571,7 @@ impl PaintApp {
                 ctx.data_mut(|data| data.remove::<Vec<Event>>(pending_modal_input_key()));
                 ctx.data_mut(|data| data.remove::<ModalKeys>(modal_key()));
                 color_editor::clear(ctx);
+                image_dialogs::clear(ctx);
                 return;
             }
         } else {
@@ -592,18 +625,56 @@ impl PaintApp {
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
-                .default_width(340.)
+                .default_width(match dialog {
+                    Dialog::About => 480.0,
+                    Dialog::Print => 400.0,
+                    Dialog::Rotate => 380.0,
+                    Dialog::ImageAdjustments => 620.0,
+                    Dialog::ImageCrop => 430.0,
+                    _ => 340.0,
+                })
+                .default_height((ctx.screen_rect().height() - 110.0).max(120.0))
+                .max_width((ctx.screen_rect().width() - 56.0).max(280.0))
+                .max_height((ctx.screen_rect().height() - 76.0).max(180.0))
                 .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(ctx, |ui| {
-                    close = match dialog {
+                    ui.spacing_mut().scroll = egui::style::ScrollStyle {
+                        // Reserve a gutter even though the handle is translucent.
+                        // Floating at zero width would cover right-aligned actions.
+                        floating: true,
+                        bar_width: 10.0,
+                        floating_width: 10.0,
+                        floating_allocated_width: 14.0,
+                        handle_min_length: 20.0,
+                        dormant_handle_opacity: 0.55,
+                        active_handle_opacity: 0.65,
+                        interact_handle_opacity: 0.8,
+                        dormant_background_opacity: 0.12,
+                        foreground_color: true,
+                        ..egui::style::ScrollStyle::solid()
+                    };
+                    let mut contents = |ui: &mut Ui| match dialog {
                         Dialog::Resize => self.resize_dialog(ui),
                         Dialog::Properties => self.properties_dialog(ui),
                         Dialog::Rotate => self.rotation_dialog(ui),
+                        Dialog::ImageAdjustments => self.image_adjustments_dialog(ui),
+                        Dialog::ImageCrop => self.image_crop_dialog(ui),
                         Dialog::Colors => self.colors_dialog(ui),
                         Dialog::About => self.about_dialog(ui),
                         Dialog::Print => self.print_dialog(ui),
                         Dialog::Import => self.import_dialog(ui, ctx),
                         Dialog::Wallpaper => self.wallpaper_dialog(ui, ctx),
+                    };
+                    close = if dialog == Dialog::Colors {
+                        contents(ui)
+                    } else {
+                        ScrollArea::vertical()
+                            .id_salt(("dialog_contents", title))
+                            .max_height((ctx.screen_rect().height() - 110.0).max(120.0))
+                            .auto_shrink([false, true])
+                            .drag_to_scroll(false)
+                            .show(ui, contents)
+                            .inner
                     };
                     if ctx.data(|data| {
                         data.get_temp::<ModalKeys>(modal_key())
@@ -631,16 +702,33 @@ impl PaintApp {
                 }
                 self.dialog = None;
                 self.dialog_error = None;
+                image_dialogs::clear(ctx);
             }
         }
         if self.pending.is_none() && self.dialog.is_none() {
             self.dialog_error = None;
             ctx.data_mut(|data| data.remove::<ModalKeys>(modal_key()));
             color_editor::clear(ctx);
+            image_dialogs::clear(ctx);
         }
     }
 
     fn resize_dialog(&mut self, ui: &mut Ui) -> bool {
+        let original = self.resize_dimensions();
+        ui.label(
+            RichText::new(format!(
+                "{} · {} × {} pixels",
+                if self.selected_region().is_some() || self.object.is_some() {
+                    "Selection"
+                } else {
+                    "Picture"
+                },
+                original.0,
+                original.1,
+            ))
+            .weak(),
+        );
+        ui.add_space(8.0);
         ui.strong("Resize");
         ui.horizontal(|ui| {
             ui.label("By:");
@@ -655,7 +743,6 @@ impl PaintApp {
                 };
             }
         });
-        let original = self.resize_dimensions();
         Grid::new("dimensions")
             .num_columns(2)
             .spacing(vec2(16.0, 10.0))
@@ -702,19 +789,22 @@ impl PaintApp {
         ui.checkbox(&mut self.pixel_resize, "Keep hard pixel edges (pixel art)")
             .on_hover_text("Use nearest-neighbor scaling to preserve the exact palette. Leave off for smoother photographs.");
         ui.separator();
-        ui.strong("Skew (Degrees)");
-        for (label, angle) in [
-            ("Horizontal:", &mut self.skew_x),
-            ("Vertical:", &mut self.skew_y),
-        ] {
-            ui.horizontal(|ui| {
-                ui.label(label);
-                numeric_input(ui, DragValue::new(angle).range(-89.0..=89.0).suffix("°"));
+        ui.strong("Skew (degrees)");
+        Grid::new("skew_dimensions")
+            .num_columns(2)
+            .spacing(vec2(16.0, 10.0))
+            .show(ui, |ui| {
+                for (label, angle) in [
+                    ("Horizontal:", &mut self.skew_x),
+                    ("Vertical:", &mut self.skew_y),
+                ] {
+                    ui.label(label);
+                    numeric_input(ui, DragValue::new(angle).range(-89.0..=89.0).suffix("°"));
+                    ui.end_row();
+                }
             });
-        }
-        ui.add_space(12.0);
         let mut close = false;
-        ui.horizontal(|ui| {
+        dialog_actions(ui, &["OK", "Cancel"], |ui| {
             if default_button(ui, "OK", true) {
                 let dimensions = if self.percent {
                     (
@@ -760,7 +850,22 @@ impl PaintApp {
             initial_focus(ui, &angle);
             ui.add(Slider::new(&mut self.angle, -180.0..=180.0).show_value(false));
         });
+        ui.label(
+            RichText::new("Positive angles turn clockwise.")
+                .small()
+                .weak(),
+        );
         ui.horizontal(|ui| {
+            ui.label("Presets:");
+            for angle in [-90.0, -45.0, 0.0, 45.0, 90.0, 180.0] {
+                let response = ui.button(format!("{angle:.0}°"));
+                register_button(ui, &response);
+                if response.clicked() {
+                    self.angle = angle;
+                }
+            }
+        });
+        dialog_actions(ui, &["Apply", "Cancel"], |ui| {
             if default_button(ui, "Apply", true) {
                 if self.rotate_picture(self.angle, true) {
                     close = true;
@@ -777,16 +882,54 @@ impl PaintApp {
     }
 
     fn about_dialog(&mut self, ui: &mut Ui) -> bool {
-        let mut close = false;
-
-        ui.heading("Paint 10");
-        ui.label("The familiar Paint experience, built in Rust.");
+        ui.horizontal(|ui| {
+            let (icon, _) = ui.allocate_exact_size(Vec2::splat(44.0), Sense::hover());
+            icons::draw(ui.painter(), icon.shrink(4.0), Icon::Tool(Tool::Brush));
+            ui.vertical(|ui| {
+                ui.heading("Paint 10");
+                ui.label(
+                    RichText::new(format!(
+                        "Version {} · MIT license",
+                        env!("CARGO_PKG_VERSION")
+                    ))
+                    .weak(),
+                );
+            });
+        });
+        ui.add_space(8.0);
+        ui.label("The familiar Paint experience, with editable text and images.");
         ui.separator();
-        ui.label("Draw with the left mouse button (Color 1) or right mouse button (Color 2). Hold Shift for straight lines, circles, and squares.");
-        ui.label("Select: drag a region to move/copy/crop it. Click a pasted image to select it. Double-click text to edit it again.");
-        ui.label("Ctrl+Z / Ctrl+Y: undo / redo\nCtrl+C / X / V: copy / cut / paste\nCtrl+W: resize and skew\nCtrl+E: canvas properties\nCtrl+Shift+X: crop\nCtrl+G / Ctrl+R: grid / rulers\nCtrl+mouse wheel: zoom\nEscape: cancel / deselect\nF11: view picture");
-        ui.separator();
-        ui.label("Save as .p10 to keep text and images editable after reopening. PNG, JPEG, BMP, GIF, and TIFF produce ordinary flattened pictures.");
+        ui.strong("Getting started");
+        ui.label("Draw with Color 1 using the left mouse button, or Color 2 using the right button. Hold Shift for straight lines, circles, and squares.");
+        ui.label("Drag a selection to move or crop it. Click a pasted image to select it; double-click text to edit it again.");
+        ui.add_space(8.0);
+        ui.strong("Save your work");
+        ui.label("Use a Paint 10 project (.p10) to keep text, original images, and transforms editable. Export PNG, JPEG, BMP, GIF, TIFF, WebP, or ICO to share a picture.");
+        ui.add_space(8.0);
+        let shortcuts = ui.collapsing("Keyboard shortcuts", |ui| {
+            Grid::new("about_shortcuts")
+                .spacing(vec2(22.0, 6.0))
+                .striped(true)
+                .show(ui, |ui| {
+                    for (keys, action) in [
+                        ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
+                        ("Ctrl+C / Ctrl+X / Ctrl+V", "Copy / cut / paste"),
+                        ("Ctrl+W", "Resize and skew"),
+                        ("Ctrl+E", "Canvas properties"),
+                        ("Ctrl+Shift+X", "Crop to selection"),
+                        ("Ctrl+G / Ctrl+R", "Grid / rulers"),
+                        ("Ctrl+mouse wheel", "Zoom"),
+                        ("F10", "Ribbon keyboard shortcuts"),
+                        ("F11", "View picture"),
+                        ("Escape", "Cancel / deselect"),
+                    ] {
+                        ui.label(keys);
+                        ui.label(action);
+                        ui.end_row();
+                    }
+                });
+        });
+        register_button(ui, &shortcuts.header_response);
         let license = ui.collapsing("Bundled font license", |ui| {
             ScrollArea::vertical()
                 .id_salt("bundled_font_license")
@@ -797,10 +940,14 @@ impl PaintApp {
                 });
         });
         register_button(ui, &license.header_response);
-        if default_button(ui, "OK", true) {
-            close = true;
-        }
-
+        ui.separator();
+        let source = ui.hyperlink_to(
+            "Source code and issue tracker",
+            "https://github.com/eiis1000/paint-10",
+        );
+        register_button(ui, &source);
+        let mut close = false;
+        dialog_actions(ui, &["OK"], |ui| close = default_button(ui, "OK", true));
         close
     }
 
@@ -816,19 +963,22 @@ impl PaintApp {
                 .width(225.0)
                 .selected_text(self.page.paper.name())
                 .show_ui(ui, |ui| {
+                    theme::menu(ui);
                     for paper in PaperSize::PRESETS {
                         let (width, height) = paper.dimensions_mm();
-                        ui.selectable_value(
-                            &mut self.page.paper,
-                            paper,
-                            format!("{} ({width:.2} × {height:.2} mm)", paper.name()),
-                        );
+                        let label = format!("{} ({width:.2} × {height:.2} mm)", paper.name());
+                        if ui
+                            .add(theme::MenuItem::new(&label).selected(self.page.paper == paper))
+                            .clicked()
+                        {
+                            self.page.paper = paper;
+                        }
                     }
                     ui.separator();
                     if ui
-                        .selectable_label(
-                            matches!(self.page.paper, PaperSize::Custom { .. }),
-                            "Custom paper size",
+                        .add(
+                            theme::MenuItem::new("Custom paper size")
+                                .selected(matches!(self.page.paper, PaperSize::Custom { .. })),
                         )
                         .clicked()
                     {
@@ -874,31 +1024,41 @@ impl PaintApp {
         }
         ui.horizontal(|ui| {
             ui.label("Orientation:");
-            ui.selectable_value(&mut self.page.landscape, false, "Portrait");
-            ui.selectable_value(&mut self.page.landscape, true, "Landscape");
+            ui.radio_value(&mut self.page.landscape, false, "Portrait");
+            ui.radio_value(&mut self.page.landscape, true, "Landscape");
         });
-        ui.label("Margins (mm)");
-        Grid::new("print_margins").num_columns(4).show(ui, |ui| {
-            for (i, (label, value)) in [
-                ("Left", &mut self.page.margin_left_mm),
-                ("Right", &mut self.page.margin_right_mm),
-                ("Top", &mut self.page.margin_top_mm),
-                ("Bottom", &mut self.page.margin_bottom_mm),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                ui.label(label);
-                let response = numeric_input(ui, DragValue::new(value).range(0.0..=MAX_PAPER_MM));
-                if i == 0 {
-                    initial_focus(ui, &response);
+        ui.add_space(8.0);
+        ui.strong("Margins (mm)");
+        Grid::new("print_margins")
+            .num_columns(4)
+            .spacing(vec2(12.0, 8.0))
+            .show(ui, |ui| {
+                for (i, (label, value)) in [
+                    ("Left", &mut self.page.margin_left_mm),
+                    ("Right", &mut self.page.margin_right_mm),
+                    ("Top", &mut self.page.margin_top_mm),
+                    ("Bottom", &mut self.page.margin_bottom_mm),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    ui.label(label);
+                    let response =
+                        numeric_input(ui, DragValue::new(value).range(0.0..=MAX_PAPER_MM));
+                    if i == 0 {
+                        initial_focus(ui, &response);
+                    }
+                    if i % 2 == 1 {
+                        ui.end_row();
+                    }
                 }
-                if i % 2 == 1 {
-                    ui.end_row();
-                }
-            }
+            });
+        ui.add_space(8.0);
+        ui.strong("Scaling");
+        ui.horizontal(|ui| {
+            ui.radio_value(&mut self.page.fit, true, "Fit to pages");
+            ui.radio_value(&mut self.page.fit, false, "Adjust to percentage");
         });
-        ui.checkbox(&mut self.page.fit, "Fit to pages");
         if self.page.fit {
             ui.horizontal(|ui| {
                 numeric_input(
@@ -945,7 +1105,12 @@ impl PaintApp {
             }
         }
         ui.separator();
-        ui.horizontal(|ui| {
+        let actions: &[&str] = if cfg!(target_arch = "wasm32") {
+            &["Download PDF", "Preview", "Close"]
+        } else {
+            &["Print…", "Save PDF…", "Preview", "Close"]
+        };
+        dialog_actions(ui, actions, |ui| {
             #[cfg(not(target_arch = "wasm32"))]
             if default_button(ui, "Print…", valid) {
                 match crate::printing::print(&self.doc.composite(), &self.page) {
@@ -1037,22 +1202,38 @@ impl PaintApp {
                         self.capture_settings.resolution_dpi = Some(dpi);
                     }
                 });
-                ComboBox::from_id_salt("scan_mode")
-                    .selected_text(format!("{:?}", self.capture_settings.scan_mode))
+                use crate::integration::ScanMode;
+                let mode_name = match self.capture_settings.scan_mode {
+                    ScanMode::DeviceDefault => "Device default",
+                    ScanMode::Color => "Color",
+                    ScanMode::Gray => "Grayscale",
+                    ScanMode::Lineart => "Black and white",
+                };
+                let mode = ComboBox::from_id_salt("scan_mode")
+                    .selected_text(mode_name)
                     .show_ui(ui, |ui| {
-                        use crate::integration::ScanMode;
+                        theme::menu(ui);
                         for (mode, label) in [
                             (ScanMode::DeviceDefault, "Device default"),
                             (ScanMode::Color, "Color"),
                             (ScanMode::Gray, "Grayscale"),
                             (ScanMode::Lineart, "Black and white"),
                         ] {
-                            ui.selectable_value(&mut self.capture_settings.scan_mode, mode, label);
+                            if ui
+                                .add(
+                                    theme::MenuItem::new(label)
+                                        .selected(self.capture_settings.scan_mode == mode),
+                                )
+                                .clicked()
+                            {
+                                self.capture_settings.scan_mode = mode;
+                            }
                         }
                     });
+                register_button(ui, &mode.response);
             }
         }
-        ui.horizontal(|ui| {
+        dialog_actions(ui, &["Capture", "Refresh", "Cancel"], |ui| {
             if default_button(
                 ui,
                 "Capture",
@@ -1065,7 +1246,10 @@ impl PaintApp {
                     JobResult::Image(crate::integration::capture(&device, &settings, &cancel))
                 });
             }
-            let refresh = ui.add_enabled(self.job.is_none(), Button::new("Refresh"));
+            let refresh = ui.add_enabled(
+                self.job.is_none(),
+                Button::new("Refresh").min_size(vec2(80.0, 28.0)),
+            );
             register_button(ui, &refresh);
             if refresh.clicked() {
                 self.start_job(ctx, || {
@@ -1111,7 +1295,7 @@ impl PaintApp {
                 DragValue::new(&mut self.wallpaper_size.1).range(1..=16384),
             );
         });
-        ui.horizontal(|ui| {
+        dialog_actions(ui, &["Apply…", "Cancel"], |ui| {
             if default_button(ui, "Apply…", self.job.is_none()) {
                 let img = self.doc.composite();
                 let style = self.wallpaper_style;
