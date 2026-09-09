@@ -11,9 +11,33 @@ pub(super) fn visual_picker(ui: &mut Ui, state: &mut Editor, height: f32) {
     let previous = values;
     let strip_count = if state.space == Space::Cmyk { 2 } else { 1 };
     let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+    // Two decimal readouts do not fit below adjacent 18-pixel strips. Give
+    // their labeled percentages the full footer width, wrapping if necessary.
+    let cmyk_footer = (state.space == Space::Cmyk).then(|| {
+        let channel = plane.slice.channel();
+        let mut text = format!(
+            "{} {:.2}% · K {:.2}%",
+            abbreviation(channels[channel].label),
+            values[channel],
+            values[3]
+        );
+        let [x, y] = plane.position(values);
+        if !((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)) {
+            text.push_str("\nOutside view");
+        }
+        ui.painter().layout(
+            text,
+            FontId::proportional(10.0),
+            Color32::from_gray(80),
+            area.width(),
+        )
+    });
+    let footer_height = cmyk_footer
+        .as_ref()
+        .map_or(14.0, |text| (text.size().y + 2.0).max(14.0));
     let rect = Rect::from_min_max(
         area.min + vec2(0.0, 16.0),
-        area.max - vec2(strip_count as f32 * 24.0, 14.0),
+        area.max - vec2(strip_count as f32 * 24.0, footer_height),
     );
     let response = ui.interact(rect, ui.id().with("color_plane"), Sense::click_and_drag());
     let label = format!(
@@ -64,12 +88,20 @@ pub(super) fn visual_picker(ui: &mut Ui, state: &mut Editor, height: f32) {
             channels[axes[0]].min, channels[axes[0]].max, channels[axes[0]].suffix
         )
     };
-    caption(
-        ui,
-        pos2(rect.left(), rect.bottom() + 2.0),
-        Align2::LEFT_TOP,
-        &footer,
-    );
+    if let Some(text) = cmyk_footer {
+        ui.painter().galley(
+            pos2(area.left(), rect.bottom() + 2.0),
+            text,
+            Color32::from_gray(80),
+        );
+    } else {
+        caption(
+            ui,
+            pos2(rect.left(), rect.bottom() + 2.0),
+            Align2::LEFT_TOP,
+            &footer,
+        );
+    }
     response.on_hover_text(format!(
         "{} increases left to right ({}–{}{}).\n{} increases bottom to top ({}–{}{}).\n{}",
         channels[axes[0]].label, channels[axes[0]].min, channels[axes[0]].max, channels[axes[0]].suffix,
@@ -119,16 +151,18 @@ pub(super) fn visual_picker(ui: &mut Ui, state: &mut Editor, height: f32) {
             Align2::CENTER_TOP,
             abbreviation(channels[channel].label),
         );
-        caption(
-            ui,
-            pos2(strip.center().x, strip.bottom() + 2.0),
-            Align2::CENTER_TOP,
-            &format!(
-                "{:.precision$}",
-                values[channel],
-                precision = channels[channel].decimals.min(2)
-            ),
-        );
+        if strip_count == 1 {
+            caption(
+                ui,
+                pos2(strip.center().x, strip.bottom() + 2.0),
+                Align2::CENTER_TOP,
+                &format!(
+                    "{:.precision$}",
+                    values[channel],
+                    precision = channels[channel].decimals.min(2)
+                ),
+            );
+        }
         response.on_hover_text(format!(
             "{}: {}–{}{}. Drag upward to increase.",
             channels[channel].label,
