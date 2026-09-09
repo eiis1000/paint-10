@@ -4,7 +4,7 @@
 
 A Rust drawing app inspired by Windows 10 Paint, with its familiar ribbon,
 brushes, shapes, selections, and shortcuts. Paint 10 adds editable text and image
-objects, arbitrary rotation, transparent canvases, pixel art tools, and a richer
+objects, optional layers, arbitrary rotation, transparent canvases, pixel art tools, and a richer
 color editor. The desktop and WebAssembly builds share the same drawing engine
 and interface, built with egui/eframe.
 
@@ -95,6 +95,10 @@ at runtime.
   and Unicode selection and deletion.
 - **Pixel art:** a 1-pixel Pencil, zoom up to 3200%, pixel grid, separate remembered
   tool widths, nearest-neighbor scaling, and transparent backgrounds.
+- **Optional layers:** a compact View pane with thumbnails, visibility, drag
+  ordering, names, locking, opacity, duplication, and Merge Down. Each layer
+  holds its own paint and editable text/images; ordinary pictures start with
+  one Background layer.
 - **Color tools:** Paint HSL, RGB, HSL, HSV, linear RGB, CMYK, OKLab, and OKLCH;
   visual coordinate planes, alpha, CSS color entry, gamut fitting, 48 basic
   colors, and 16 persistent custom colors.
@@ -115,18 +119,31 @@ Ctrl+Enter finishes the box and keeps Text selected. Double-click a retained
 text object to edit it again. Native builds discover installed fonts; browser
 **Font list → Load font** imports TTF, OTF, and TTC files. Projects embed used
 fonts so captions remain editable elsewhere. The live preview and exported
-picture use the same text rendering.
+picture use the same text rendering. Rotated or scaled text temporarily uses
+its untransformed layout while typing so the caret stays aligned; finishing
+the edit restores its transform.
 
 **Pixel art:** use a 1-pixel Pencil, enable **View → Gridlines**, and zoom in.
 **Transparent Color 2** lets clear, erase, and fill remove opacity. Select
 **Keep hard pixel edges (pixel art)** in Resize for nearest-neighbor enlargement.
+
+**Layers:** enable **View → Layers** when you need to separate a caption, picture,
+or painted detail. Add creates a transparent layer above the selected one;
+drag rows to change their order. The eye shows or hides a layer. The options
+menu contains Rename, Duplicate, Merge Down, Lock, and Opacity, with Move Up/Down
+as keyboard-accessible alternatives to dragging. F2 renames the selected layer.
+The pane starts hidden; when multiple layers exist, the status bar names the
+active layer and reopens the pane when clicked. Drawing, selections, and image
+adjustments affect that layer; hidden or locked layers reject edits. Erasing
+an added layer reveals what is beneath it, while Background uses Color 2.
+Whole-picture resize, crop, rotate, and flip transform the complete stack.
 
 **Image editing:** select an inserted image, then use **Image → Adjust colors**
 or **Crop image**. Preview edits before applying them; Cancel leaves the picture
 untouched. Crop supports free dimensions and common aspect ratios. **Reset image**
 restores the selected image's original pixels, dimensions, colors, and rotation;
 Undo recovers the edits. Save as `.p10` to keep this source data. With no image
-selected, adjustments create an editable image from the current canvas or pixel
+selected, adjustments create an editable image from the active layer or pixel
 selection. Thumbnail previews approximate full-resolution effects.
 
 **Measurements:** enable **View → Measure distance** and drag between pixel
@@ -150,7 +167,7 @@ the visible pixels; reopening them gives a flattened picture.
 
 | Format | Best use and behavior |
 | --- | --- |
-| Paint 10 project (`.p10`) | Retains editable text, embedded fonts, original image pixels, crops, adjustments, transforms, and canvas pixels |
+| Paint 10 project (`.p10`) | Retains layers and their settings, editable text, embedded fonts, original image pixels, crops, adjustments, transforms, and canvas pixels |
 | PNG | Lossless pictures and pixel art with full transparency |
 | JPEG (`.jpg`, `.jpeg`, `.jpe`) | Photographs; lossy, with transparency composited over white |
 | BMP (`.bmp`, `.dib`) | Monochrome, 16-color, 256-color, or 24-bit output; transparency composited over white |
@@ -161,16 +178,21 @@ the visible pixels; reopening them gives a flattened picture.
 | PDF | Printable pages using Page Setup, generated through the print/PDF commands |
 
 **Save a copy** preserves the current filename and saved revision.
-**Save selection as** exports only the selected pixels or object. Page Setup
+**Save selection as** exports only the selected pixels or object from the active
+layer. Ordinary image saves combine the visible layers. Page Setup
 provides paper presets and custom sizes, margins, orientation, centering,
 actual-size scaling, and fitting across multiple pages.
 
 Undo history is limited to the current session and is not stored in `.p10`.
-New projects use format version 3 to preserve image edits. Paint 10 still opens
-versions 1 and 2; older releases reject version 3 instead of losing those edits.
+New projects use format version 4 to preserve layers. Paint 10 still opens
+versions 1–3 as a single Background layer; older releases reject version 4
+instead of silently losing the stack.
 Raster operations such as lifting a pixel selection, adjusting a composite
 selection, or erasing through objects can merge editable objects into pixels;
 Undo restores them while that operation remains in history.
+These operations stay within the active layer. Merge Down preserves editable
+objects when both layers have full opacity; merging partially transparent
+layers bakes their combined appearance into pixels. Undo restores the originals.
 
 **In the browser, Save downloads a file.** It cannot automatically replace the
 original or confirm that the download completed, so the picture stays marked

@@ -117,7 +117,7 @@ pub(in crate::app) fn browser_download_controls(
                 ui.add_space(4.0);
                 ui.add(
                     Label::new(
-                        RichText::new("Keeps text, images, transparency, and editable transforms.")
+                        RichText::new("Keeps layers, text, original images, and editable transforms.")
                             .weak(),
                     )
                     .wrap(),
