@@ -115,6 +115,7 @@ impl PaintApp {
                 self.file = None;
                 self.clear_selection();
                 self.refresh = true;
+                self.message = "New picture created".into();
             }
             Action::Open => {
                 #[cfg(target_arch = "wasm32")]
