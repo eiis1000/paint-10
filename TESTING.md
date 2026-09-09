@@ -1,5 +1,22 @@
 # Paint 10 verification log
 
+## September 8: shape picker stays in place when clicked
+
+The shape gallery's default content-drag behavior used the whole input frame's
+pointer movement, including motion before the button press. Moving upward from
+a Size preset to Polygon could therefore scroll the gallery by one 25px row.
+Content dragging is disabled for the gallery; arrow, wheel and keyboard scrolling
+remain available. Actual-frame tests cover separate/coalesced presses at 1.0 and
+1.05 display scales, plus the drawing workflow and arrow/wheel navigation.
+
+The native gate passes 321 tests, strict Clippy, formatting and the debug build
+(`tmp/gallery-scroll-final-native-gate.log`). The refreshed WASM build also passes.
+Actual private-browser replay of Size → 3px → Polygon now keeps the complete
+first row in place: `/tmp/paint10-browser-gallery-fix-size-to-polygon.png`.
+The earlier failing comparison is `/tmp/paint10-browser-gallery-size-to-polygon.png`.
+Both screenshots were visually inspected. Related font/File pickers are being
+corrected separately after reproducing the same mechanism in their real widgets.
+
 ## September 8: final native and web Nix builds
 
 The immutable source commit `77c1431` builds both final package snapshots:
