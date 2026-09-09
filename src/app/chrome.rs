@@ -144,10 +144,23 @@ impl PaintApp {
                     ui,
                     Button::new("").min_size(vec2(21.0, 20.0)),
                     |ui| {
-                        ui.strong("Customize Quick Access Toolbar");
+                        theme::menu(ui);
+                        theme::menu_heading(ui, "Customize Quick Access Toolbar", 265.0);
                         for (index, command) in QuickCommand::ALL.into_iter().enumerate() {
-                            let mut selected = self.quick_access.commands.contains(&command);
-                            let choice = ui.checkbox(&mut selected, command.name());
+                            let selected = self.quick_access.commands.contains(&command);
+                            let choice = ui.add(
+                                theme::MenuItem::new(command.name())
+                                    .selected(selected)
+                                    .width(265.0),
+                            );
+                            choice.widget_info(|| {
+                                WidgetInfo::selected(
+                                    WidgetType::Checkbox,
+                                    true,
+                                    selected,
+                                    command.name(),
+                                )
+                            });
                             keytips::register(
                                 ui,
                                 &choice,
@@ -156,8 +169,8 @@ impl PaintApp {
                                 (index + 1).to_string(),
                                 keytips::Kind::Button,
                             );
-                            if choice.changed() {
-                                if selected {
+                            if choice.clicked() {
+                                if !selected {
                                     self.quick_access.commands.push(command);
                                 } else {
                                     self.quick_access.commands.retain(|item| *item != command);
@@ -165,8 +178,22 @@ impl PaintApp {
                             }
                         }
                         ui.separator();
-                        let position = ui
-                            .checkbox(&mut self.quick_access.below_ribbon, "Show below the ribbon");
+                        let position = ui.add(
+                            theme::MenuItem::new("Show below the ribbon")
+                                .selected(self.quick_access.below_ribbon)
+                                .width(265.0),
+                        );
+                        position.widget_info(|| {
+                            WidgetInfo::selected(
+                                WidgetType::Checkbox,
+                                true,
+                                self.quick_access.below_ribbon,
+                                "Show below the ribbon",
+                            )
+                        });
+                        if position.clicked() {
+                            self.quick_access.below_ribbon = !self.quick_access.below_ribbon;
+                        }
                         keytips::register(
                             ui,
                             &position,
