@@ -1,5 +1,27 @@
 # Paint 10 work in progress
 
+## Current September 8 color-editor and icon expansion
+
+- Latest user request adds substantially richer color coordinates and a good
+  application icon. Root owns the pure `src/color.rs` conversion/parser module
+  and tests. ribbon_finish owns the color-editor UI and its dialog integration.
+  browser_finish has delivered the SVG/PNG/ICO identity and native/titlebar/web
+  wiring for root review. No new package snapshots until this source is stable.
+- file_finish reproduced pre-press pointer motion scrolling Fonts and both File
+  menu panes, using the real command widgets. It owns the three narrow picker
+  fixes and durable regressions. Shape gallery fix/tests are reviewed and pass
+  the 321-test native gate; root is replaying the updated browser at port 8080.
+- Native launcher 67966 remains on the installed 77c1431 package, DISPLAY=:1,
+  controller 31474. All new landscape glints, the soft reflection field, three
+  mountain rock ribs and three foreground rocks with lit faces/contact shadows
+  are saved. Actual capture `/tmp/paint10-landscape-before-color-expansion-saved.png`
+  shows the clean title and Saved status. Art is paused for the requested new
+  functionality; raster exports are stale and photorealism remains unfinished.
+- Browser launcher 90300, DISPLAY=:2, controller 38238 now displays the refreshed
+  gallery-fixed site at port 8080. It holds a blank clean scratch document.
+  Port 8081 still serves the previous immutable Nix package. All GUI input and
+  file dialogs remain on the private desktops; no host desktop controls are used.
+
 ## Current September 8 checkpoint, around 20:15 EDT
 
 - Further logical commits: `96b7316` records keyboard acceptance; `e0b4ccd`

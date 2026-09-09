@@ -69,9 +69,13 @@ snow and rock detail. No brush strokes, imported pictures or generated images
 were used. The current result is stylized and remains a checkpoint toward the
 requested photorealistic landscape exercise.
 
-The project reopened in the browser. Native Save a copy retained its project
-destination while exporting PNG, JPEG and WebP. PNG and JPEG were visually
-inspected; the project, PNG and lossless WebP have exactly matching RGBA pixels.
+The earlier checkpoint reopened in the browser. Native Save a copy retained
+its project destination while exporting PNG, JPEG and WebP; the PNG and lossless
+WebP matched that checkpoint's exact RGBA pixels. The project now contains
+further hand-drawn mountain ravines, exposed rock ribs, fragmented reflections,
+pine details and angular foreground stones with lit faces and contact shadows.
+These refinements are saved and visually inspected. The raster links above
+still show the earlier checkpoint and must be refreshed after painting resumes.
 
 ## Ant-colony simulation slide
 
