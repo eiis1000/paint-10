@@ -51,9 +51,18 @@ embed-resource = "=3.0.11"
 
 [profile.dev]
 opt-level = 1
+# Keep file/line backtraces without hundreds of megabytes of type information.
+debug = "line-tables-only"
+incremental = false
 
 [profile.dev.package."*"]
 opt-level = 2
+debug = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
 
 [patch.crates-io]
 egui-winit = { path = "vendor/egui-winit" }

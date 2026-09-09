@@ -190,14 +190,14 @@ def check_startup(binary: Path) -> None:
 def main() -> None:
     platform = {"linux": "linux", "darwin": "macos", "win32": "windows"}[sys.platform]
     suffix = ".exe" if platform == "windows" else ""
+    target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")).resolve()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, default=ROOT / f"target/release/paint-10{suffix}")
+    parser.add_argument("--binary", type=Path, default=target / f"release/paint-10{suffix}")
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
     with (ROOT / "Cargo.toml").open("rb") as file:
         version = tomllib.load(file)["package"]["version"].split("-", 1)[0].split("+", 1)[0]
-    target = ROOT / "target"
-    target.mkdir(exist_ok=True)
+    target.mkdir(parents=True, exist_ok=True)
     extension = "zip" if platform == "windows" else "tar.gz"
     output = target / f"paint-10-{platform}.{extension}"
     with tempfile.TemporaryDirectory(prefix="native-package-", dir=target) as temporary:
