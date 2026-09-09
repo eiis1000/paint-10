@@ -1,5 +1,58 @@
 # Paint 10 work in progress
 
+## Current September 8 checkpoint: final color palette replay
+
+- Parser, icon and native packaging are committed as `dd11e6a`, `ea50c8c`
+  and `d798268`. Root reviewed their source and verification evidence. The
+  final color UI is committed as `6baab78` and passes 139 library + 211 app
+  tests, strict Clippy, formatting and debug build
+  (`tmp/color-editor-palette-final-native.log`). The final readability-only
+  delta has a separate formatting/diff check.
+- Native private desktop now stays alive across application restarts: launcher
+  shell 45195, DISPLAY=:1, `/tmp/paint10-desktop.SuHYRa`, controller 31474.
+  It runs the final palette debug build with the saved landscape open. Actual
+  48/16 layout, named-color Add, transparent color in selected slot six and
+  immediate Home recents all pass. The 500×400 dialog keeps its title, exact
+  entry and buttons visible; extreme OKLab input retains the last valid RGBA
+  and cannot be accepted. Scroll, all controls at 500×500 and actual restart
+  persistence pass. Slot-six recall restores exact 33669980 RGBA.
+- browser_finish is refreshing WASM and its immutable Nix package; its private GUI
+  remains on DISPLAY=:2/controller 38238. Root still owns GUI, art, docs and Git.
+  The icon packaging source is frozen. file_finish builds/audits the native
+  Nix package. Both use production commit `6baab78`.
+- Artwork was unchanged during color testing. Root is resuming shape work
+  with the updated color helper (Color text 600,634; OK 740,688 in the large
+  window). Landscape photorealism and fresh
+  PNG/JPEG/WebP exports remain unfinished. The other four art exercises are
+  complete. Continue actual shape painting after editor/browser verification.
+
+## Current September 8 checkpoint, around 21:20 EDT
+
+- Logical commits continue: `dcd2721` fixes shape-gallery scrolling; `d2e4129`
+  adds color coordinates and literal parsing; `05c853b` saves the landscape
+  refinements and marks raster exports stale; `5336e3f` fixes font/File picker
+  scrolling; `d6942e4` normalizes the hue seam and negative parsed chroma.
+- Native launcher 11121 now runs the integrated debug build, private DISPLAY=:1,
+  directory `/tmp/paint10-desktop.galsmj`, controller 31474. It opened the saved
+  landscape at 50%. Actual RGB Tab entry, OKLCH mode switching, CSS alpha and
+  explicit gamut fitting pass. Color dialog remains open for invalid-input and
+  Cancel checks. The artwork has not been altered during these color tests.
+- The first integrated snapshot passes 133 library + 209 app tests, strict
+  Clippy and the debug build. Current code is evolving further: ribbon_finish
+  owns the compact 400px layout, restored 48 basic / 16 custom palette slots,
+  persistence and a recent-custom subset for Home. Actual 2016 Paint video
+  establishes those counts; see `tmp/paint-reference-video/edit-colours-audit.md`.
+- browser_finish owns bounded parser followups (named colors, standalone none,
+  strict number grammar and overflow rejection), plus delivered icon assets.
+  file_finish owns Windows resource embedding and macOS application packaging,
+  with archived Unix CI artifacts to preserve executable permissions. Root owns
+  manual GUI, art, documentation and Git. Coordinate shared Cargo builds.
+- Browser launcher 90300/private DISPLAY=:2/controller 38238 remains on the
+  gallery-fixed 8080 site, with a blank clean scratch image. Actual Up/Down
+  gallery buttons still work. The new color/icon site has not yet been rebuilt.
+  All new package builds await stable reviewed source; Windows/macOS execution
+  is still not claimed. Landscape photorealism and fresh exports remain pending.
+
 ## Current September 8 color-editor and icon expansion
 
 - Latest user request adds substantially richer color coordinates and a good

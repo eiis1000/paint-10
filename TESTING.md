@@ -1,5 +1,87 @@
 # Paint 10 verification log
 
+## September 8: full color palette and compact native replay
+
+Commit `6baab78` restores the 48 basic and 16 custom dialog colors established
+by the period-video audit, and adds the coordinate-mode editor. The combined
+gate passes **350 tests (139 library + 211 app)**, strict Clippy, formatting
+and the debug build in `tmp/color-editor-palette-final-native.log`. The final
+readability-only delta preserves expression behavior and exact tooltip text;
+scoped formatting and the full formatting check pass afterward.
+
+The actual native GUI adds `rebeccapurple` as RGB 102/51/153 in slot one, then
+stores `#33669980` in the selected sixth slot. The first slot remains intact,
+the sixth displays alpha, the insertion marker advances, and Home immediately
+shows the new recent swatches. Read-only private preference inspection confirms
+all 16 slots and exact RGBA values. Cancel restores opaque black without
+changing the saved landscape. Captures were visually inspected:
+`/tmp/paint10-color-palette-native-{open,named-add,slot-six,cancel}.png`.
+
+At 500×400, the title, Color text, status and OK/Cancel remain visible. Mouse
+wheel scrolling exposes the lower palette rows while keeping the footer fixed.
+Typing `oklab(50% 1e308 1e308)` and pressing Enter retains the last valid preview
+and keeps acceptance disabled. Captures, all visually inspected:
+`/tmp/paint10-color-palette-native-{400,400-invalid,400-scrolled}.png`.
+The earlier clipped comparison remains
+`/tmp/paint10-color-editor-native-400-before.png`.
+
+Closing and relaunching the real executable within the same private desktop
+preserves the Home recent list and both custom slots. Recalling slot six shows
+RGB 51/102/153, alpha 128 and hex 33669980; the purple first slot remains intact.
+The actual restart and recalled-editor screenshots were visually inspected:
+`/tmp/paint10-color-palette-native-{restarted,recalled}.png`. Browser replay
+and the landscape exercise remain unfinished. A further actual 500×500 replay
+shows all 48 basic and 16 custom cells, the coordinate fields, previews and
+footer without scrolling; `/tmp/paint10-color-palette-native-500.png` was
+visually inspected.
+
+## September 8: expanded color engine and first native editor replay
+
+Commits `d2e4129` and `d6942e4` provide RGB, Paint HSL, HSL, HSV, linear RGB,
+approximate CMYK, OKLab and OKLCH conversions plus literal CSS/hex parsing.
+Reference values and a representative RGB cube pass; independent probes covered
+100,000 colors per space and 21,816 gamut-fit cases. Those probes exposed the
+near-red Paint hue wrap, and parser review caught retained negative OKLCH chroma.
+Both corrections have passing regressions. Exact sources and probe qualifications
+are in `tmp/color-review/review.md`.
+
+The first integrated editor snapshot passes 133 library and 209 app tests,
+formatting, strict Clippy and a native debug build:
+`tmp/color-editor-final-native-gate.log`. It includes the confirmed font/File
+picker corrections in `5336e3f`, whose before/after evidence is preserved in
+`tmp/command-picker-fix-handoff.md`.
+
+Actual private native input enters RGB 128, 64, 32 with successive Tab presses
+and shows exact hex 804020. Switching to OKLCH retains the color. Pasting
+`oklch(70% 0.4 30 / 50%)` shows the authored coordinates, alpha 128, checkerboard
+preview and an out-of-sRGB notice. Clicking Fit reduces chroma to approximately
+0.19158, preserves alpha, and yields FF655180. The actual titlebar also displays
+the new palette-and-brush icon. Captures:
+`/tmp/paint10-color-editor-native-{start,rgb,spaces,oklch,css-gamut,fitted}.png`.
+All were visually inspected. Further compact-layout, palette and browser work
+is in progress; this snapshot is not the final color-editor acceptance gate.
+
+Typing `oklch(unfinished` and pressing Enter retains the last valid preview,
+shows an error and keeps OK/Add disabled. Cancel then restores opaque black
+without modifying the saved landscape. Actual 500×400 replay confirms the
+first editor's title and footer are clipped; a bounded control area and revised
+palette layout are being verified. Captures, all visually inspected:
+`/tmp/paint10-color-editor-native-{invalid,cancel,400-before}.png`.
+
+Commit `dd11e6a` adds all 148 fixed CSS names, standalone modern `none`
+components, strict CSS number syntax and conversion-overflow rejection. All
+13 focused color tests and strict native library Clippy pass. The name table
+was checked against both hex and decimal RGB columns of the dated W3C source;
+see `tmp/color-literals-handoff.md` for source and verification evidence.
+
+Commits `ea50c8c` and `d798268` supply the new icon and native packaging.
+The icon was visually inspected at application and small titlebar sizes.
+Four packaging tests and actual Linux archive/extracted-helper startup pass.
+The Windows resource compiler probe verifies seven exact ICO image payloads
+and produces an x86-64 COFF resource object. It does not execute Windows.
+macOS bundle structure is fixture-tested; actual macOS iconutil and execution
+remain CI checks, not local results. See `tmp/native-icon-packaging-handoff.md`.
+
 ## September 8: shape picker stays in place when clicked
 
 The shape gallery's default content-drag behavior used the whole input frame's

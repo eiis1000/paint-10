@@ -25,6 +25,23 @@ presets are inferred from their pixel widths, not quoted from either video.
 UK “Felt tip” and “Colour” in the 2016 recording are localization differences.
 No Windows 11 design changes have been adopted on the basis of this audit.
 
+The 2016 recording's Edit Colours dialog at 22:07 also establishes 48 basic
+colors in an 8×6 grid and 16 custom colors in an 8×2 grid. The old editor used
+the smaller ribbon palette and only ten custom entries. Commit `6baab78`
+restores these dialog counts and paired RGB/HSL columns, while adding optional
+color coordinate modes, alpha and gamut fitting. Exact palette coordinates use
+Wine's ChooseColor implementation as a separate reference; compressed video
+pixels are not treated as exact RGB data. The inspected video shows only the
+first custom insertion, so selecting an explicit overwrite slot and advancing
+down columns is a chosen behavior, not a claim of proven Windows equivalence.
+
+Actual native testing confirms named-color entry, transparent custom storage,
+the separate Home recent list, invalid-input rejection and a scrollable dialog
+at 500×400. The compact layout exposed a shared RGB/HSL Grid ID that requested
+repaint indefinitely; distinct IDs restore the existing idle-frame regression.
+The combined native suite passes 350 tests. Further browser and package results
+are recorded in `TESTING.md` as those replays finish.
+
 The follow-up `e5248af` joins the main and dropdown regions of Paste, Select
 and Brushes, and gives File's format rows distinct original picture previews.
 Actual native clicks open the sectioned Select menu and four-column brush

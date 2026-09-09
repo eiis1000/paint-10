@@ -54,6 +54,24 @@ Paint fill choices retain their numeric keytips.
 
 The title-bar dropdown customizes the Quick Access Toolbar and moves it below the ribbon. Its commands and placement persist. Alt+1, Alt+2, and subsequent numbers invoke the commands in their current order.
 
+**Edit colors** opens with Paint's RGB fields and its original HSL coordinates
+(hue 0–239, saturation and luminosity 0–240). The Coordinates menu also offers
+RGB, HSL in degrees and percentages, HSV, linear RGB, CMYK, OKLab and OKLCH.
+Choose either the Paint spectrum or an HSV picker. Alpha has a numeric field,
+a checkerboard slider and a transparent preview; changing RGB preserves it.
+
+Color text accepts short or full hex, all 148 CSS color names, `rgb()`, `hsl()`,
+`oklab()`, `oklch()`, and `color(srgb …)` / `color(srgb-linear …)`. For example,
+`#66339980` sets half-transparent purple. The canvas uses 8-bit sRGB; an
+out-of-gamut color retains its authored perceptual coordinates and offers
+**Fit to sRGB**, which reduces chroma while preserving lightness and hue.
+CMYK is an unprofiled approximation for choosing colors, not an ICC print proof.
+
+The dialog has 48 basic colors and 16 persistent custom slots. Click a custom
+slot to recall it and select where **Add to custom colors** stores the next
+color. Home shows the ten most recently used custom colors. Cancel restores
+the original drawing color; explicitly added custom colors remain saved.
+
 At narrow widths, ribbon groups collapse into buttons that open their full controls. Alt or F10 displays keytips on the actual commands; type the displayed letters to activate them. Tab moves between groups, arrows navigate within a group, and Escape returns through open menus.
 
 Text and inserted images remain editable objects. Select an object to move or resize it; double-click a text object to edit its contents. While typing, drag the box border to move it or its handles to reflow the text. The text ribbon offers typed/searchable installed fonts, size, styles, the Paint palette, and an opaque or transparent background. Home clipboard commands act on selected characters while a text box is active. Rotation includes arbitrary angles as well as the familiar quarter turns and flips; object resizing and flips preserve editable text.
@@ -194,6 +212,20 @@ cargo test --locked --all-targets
 ```
 
 The executable is `target/release/paint-10` on Linux/macOS and `target/release/paint-10.exe` on Windows. Windows requires the Visual Studio C++ build tools; macOS requires Xcode Command Line Tools. On Linux outside Nix, install GTK 3 development files, `pkg-config`, and X11/Wayland/OpenGL development libraries. The workflow lists the Ubuntu packages used for its Linux build.
+
+Windows builds embed Paint 10's icon in the executable. To create a native
+archive after the release build, run `python3 scripts/package-native.py` with
+Python 3.12 or newer (`python` on Windows). It produces a ZIP on Windows or a
+tar.gz on Linux/macOS under `target/`. The macOS archive contains **Paint 10.app**
+with its application icon; Unix archives preserve executable permissions.
+The script checks the platform's icon resources and runs the extracted
+executable's file-dialog helper without opening a window. CI uses this same
+packaging path. Windows/macOS execution, signing and notarization remain
+unverified locally.
+
+The icon's source is [assets/paint-10.svg](assets/paint-10.svg).
+`nix develop .#test -c bash scripts/build-icons.sh` regenerates its PNG and ICO
+assets, shared by the native window, desktop launcher, macOS bundle and browser.
 
 Linux Save As uses GTK's native format selector. Windows and macOS first show all eleven formats, including each BMP color depth, then open the native destination dialog. This keeps BMP depth explicit even though the variants share `.bmp`. Preferences use `%APPDATA%` on Windows, `~/Library/Application Support` on macOS, and `~/.config` on Linux; an absolute `XDG_CONFIG_HOME` overrides those locations.
 
