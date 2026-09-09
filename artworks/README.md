@@ -77,6 +77,12 @@ pine details and angular foreground stones with lit faces and contact shadows.
 These refinements are saved and visually inspected. The raster links above
 still show the earlier checkpoint and must be refreshed after painting resumes.
 
+The next saved pass adds two narrow snow channels beside the exposed rock ribs
+and breaks sections of the continuous pale shoreline with three small Polygon
+shapes. An initial shoreline pass that crossed the foreground pine was undone
+and redrawn on either side of the tree. This remains a stylized study; the
+photorealism exercise and refreshed raster exports are still in progress.
+
 ## Ant-colony simulation slide
 
 [Editable project](ant-colony-simulation.p10) ·
