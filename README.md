@@ -8,9 +8,12 @@ objects, arbitrary rotation, transparent canvases, pixel art tools, and a richer
 color editor. The desktop and WebAssembly builds share the same drawing engine
 and interface, built with egui/eframe.
 
-Paint 10 is an independent project. Linux and the browser have been exercised
-locally; Windows and macOS have build targets and CI jobs but remain unverified
-locally. See [platform status and limits](#platform-status-and-limits).
+**[Open Paint 10 in your browser](https://eiis1000.github.io/paint-10/)** ·
+[Build status](https://github.com/eiis1000/paint-10/actions/workflows/build.yml)
+
+Paint 10 is an independent project. Linux and the browser are manually tested;
+CI builds and tests Linux, Windows, macOS, Nix, and WebAssembly.
+See [platform status and limits](#platform-status-and-limits).
 
 ## Get started
 
@@ -33,7 +36,8 @@ NixOS and Home Manager installation is covered [below](#install-in-nixos-or-home
 
 ### In your browser
 
-On Linux, build and serve the static site with the pinned Nix environment:
+Use the [hosted app](https://eiis1000.github.io/paint-10/), or build and serve
+the static site on Linux with the pinned Nix environment:
 
 ```sh
 nix develop .#web -c bash scripts/build-web.sh
@@ -45,8 +49,9 @@ browser with WebGL. The site processes pictures on your device; it does not
 upload them to a server. `nix build .#paint-10-web` produces a packaged static site.
 
 To publish on GitHub Pages, follow the [deployment guide](web/README.md#publish-with-github-pages).
-The checked-in workflow deploys your default branch after Pages is configured
-to use **GitHub Actions**. The [browser guide](web/README.md) also covers building
+The checked-in workflow deploys your default branch after all native, Nix, and
+browser checks pass and Pages is configured to use **GitHub Actions**.
+The [browser guide](web/README.md) also covers building
 without Nix, font loading, downloads, and clipboard permissions.
 
 ### Linux, Windows, or macOS with Cargo
@@ -81,7 +86,9 @@ at runtime.
   gradients. Press Enter to apply a finished shape.
 - **Selections and images:** rectangle/free-form and transparent selections,
   cut/copy/paste, crop, resize, skew, flips, and arbitrary-angle rotation.
-  Inserted images remain movable and resizable objects.
+  Inserted images retain their source pixels through resizing and rotation.
+  Source crops, brightness, contrast, saturation, warmth, hue, gamma, opacity,
+  blur, sharpening, grayscale, and inversion remain reversible in projects.
 - **Editable text:** mixed formatting, searchable font families, point sizes,
   bold, italic, underline, strikeout, alignment, colored outlines, and transparent
   or opaque backgrounds. Text supports shaped scripts, mixed writing directions,
@@ -95,8 +102,9 @@ at runtime.
   a thumbnail navigator, image/project exports, page setup, tiled print preview,
   and PDF generation.
 
-The Home ribbon contains drawing and image tools; View contains navigation and
-measurement controls. Color 1 is the foreground and Color 2 is the background.
+The Home ribbon contains drawing tools; View contains navigation and measurement
+controls. Image groups transforms, cropping, color adjustments, and original
+image recovery. Color 1 is the foreground and Color 2 is the background.
 Right-click a palette swatch to set Color 2. Ribbon groups collapse into menus
 at narrow widths. The title-bar dropdown customizes the Quick Access Toolbar.
 
@@ -112,6 +120,14 @@ picture use the same text rendering.
 **Pixel art:** use a 1-pixel Pencil, enable **View → Gridlines**, and zoom in.
 **Transparent Color 2** lets clear, erase, and fill remove opacity. Select
 **Keep hard pixel edges (pixel art)** in Resize for nearest-neighbor enlargement.
+
+**Image editing:** select an inserted image, then use **Image → Adjust colors**
+or **Crop image**. Preview edits before applying them; Cancel leaves the picture
+untouched. Crop supports free dimensions and common aspect ratios. **Reset image**
+restores the selected image's original pixels, dimensions, colors, and rotation;
+Undo recovers the edits. Save as `.p10` to keep this source data. With no image
+selected, adjustments create an editable image from the current canvas or pixel
+selection. Thumbnail previews approximate full-resolution effects.
 
 **Measurements:** enable **View → Measure distance** and drag between pixel
 centers. Adjust either endpoint with the mouse or arrows (Shift: ten pixels).
@@ -134,7 +150,7 @@ the visible pixels; reopening them gives a flattened picture.
 
 | Format | Best use and behavior |
 | --- | --- |
-| Paint 10 project (`.p10`) | Retains editable text, embedded fonts, image objects, transforms, and canvas pixels |
+| Paint 10 project (`.p10`) | Retains editable text, embedded fonts, original image pixels, crops, adjustments, transforms, and canvas pixels |
 | PNG | Lossless pictures and pixel art with full transparency |
 | JPEG (`.jpg`, `.jpeg`, `.jpe`) | Photographs; lossy, with transparency composited over white |
 | BMP (`.bmp`, `.dib`) | Monochrome, 16-color, 256-color, or 24-bit output; transparency composited over white |
@@ -150,8 +166,10 @@ provides paper presets and custom sizes, margins, orientation, centering,
 actual-size scaling, and fitting across multiple pages.
 
 Undo history is limited to the current session and is not stored in `.p10`.
-Raster operations such as lifting a pixel selection, transforming the whole
-canvas, or erasing through objects can merge editable objects into pixels;
+New projects use format version 3 to preserve image edits. Paint 10 still opens
+versions 1 and 2; older releases reject version 3 instead of losing those edits.
+Raster operations such as lifting a pixel selection, adjusting a composite
+selection, or erasing through objects can merge editable objects into pixels;
 Undo restores them while that operation remains in history.
 
 **In the browser, Save downloads a file.** It cannot automatically replace the
@@ -190,13 +208,13 @@ F5 remains available to reload the page.
 
 ## Install in NixOS or Home Manager
 
-Add Paint 10 as a flake input, replacing `OWNER/REPO` with the published
-repository. A minimal NixOS example, using your existing `configuration.nix`:
+Add Paint 10 as a flake input. A minimal NixOS example, using your existing
+`configuration.nix`:
 
 ```nix
 {
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  inputs.paint10.url = "github:OWNER/REPO";
+  inputs.paint10.url = "github:eiis1000/paint-10";
 
   outputs = inputs@{ nixpkgs, ... }: {
     nixosConfigurations.my-machine = nixpkgs.lib.nixosSystem {
