@@ -1920,38 +1920,51 @@ mod tests {
 
     #[test]
     fn page_navigation_moves_within_long_text_and_ordered_typing_stays_at_the_caret() {
-        let ctx = Context::default();
-        let text = (0..100)
-            .map(|line| format!("Line {line}\n"))
-            .collect::<String>();
-        let mut app = editing_app(&ctx, &text);
-        let state = app.text_edit.as_mut().unwrap();
-        state.selection = 0..0;
-        state.focus = true;
-        app_frame(&mut app, &ctx, Vec::new());
-        app_frame(&mut app, &ctx, vec![key(Key::PageDown, Modifiers::NONE)]);
-        let caret = app.text_edit.as_ref().unwrap().selection.start;
-        assert!(caret > 0 && caret < text.chars().count());
-        app_frame(&mut app, &ctx, vec![key(Key::PageUp, Modifiers::SHIFT)]);
-        assert_eq!(app.text_edit.as_ref().unwrap().selection, 0..caret);
-        app_frame(
-            &mut app,
-            &ctx,
-            vec![
-                Event::Text("First\nSecond".into()),
-                key(Key::ArrowUp, Modifiers::CTRL),
-                Event::Text("!".into()),
-            ],
-        );
-        for _ in 0..3 {
+        for (os, paragraph_modifier) in [
+            (
+                egui::os::OperatingSystem::Windows,
+                Modifiers::CTRL | Modifiers::COMMAND,
+            ),
+            (
+                egui::os::OperatingSystem::Nix,
+                Modifiers::CTRL | Modifiers::COMMAND,
+            ),
+            (egui::os::OperatingSystem::Mac, Modifiers::ALT),
+        ] {
+            let ctx = Context::default();
+            ctx.set_os(os);
+            let text = (0..100)
+                .map(|line| format!("Line {line}\n"))
+                .collect::<String>();
+            let mut app = editing_app(&ctx, &text);
+            let state = app.text_edit.as_mut().unwrap();
+            state.selection = 0..0;
+            state.focus = true;
             app_frame(&mut app, &ctx, Vec::new());
+            app_frame(&mut app, &ctx, vec![key(Key::PageDown, Modifiers::NONE)]);
+            let caret = app.text_edit.as_ref().unwrap().selection.start;
+            assert!(caret > 0 && caret < text.chars().count());
+            app_frame(&mut app, &ctx, vec![key(Key::PageUp, Modifiers::SHIFT)]);
+            assert_eq!(app.text_edit.as_ref().unwrap().selection, 0..caret);
+            app_frame(
+                &mut app,
+                &ctx,
+                vec![
+                    Event::Text("First\nSecond".into()),
+                    key(Key::ArrowUp, paragraph_modifier),
+                    Event::Text("!".into()),
+                ],
+            );
+            for _ in 0..3 {
+                app_frame(&mut app, &ctx, Vec::new());
+            }
+            assert!(app
+                .text_edit
+                .as_ref()
+                .unwrap()
+                .text
+                .starts_with("First\n!Second"));
         }
-        assert!(app
-            .text_edit
-            .as_ref()
-            .unwrap()
-            .text
-            .starts_with("First\n!Second"));
     }
 
     #[test]

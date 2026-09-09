@@ -1855,60 +1855,68 @@ mod gradient_tests {
 
     #[test]
     fn size_menu_uses_tool_presets_and_accepts_exact_custom_values() {
-        let context = Context::default();
-        context.enable_accesskit();
-        let mut app = PaintApp::new_with_context(&context, false);
-        for (tool, presets) in [
-            (Tool::Pencil, [1, 2, 3, 4]),
-            (Tool::Rectangle, [1, 3, 5, 8]),
-            (Tool::Eraser, [4, 6, 8, 10]),
+        for os in [
+            egui::os::OperatingSystem::Windows,
+            egui::os::OperatingSystem::Nix,
+            egui::os::OperatingSystem::Mac,
         ] {
-            app.set_tool(tool);
-            settle(&mut app, &context);
-            keys(&mut app, &context, &[Key::F10, Key::H, Key::W]);
-            let popup = settle(&mut app, &context);
-            for size in presets {
-                assert!(has_label(&popup, &format!("{size} px")));
+            let context = Context::default();
+            context.set_os(os);
+            context.enable_accesskit();
+            let mut app = PaintApp::new_with_context(&context, false);
+            for (tool, presets) in [
+                (Tool::Pencil, [1, 2, 3, 4]),
+                (Tool::Rectangle, [1, 3, 5, 8]),
+                (Tool::Eraser, [4, 6, 8, 10]),
+            ] {
+                app.set_tool(tool);
+                settle(&mut app, &context);
+                keys(&mut app, &context, &[Key::F10, Key::H, Key::W]);
+                let popup = settle(&mut app, &context);
+                for size in presets {
+                    assert!(has_label(&popup, &format!("{size} px")));
+                }
+                assert!(!has_label(&popup, "50 px"));
+                keys(&mut app, &context, &[Key::Num2]);
+                settle(&mut app, &context);
+                assert_eq!(app.size, presets[1]);
             }
-            assert!(!has_label(&popup, "50 px"));
-            keys(&mut app, &context, &[Key::Num2]);
-            settle(&mut app, &context);
-            assert_eq!(app.size, presets[1]);
-        }
-        for (text, expected, modifiers, cancel) in [
-            ("137", 137, Modifiers::CTRL, false),
-            ("0", 1, Modifiers::CTRL, false),
-            ("900", 500, Modifiers::MAC_CMD, false),
-            ("75", 500, Modifiers::CTRL, true),
-        ] {
-            keys(&mut app, &context, &[Key::F10, Key::H, Key::W, Key::C]);
-            settle(&mut app, &context);
-            frame(
-                &mut app,
-                &context,
-                vec![Event::Key {
-                    key: Key::A,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers,
-                }],
-            );
-            assert!(
-                keytips::popup_open(&context),
-                "Select all keeps the numeric editor open"
-            );
-            frame(&mut app, &context, vec![Event::Text(text.into())]);
-            keys(
-                &mut app,
-                &context,
-                &[if cancel { Key::Escape } else { Key::Enter }],
-            );
-            settle(&mut app, &context);
-            assert_eq!(app.size, expected);
-            assert!(app.selection.is_none(), "Ctrl+A never selects the picture");
-            keys(&mut app, &context, &[Key::Escape, Key::Escape, Key::Escape]);
-            settle(&mut app, &context);
+            for (text, expected, modifiers, cancel) in [
+                ("137", 137, Modifiers::CTRL, false),
+                ("0", 1, Modifiers::CTRL, false),
+                ("900", 500, Modifiers::MAC_CMD, false),
+                ("75", 500, Modifiers::CTRL, true),
+            ] {
+                keys(&mut app, &context, &[Key::F10, Key::H, Key::W, Key::C]);
+                settle(&mut app, &context);
+                frame(
+                    &mut app,
+                    &context,
+                    vec![Event::Key {
+                        key: Key::A,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        // Match the command flag supplied by the native and web backends.
+                        modifiers: modifiers | Modifiers::COMMAND,
+                    }],
+                );
+                assert!(
+                    keytips::popup_open(&context),
+                    "Select all keeps the numeric editor open"
+                );
+                frame(&mut app, &context, vec![Event::Text(text.into())]);
+                keys(
+                    &mut app,
+                    &context,
+                    &[if cancel { Key::Escape } else { Key::Enter }],
+                );
+                settle(&mut app, &context);
+                assert_eq!(app.size, expected);
+                assert!(app.selection.is_none(), "Ctrl+A never selects the picture");
+                keys(&mut app, &context, &[Key::Escape, Key::Escape, Key::Escape]);
+                settle(&mut app, &context);
+            }
         }
     }
 
