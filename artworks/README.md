@@ -57,7 +57,7 @@ the project destination, and Undo restored its original dimensions afterward.
 The enlarged export was visually inspected, and the original project reopened
 correctly in the verified Nix package.
 
-## Landscape study checkpoint
+## Alpine landscape study
 
 [Project](shape-landscape.p10) · [PNG](shape-landscape.png) ·
 [JPEG](shape-landscape.jpg) · [WebP](shape-landscape.webp)
@@ -69,43 +69,24 @@ snow and rock detail. No brush strokes, imported pictures or generated images
 were used. The current result is stylized and remains a checkpoint toward the
 requested photorealistic landscape exercise.
 
-The earlier checkpoint reopened in the browser. Native Save a copy retained
-its project destination while exporting PNG, JPEG and WebP; the PNG and lossless
-WebP matched that checkpoint's exact RGBA pixels. The project now contains
-further hand-drawn mountain ravines, exposed rock ribs, fragmented reflections,
-pine details and angular foreground stones with lit faces and contact shadows.
-These refinements are saved and visually inspected. The raster links above
-still show the earlier checkpoint and must be refreshed after painting resumes.
+The saved refinements include mountain ravines, exposed rock ribs, narrow snow
+channels, fragmented reflections, uneven pine branches, bent grass Curves and
+foreground stones with lit faces and contact shadows. Gradient Polygons shade
+the slopes; overlapping translucent Ovals build cloud lobes and distant haze.
+Each pass was visually inspected in the actual app. Attempts with visible seams,
+an intrusive glow or an unwanted rounded stroke end were undone.
 
-The next saved pass adds two narrow snow channels beside the exposed rock ribs
-and breaks sections of the continuous pale shoreline with three small Polygon
-shapes. An initial shoreline pass that crossed the foreground pine was undone
-and redrawn on either side of the tree. This remains a stylized study; the
-photorealism exercise and refreshed raster exports are still in progress.
+The haze work exposed an alpha-display error. Its correction was verified on
+native and browser canvases and color previews; saved RGBA pixels were intact.
+The final alpine project was saved in the installed Nix package. Native
+**Save a copy** refreshed PNG, JPEG and WebP while retaining the `.p10`
+destination. Read-only checks confirm exact project/PNG/WebP RGBA agreement
+at 1920 × 1080 and matching JPEG dimensions. The JPEG was visually inspected,
+and the fresh WebP reopened in Paint 10 with the same composition.
 
-The foliage pass gives the large pine two unequal branch masses and replaces
-the pale star-shaped plants with eight bent Curve shapes. Natural pencil
-outlines at five pixels provide their broken edges. These were painted in
-the installed Nix package and visually inspected on the actual canvas.
-Four further Polygon shapes tone down and interrupt the broad snow reflection.
-Color Picker samples from the open water and darker reflected mountain give
-the cuts their colors. The saved project contains these changes; raster
-exports still await the end of the landscape pass.
-The next saved pass replaces a distant summit's straight contour with an
-uneven Polygon edge and adds a low-opacity radial haze Oval. Two broader
-ridge attempts left visible seams and were undone before the narrower contour
-was kept. The haze color also exposed a light-alpha preview bug in the
-application; its numeric color is correct, and the display correction is
-being tested separately.
-
-After fixing and verifying that display discrepancy, five overlapping radial
-Oval shapes add unequal lobes to the clouds. Two shallow translucent blue-gray
-Ovals shade their undersides. They use only the shape tools and preserve the
-existing mountain composition; the landscape remains a work in progress.
-
-Three further solid Polygon shapes give the smaller pine unequal upper-left,
-middle-right and lower-left branches. They were drawn and saved in the installed
-Nix package, with the neighboring foliage sampled using Color Picker.
+This alpine picture remains deliberately geometric in appearance. A separate
+coastal study is underway for the shape-only realism exercise; this painting
+and its refreshed exports are preserved.
 
 ## Ant-colony simulation slide
 
