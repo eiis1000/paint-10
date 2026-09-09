@@ -192,7 +192,7 @@ impl PaintApp {
             ("Delete", "Del", Action::Clear, selected),
             ("Select all", "Ctrl+A", Action::SelectAll, true),
             ("Crop", "Ctrl+Shift+X", Action::Crop, selected),
-            ("Resize and skew…", "Ctrl+W", Action::Resize, true),
+            ("Resize, skew, and rotate…", "Ctrl+W", Action::Resize, true),
             ("Invert colors", "Ctrl+Shift+I", Action::Invert, true),
         ] {
             if label == "Crop" {
@@ -204,6 +204,42 @@ impl PaintApp {
                 self.action(action, ctx);
                 self.keyboard_context_menu = false;
                 ui.close_menu();
+            }
+            if matches!(action, Action::Resize) {
+                let mut rotate_label = egui::text::LayoutJob::simple_singleline(
+                    "Rotate".into(),
+                    FontId::proportional(13.0),
+                    ui.visuals().text_color(),
+                );
+                // Match MenuItem's icon gutter without shifting the submenu arrow.
+                rotate_label.sections[0].leading_space = 32.0 - ui.spacing().button_padding.x;
+                let menu = ui.menu_button(rotate_label, |ui| {
+                    theme::menu(ui);
+                    for (label, action) in [
+                        ("Rotate right 90°", Action::Rotate(90.0)),
+                        ("Rotate left 90°", Action::Rotate(270.0)),
+                        ("Rotate 180°", Action::Rotate(180.0)),
+                        ("Flip vertical", Action::Flip(false)),
+                        ("Flip horizontal", Action::Flip(true)),
+                    ] {
+                        if ui.add(theme::MenuItem::new(label)).clicked() {
+                            self.action(action, ctx);
+                            self.keyboard_context_menu = false;
+                            ui.close_menu();
+                        }
+                    }
+                    ui.separator();
+                    if ui.add(theme::MenuItem::new("Custom angle…")).clicked() {
+                        self.angle = self
+                            .object
+                            .map(|index| self.doc.objects[index].angle)
+                            .unwrap_or(0.0);
+                        self.dialog = Some(Dialog::Rotate);
+                        self.keyboard_context_menu = false;
+                        ui.close_menu();
+                    }
+                });
+                self.focus_keyboard_context(ui, &menu.response);
             }
         }
         if selected && ui.add(theme::MenuItem::new("Invert selection")).clicked() {

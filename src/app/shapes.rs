@@ -368,6 +368,18 @@ impl PaintApp {
         }.into();
     }
 
+    pub(in crate::app) fn pending_polygon_bounds(&self) -> Option<Region> {
+        if self.polygon.is_empty() {
+            return None;
+        }
+        ShapeDraft {
+            geometry: ShapeGeometry::Polygon(self.polygon.clone()),
+            color_slot: self.polygon_color_slot,
+            style: self.shape_style(),
+        }
+        .bounds(&self.doc.image)
+    }
+
     fn shape_style(&self) -> ShapeStyle {
         ShapeStyle {
             colors: self.colors,

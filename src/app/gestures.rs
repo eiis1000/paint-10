@@ -800,7 +800,9 @@ impl PaintApp {
                         ui.painter()
                             .add(Shape::line(line, Stroke::new(1.0_f32, BLUE)));
                     }
-                    if released && *start == p {
+                    let clicked = *start == p
+                        && (!self.free_select || points.iter().all(|point| point == start));
+                    if released && clicked {
                         self.clear_selection();
                         if let Some(index) = *click_candidate {
                             self.select_object(index);
