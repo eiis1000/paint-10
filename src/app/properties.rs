@@ -55,7 +55,7 @@ impl PaintApp {
                 ui.end_row();
             });
         ui.separator();
-        ui.label("Resize the canvas without stretching the picture.");
+        ui.strong("Canvas size");
         ui.horizontal(|ui| {
             ui.label("Units:");
             ui.radio_value(&mut self.unit, 0, "Pixels");

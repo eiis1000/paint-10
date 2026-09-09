@@ -358,7 +358,7 @@ impl PaintApp {
         ui.separator();
         if self.recent.is_empty() {
             ui.add_space(6.0);
-            ui.label(RichText::new("Pictures you open or save appear here.").weak());
+            ui.label(RichText::new("No recent pictures").weak());
         }
         for (index, path) in self.recent.clone().into_iter().enumerate() {
             let key = ((index + 1) % 10).to_string();

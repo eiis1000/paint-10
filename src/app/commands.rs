@@ -87,19 +87,7 @@ impl PaintApp {
         }
         self.tool = tool;
         self.clear_selection();
-        self.message = match tool {
-            Tool::Select => {
-                "Drag to select. Drag a selection to move it; double-click text to edit.".into()
-            }
-            Tool::Text => {
-                "Click on the canvas to add text. Existing text stays editable with Select.".into()
-            }
-            Tool::Curve => "Drag a line, then click to set its bend.".into(),
-            _ => format!(
-                "{} — left button: Color 1; right button: Color 2. Hold Shift to constrain.",
-                tool.name()
-            ),
-        };
+        self.message.clear();
     }
 
     pub(in crate::app) fn action(&mut self, action: Action, ctx: &Context) {

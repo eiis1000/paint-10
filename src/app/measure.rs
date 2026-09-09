@@ -265,7 +265,7 @@ impl PaintApp {
     fn measure_values(&self, ui: &mut Ui) {
         ui.strong("Measure").on_hover_text(HELP);
         let Some(points) = self.measure.points else {
-            ui.label("Drag between two pixels. Drag A or B to adjust.");
+            ui.label("No measurement");
             return;
         };
         let reading = Reading::between(points);

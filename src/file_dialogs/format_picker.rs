@@ -20,7 +20,6 @@ impl FormatPicker {
         let mut result = None;
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Choose a file format");
-            ui.label("The next window chooses the filename and location.");
             ui.add_space(8.0);
             egui::Grid::new("save_formats")
                 .num_columns(2)

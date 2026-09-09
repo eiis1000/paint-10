@@ -385,8 +385,6 @@ impl PaintApp {
         };
         let width = 620.0_f32.min((ui.ctx().screen_rect().width() - 64.0).max(320.0));
         ui.set_width(width);
-        ui.label("Adjust the image while keeping its original pixels.");
-        ui.add_space(8.0);
         let controls = |ui: &mut Ui, state: &mut ImageDialog| {
             ui.strong("Light and color");
             Grid::new("image_adjustments")
@@ -491,9 +489,6 @@ impl PaintApp {
             return default_button(ui, "Close", true);
         };
         ui.set_width(430.0_f32.min((ui.ctx().screen_rect().width() - 64.0).max(320.0)));
-        ui.label("Drag a corner to resize the crop, or drag inside to move it.");
-        ui.label(RichText::new("The cropped-out pixels remain in your Paint 10 project.").weak());
-        ui.add_space(8.0);
         state.preview(
             ui,
             true,
