@@ -86,7 +86,8 @@ pub(super) fn named(ui: &Ui, response: &Response, label: &str) {
         "Gridlines" => "G",
         "Status bar" => "S",
         "Layers" => "L",
-        "Full screen     F11" => "F",
+        "Full screen" => "F",
+        "Measure distance" => "M",
         "Thumbnail" => "T",
         "Fit to window" => "W",
         "Font" => "FF",
@@ -262,14 +263,64 @@ pub(super) fn command(ui: &mut Ui, label: &str) -> Response {
     response
 }
 
-pub(super) fn selectable(ui: &mut Ui, selected: bool, label: &str) -> Response {
-    let response = ui.selectable_label(selected, label);
-    named(ui, &response, label);
+/// A compact ribbon action, sharing its gutters with ribbon dropdowns.
+pub(super) fn icon_row(
+    ui: &mut Ui,
+    rect: Rect,
+    icon: Icon,
+    label: &str,
+    selected: Option<bool>,
+    enabled: bool,
+) -> Response {
+    let mut builder = UiBuilder::new().id_salt(label).max_rect(rect);
+    if !enabled {
+        builder = builder.disabled();
+    }
+    let mut child = ui.new_child(builder);
+    let response = child.add_sized(
+        rect.size(),
+        Button::new("")
+            .frame(false)
+            .selected(selected.unwrap_or(false)),
+    );
+    // The disabled child already fades widget chrome. Paint the custom artwork
+    // from the parent so applying opacity does not fade icons and labels twice.
+    let mut painter = ui.painter().clone();
+    if !response.enabled() && ui.is_enabled() {
+        painter.set_opacity(0.4);
+    }
+    icons::draw(
+        &painter,
+        Rect::from_min_size(rect.min + vec2(4.0, 4.0), vec2(18.0, 18.0)),
+        icon,
+    );
+    painter.text(
+        rect.min + vec2(28.0, 13.0),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(12.0),
+        Color32::from_gray(35),
+    );
+    if response.has_focus() {
+        painter.rect_stroke(
+            rect.shrink(1.0),
+            0.0,
+            Stroke::new(1.0_f32, BLUE),
+            StrokeKind::Inside,
+        );
+    }
+    response.widget_info(|| match selected {
+        Some(selected) => {
+            WidgetInfo::selected(WidgetType::Button, response.enabled(), selected, label)
+        }
+        None => WidgetInfo::labeled(WidgetType::Button, response.enabled(), label),
+    });
+    keytips::set_badge_anchor(ui, &response, rect.left_center() + vec2(14.0, 0.0));
     response
 }
 
-pub(super) fn checkbox(ui: &mut Ui, value: &mut bool, label: &str) -> Response {
-    let response = ui.checkbox(value, label);
+pub(super) fn selectable(ui: &mut Ui, selected: bool, label: &str) -> Response {
+    let response = ui.selectable_label(selected, label);
     named(ui, &response, label);
     response
 }

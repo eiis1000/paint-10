@@ -17,21 +17,21 @@ impl PaintApp {
             Group {
                 label: "Crop",
                 width: 182.0,
-                icon: Icon::Crop,
+                icon: Icon::CropImage,
                 keys: "ZC",
                 popup: "image_crop",
             },
             Group {
                 label: "Adjust",
                 width: 160.0,
-                icon: Icon::Colors,
+                icon: Icon::Adjustments,
                 keys: "ZA",
                 popup: "image_adjust",
             },
             Group {
                 label: "Original",
                 width: 188.0,
-                icon: Icon::Undo,
+                icon: Icon::ResetImage,
                 keys: "ZO",
                 popup: "image_original",
             },
@@ -62,7 +62,17 @@ impl PaintApp {
             self.execute(Action::Resize, ctx);
         }
         let left = o + vec2(78.0, 5.0);
-        if image_row(ui, left, 154.0, "Rotate right 90°", Icon::Rotate, "R", true).clicked() {
+        if image_row(
+            ui,
+            left,
+            154.0,
+            "Rotate right 90°",
+            Icon::RotateRight,
+            "R",
+            true,
+        )
+        .clicked()
+        {
             self.action(Action::Rotate(90.0), ctx);
         }
         if image_row(
@@ -70,7 +80,7 @@ impl PaintApp {
             left + vec2(0.0, 28.0),
             154.0,
             "Rotate left 90°",
-            Icon::Rotate,
+            Icon::RotateLeft,
             "L",
             true,
         )
@@ -91,12 +101,23 @@ impl PaintApp {
                     "image_rotate",
                     Some(Icon::Rotate),
                     |ui| {
-                        for (label, action, key) in [
-                            ("Rotate 180°", Action::Rotate(180.0), "1"),
-                            ("Flip horizontal", Action::Flip(true), "H"),
-                            ("Flip vertical", Action::Flip(false), "V"),
+                        for (label, action, key, icon) in [
+                            ("Rotate 180°", Action::Rotate(180.0), "1", Icon::Rotate),
+                            (
+                                "Flip horizontal",
+                                Action::Flip(true),
+                                "H",
+                                Icon::FlipHorizontal,
+                            ),
+                            (
+                                "Flip vertical",
+                                Action::Flip(false),
+                                "V",
+                                Icon::FlipVertical,
+                            ),
                         ] {
-                            let response = ui.add(theme::MenuItem::new(label).width(230.0));
+                            let response =
+                                ui.add(theme::MenuItem::new(label).icon(Some(icon)).width(230.0));
                             controls::register(ui, &response, key, keytips::Kind::Button);
                             if response.clicked() {
                                 self.action(action, ctx);
@@ -125,7 +146,7 @@ impl PaintApp {
             ui,
             o + vec2(7.0, 5.0),
             "Crop image…",
-            Icon::Crop,
+            Icon::CropImage,
             "C",
             self.image_edit_target().is_some(),
         )
@@ -138,7 +159,7 @@ impl PaintApp {
             ui,
             o + vec2(95.0, 5.0),
             "Crop picture",
-            Icon::Crop,
+            Icon::CropCanvas,
             "P",
             self.selected_region().is_some(),
         )
@@ -156,7 +177,7 @@ impl PaintApp {
             o + vec2(4.0, 5.0),
             151.0,
             "Adjust colors…",
-            Icon::Colors,
+            Icon::Adjustments,
             "A",
             target.is_some(),
         )
@@ -168,17 +189,28 @@ impl PaintApp {
             (1.0, "Grayscale", "G", true),
             (2.0, "Invert colors", "N", false),
         ] {
-            if image_row(
+            let selected = target.map(|(edits, _)| {
+                if grayscale {
+                    edits.grayscale
+                } else {
+                    edits.invert
+                }
+            });
+            let response = controls::icon_row(
                 ui,
-                o + vec2(4.0, 5.0 + row * 28.0),
-                151.0,
+                Rect::from_min_size(o + vec2(4.0, 5.0 + row * 28.0), vec2(151.0, 26.0)),
+                if grayscale {
+                    Icon::Grayscale
+                } else {
+                    Icon::Invert
+                },
                 label,
-                Icon::Colors,
-                key,
+                selected,
                 target.is_some(),
-            )
-            .clicked()
-            {
+            );
+            controls::register(ui, &response, key, keytips::Kind::Button);
+            if response.clicked() {
+                ui.close_menu();
                 if let Some((mut edits, _)) = target {
                     if grayscale {
                         edits.grayscale = !edits.grayscale;
@@ -195,7 +227,7 @@ impl PaintApp {
 
     fn image_original_group(&mut self, ui: &mut Ui, o: Pos2) {
         let target = self.object.and_then(|_| self.image_edit_target());
-        if image_row(ui, o + vec2(4.0, 5.0), 179.0, "Reset image", Icon::Undo, "O", target.is_some())
+        if image_row(ui, o + vec2(4.0, 5.0), 179.0, "Reset image", Icon::ResetImage, "O", target.is_some())
             .on_hover_text("Restore the original image, including its size, crop, rotation and colors. Undo restores your edits.")
             .clicked()
         {
@@ -210,21 +242,6 @@ impl PaintApp {
                 format!("Original: {width} × {height} px"),
                 FontId::proportional(12.0),
                 Color32::from_gray(65),
-            );
-            ui.painter().text(
-                o + vec2(10.0, 70.0),
-                Align2::LEFT_CENTER,
-                "Original pixels are preserved",
-                FontId::proportional(11.0),
-                Color32::from_gray(100),
-            );
-        } else {
-            ui.painter().text(
-                o + vec2(10.0, 51.0),
-                Align2::LEFT_CENTER,
-                "Select an image to restore",
-                FontId::proportional(11.0),
-                Color32::from_gray(100),
             );
         }
     }
@@ -264,38 +281,7 @@ fn image_row(
     enabled: bool,
 ) -> Response {
     let rect = Rect::from_min_size(position, vec2(width, 26.0));
-    let mut builder = UiBuilder::new().id_salt(label).max_rect(rect);
-    if !enabled {
-        builder = builder.disabled();
-    }
-    let mut child = ui.new_child(builder);
-    let response = child.add_sized(rect.size(), Button::new("").frame(false));
-    let mut painter = child.painter().clone();
-    if !enabled {
-        painter.set_opacity(0.4);
-    }
-    icons::draw(
-        &painter,
-        Rect::from_min_size(rect.min + vec2(4.0, 4.0), vec2(18.0, 18.0)),
-        icon,
-    );
-    painter.text(
-        rect.min + vec2(28.0, 13.0),
-        Align2::LEFT_CENTER,
-        label,
-        FontId::proportional(12.0),
-        Color32::from_gray(35),
-    );
-    if response.has_focus() {
-        painter.rect_stroke(
-            rect.shrink(1.0),
-            0.0,
-            Stroke::new(1.0_f32, BLUE),
-            StrokeKind::Inside,
-        );
-    }
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
-    keytips::set_badge_anchor(ui, &response, rect.left_center() + vec2(14.0, 0.0));
+    let response = controls::icon_row(ui, rect, icon, label, None, enabled);
     controls::register(ui, &response, keys, keytips::Kind::Button);
     if response.clicked() {
         ui.close_menu();

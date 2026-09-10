@@ -124,9 +124,10 @@ at runtime.
   a thumbnail navigator, image/project exports, page setup, tiled print preview,
   and PDF generation.
 
-The Home ribbon contains drawing tools; View contains navigation and measurement
-controls. Image groups transforms, cropping, color adjustments, and original
-image recovery. Color 1 is the foreground and Color 2 is the background.
+The Home ribbon contains drawing tools. View groups zoom, canvas guides,
+panels, full-screen viewing, and measurements; highlighted icon buttons show
+which guides and panels are enabled. Image groups transforms, cropping, color
+adjustments, and original image recovery. Color 1 is the foreground and Color 2 is the background.
 Right-click a palette swatch to set Color 2. Ribbon groups collapse into menus
 at narrow widths. The title-bar dropdown customizes the Quick Access Toolbar.
 
@@ -147,6 +148,8 @@ math symbols render using bundled math fonts on both desktop and browser.
 Choose a size, color, alignment, background, or outline; **Apply** or Ctrl+Enter
 finishes the equation. Enter inserts a newline in the source. Double-click a
 finished equation with Select to edit its source again; Cancel preserves the previous text.
+Drag a finished text box with Select to move it. Immediately after applying an
+equation, you can also drag its box while Text remains selected.
 Save a `.p10` project to retain the source. This is a math renderer, not a full
 TeX document compiler: external files, packages, custom macros, and arbitrary
 system fonts are unsupported. Invalid or unsupported input shows an error.
@@ -184,7 +187,8 @@ including custom angles and flips.
 **Measurements:** enable **View → Measure distance** and drag between pixel
 centers. Adjust either endpoint with the mouse or arrows (Shift: ten pixels).
 The readout shows distance, horizontal/vertical displacement, and angle;
-physical units use the image's DPI. Delete resets it, and Escape leaves the
+the unit buttons switch between px, mm, cm, and in. Physical units use the
+image's DPI. Delete resets it, and Escape leaves the
 tool. Measurements never appear in saved pictures.
 
 **Color editing:** Space changes both the numeric fields and the visible
@@ -391,7 +395,7 @@ history. Complete behavioral or visual equivalence is not claimed.
 | Shapes and precision | Adds gradient fills, arbitrary-angle rotation, remembered tool widths, 3200% zoom, nearest-neighbor scaling, and a distance/angle measurement tool. |
 | Transform workflow | Resize, skew, and rotation share one dialog and one Undo step. The selection context menu includes custom rotation and flips. |
 | Projects and exports | `.p10` keeps editable objects, source images, embedded fonts, and layers. Raster saves flatten visible content; Save a copy and Save selection as preserve the working destination. WebP, ICO, and PDF output are also available. |
-| Interface | Adds an Image ribbon and extra Text controls; narrow windows collapse ribbon groups into menus. Icons and keytip mappings are independently implemented. |
+| Interface | Adds an Image ribbon and extra Text controls. View uses grouped icon toggles for guides, panels, and measurement. Narrow windows collapse ribbon groups into menus. Icons and keytip mappings are independently implemented. |
 | Rendering | Brush dynamics, textured fills, font rasterization, and native dialogs differ; matching Microsoft's exact pixels is not guaranteed. |
 | Platforms | Runs on Linux, Windows, macOS, and in a browser. System integration and native dialogs depend on the platform; Windows/macOS printing produces a PDF for a viewer. |
 | Browser files and fonts | Saving downloads a file and retains the unsaved-work indicator. Fonts are bundled or imported instead of enumerating installed system fonts; some shortcuts remain reserved by the browser. |

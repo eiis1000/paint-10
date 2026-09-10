@@ -217,6 +217,7 @@ pub(super) fn ribbon_menu_button<R>(
     icon: Option<Icon>,
     contents: impl FnOnce(&mut Ui) -> R,
 ) -> InnerResponse<Option<R>> {
+    let group = controls::current(ui).map_or("Menu", |scope| scope.group);
     let arrow_only = label.is_empty() && icon.is_none();
     let size = if arrow_only {
         vec2(22.0, 22.0)
@@ -234,7 +235,6 @@ pub(super) fn ribbon_menu_button<R>(
     );
     text.wrap.max_rows = 1;
     let galley = ui.painter().layout_job(text);
-    let group = controls::current(ui).map_or("Menu", |scope| scope.group);
     // Preserve the owner UI: keytips use its menu manager to close and switch
     // menus. A cosmetic child scope would give the button a different owner.
     let previous_style = ui.style().clone();
@@ -769,14 +769,17 @@ impl PaintApp {
             |ui| {
                 let menu =
                     ribbon_menu_button(ui, "Rotate", "RO", "rotate", Some(Icon::Rotate), |ui| {
-                        for (label, act) in [
-                            ("Rotate right 90°", Action::Rotate(90.)),
-                            ("Rotate left 90°", Action::Rotate(270.)),
-                            ("Rotate 180°", Action::Rotate(180.)),
-                            ("Flip vertical", Action::Flip(false)),
-                            ("Flip horizontal", Action::Flip(true)),
+                        for (label, act, icon) in [
+                            ("Rotate right 90°", Action::Rotate(90.), Icon::RotateRight),
+                            ("Rotate left 90°", Action::Rotate(270.), Icon::RotateLeft),
+                            ("Rotate 180°", Action::Rotate(180.), Icon::Rotate),
+                            ("Flip vertical", Action::Flip(false), Icon::FlipVertical),
+                            ("Flip horizontal", Action::Flip(true), Icon::FlipHorizontal),
                         ] {
-                            if controls::command(ui, label).clicked() {
+                            let response =
+                                ui.add(theme::MenuItem::new(label).icon(Some(icon)).width(245.0));
+                            controls::named(ui, &response, label);
+                            if response.clicked() {
                                 self.action(act, ctx);
                                 ui.close_menu();
                             }
@@ -1433,123 +1436,6 @@ impl PaintApp {
             );
             self.dialog = Some(Dialog::Colors);
         }
-    }
-
-    pub(in crate::app) fn view_ribbon(&mut self, ui: &mut Ui, o: Pos2, ctx: &Context) {
-        let groups = [
-            Group {
-                label: "Zoom",
-                width: 229.0,
-                icon: Icon::Tool(Tool::Magnifier),
-                keys: "ZZ",
-                popup: "view_zoom",
-            },
-            Group {
-                label: "Show or hide",
-                width: 181.0,
-                icon: Icon::Tool(Tool::Rectangle),
-                keys: "ZS",
-                popup: "view_show",
-            },
-            Group {
-                label: "Display",
-                width: 228.0,
-                icon: Icon::Tool(Tool::Select),
-                keys: "ZD",
-                popup: "view_display",
-            },
-            Group {
-                label: "Measure",
-                width: 190.0,
-                icon: Icon::Tool(Tool::Line),
-                keys: "ZM",
-                popup: "view_measure",
-            },
-        ];
-        let widths = ribbon_layout::widths(&groups, ui.max_rect().right() - o.x, &[3, 2, 1, 0]);
-        let mut x = o.x;
-        for (index, (group, width)) in groups.into_iter().zip(widths).enumerate() {
-            ribbon_layout::show(
-                ui,
-                pos2(x, o.y),
-                width,
-                "view",
-                group,
-                |ui, origin| match index {
-                    0 => self.zoom_group(ui, origin),
-                    1 => self.visibility_group(ui, origin - vec2(229.0, 0.0)),
-                    2 => self.display_group(ui, origin - vec2(410.0, 0.0), ctx),
-                    _ => self.measure_group(ui, origin, ctx),
-                },
-            );
-            x += width;
-        }
-    }
-
-    fn zoom_group(&mut self, ui: &mut Ui, o: Pos2) {
-        Self::group(ui, o, 0., 228., "Zoom");
-        for (i, label, factor, icon) in [
-            (0, "Zoom in", 2.0, Icon::ZoomIn),
-            (1, "Zoom out", 0.5, Icon::ZoomOut),
-            (2, "100%", 0.0, Icon::ActualSize),
-        ] {
-            if controls::button(
-                ui,
-                label,
-                Rect::from_min_size(o + vec2(7. + i as f32 * 72., 6.), vec2(65., 77.)),
-                icon,
-                label,
-                false,
-                true,
-            )
-            .clicked()
-            {
-                self.zoom = if factor == 0. {
-                    1.
-                } else {
-                    (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM)
-                };
-            }
-        }
-    }
-
-    fn visibility_group(&mut self, ui: &mut Ui, o: Pos2) {
-        Self::group(ui, o, 229., 180., "Show or hide");
-        ui.scope_builder(
-            UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(242., 10.), vec2(155., 80.))),
-            |ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                controls::checkbox(ui, &mut self.rulers, "Rulers");
-                controls::checkbox(ui, &mut self.grid, "Gridlines");
-                controls::checkbox(ui, &mut self.status_bar, "Status bar");
-                controls::checkbox(ui, &mut self.layer_ui.open, "Layers");
-            },
-        );
-    }
-
-    fn display_group(&mut self, ui: &mut Ui, o: Pos2, ctx: &Context) {
-        Self::group(ui, o, 410., 227., "Display");
-        ui.scope_builder(
-            UiBuilder::new().max_rect(Rect::from_min_size(o + vec2(424., 10.), vec2(200., 80.))),
-            |ui| {
-                if controls::command(ui, "Full screen     F11").clicked() {
-                    self.show_picture(ctx);
-                }
-                let mut thumbnail = Self::thumbnail_enabled(ctx);
-                let response =
-                    ui.add_enabled(self.zoom > 1.0, Checkbox::new(&mut thumbnail, "Thumbnail"));
-                controls::named(ui, &response, "Thumbnail");
-                if response.changed() {
-                    Self::set_thumbnail_enabled(ctx, thumbnail);
-                }
-                if controls::command(ui, "Fit to window").clicked() {
-                    let space = ctx.available_rect().size() - vec2(30., 40.);
-                    self.zoom = (space.x / self.doc.image.width() as f32)
-                        .min(space.y / self.doc.image.height() as f32)
-                        .clamp(MIN_ZOOM, MAX_ZOOM);
-                }
-            },
-        );
     }
 }
 

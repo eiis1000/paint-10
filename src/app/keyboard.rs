@@ -215,14 +215,17 @@ impl PaintApp {
                 rotate_label.sections[0].leading_space = 32.0 - ui.spacing().button_padding.x;
                 let menu = ui.menu_button(rotate_label, |ui| {
                     theme::menu(ui);
-                    for (label, action) in [
-                        ("Rotate right 90°", Action::Rotate(90.0)),
-                        ("Rotate left 90°", Action::Rotate(270.0)),
-                        ("Rotate 180°", Action::Rotate(180.0)),
-                        ("Flip vertical", Action::Flip(false)),
-                        ("Flip horizontal", Action::Flip(true)),
+                    for (label, action, icon) in [
+                        ("Rotate right 90°", Action::Rotate(90.0), Icon::RotateRight),
+                        ("Rotate left 90°", Action::Rotate(270.0), Icon::RotateLeft),
+                        ("Rotate 180°", Action::Rotate(180.0), Icon::Rotate),
+                        ("Flip vertical", Action::Flip(false), Icon::FlipVertical),
+                        ("Flip horizontal", Action::Flip(true), Icon::FlipHorizontal),
                     ] {
-                        if ui.add(theme::MenuItem::new(label)).clicked() {
+                        if ui
+                            .add(theme::MenuItem::new(label).icon(Some(icon)))
+                            .clicked()
+                        {
                             self.action(action, ctx);
                             self.keyboard_context_menu = false;
                             ui.close_menu();

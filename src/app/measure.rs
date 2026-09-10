@@ -165,82 +165,77 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn measure_group(&mut self, ui: &mut Ui, origin: Pos2, ctx: &Context) {
-        Self::group(ui, origin, 0.0, 189.0, "Measure");
+        let toggle = super::view_ribbon::tile(
+            ui,
+            origin,
+            "Measure distance",
+            Icon::Measure,
+            Some(self.measure.enabled),
+            self.gesture.is_none(),
+        );
+        if toggle.clicked() {
+            self.set_measure_enabled(!self.measure.enabled, ctx);
+        }
+        toggle.on_hover_text(HELP);
         ui.scope_builder(
             UiBuilder::new().max_rect(Rect::from_min_size(
-                origin + vec2(10.0, 7.0),
-                vec2(168.0, 80.0),
+                origin + vec2(80.0, 8.0),
+                vec2(150.0, 79.0),
             )),
-            |ui| self.measure_controls(ui, ctx),
+            |ui| self.measure_controls(ui),
         );
     }
 
-    fn measure_controls(&mut self, ui: &mut Ui, ctx: &Context) {
-        let mut enabled = self.measure.enabled;
-        let toggle = ui.add_enabled(
-            self.gesture.is_none(),
-            Checkbox::new(&mut enabled, "Measure distance"),
-        );
-        ribbon_controls::register(ui, &toggle, "M", keytips::Kind::Button);
-        if toggle.changed() {
-            self.set_measure_enabled(enabled, ctx);
-            ui.close_menu();
+    fn measure_controls(&mut self, ui: &mut Ui) {
+        ui.label("Units");
+        let origin = ui.cursor().min;
+        for (index, (unit, label, key)) in [
+            (Unit::Pixels, "px", "UP"),
+            (Unit::Millimeters, "mm", "UM"),
+            (Unit::Centimeters, "cm", "UC"),
+            (Unit::Inches, "in", "UI"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let selected = self.measure.unit == unit;
+            let response = ui.put(
+                Rect::from_min_size(origin + vec2(index as f32 * 38.0, 0.0), vec2(36.0, 26.0)),
+                Button::new(label).frame(false).selected(selected),
+            );
+            response.widget_info(|| {
+                WidgetInfo::selected(
+                    WidgetType::Button,
+                    response.enabled(),
+                    selected,
+                    unit.label(),
+                )
+            });
+            ribbon_controls::register(ui, &response, key, keytips::Kind::Button);
+            if response.clicked() {
+                self.measure.unit = unit;
+                ui.close_menu();
+            }
+            response.on_hover_text(unit.label());
         }
-        toggle.on_hover_text(HELP);
-        let reset = ui.add_enabled(
+        ui.allocate_rect(
+            Rect::from_min_size(origin, vec2(150.0, 26.0)),
+            Sense::hover(),
+        );
+        ui.add_space(4.0);
+        let reset = ribbon_controls::icon_row(
+            ui,
+            Rect::from_min_size(ui.cursor().min, vec2(150.0, 26.0)),
+            Icon::ResetMeasurement,
+            "Reset measurement",
+            None,
             self.measure.points.is_some(),
-            Button::new("Reset measurement"),
         );
         ribbon_controls::register(ui, &reset, "C", keytips::Kind::Button);
         if reset.clicked() {
             self.measure.reset();
+            ui.close_menu();
         }
-        let units = ComboBox::from_id_salt("measure_units")
-            .selected_text(self.measure.unit.label())
-            .width(150.0)
-            .show_ui(ui, |ui| {
-                theme::menu(ui);
-                for (unit, key) in [
-                    (Unit::Pixels, "P"),
-                    (Unit::Millimeters, "M"),
-                    (Unit::Centimeters, "C"),
-                    (Unit::Inches, "I"),
-                ] {
-                    let response = ui.add(
-                        theme::MenuItem::new(unit.label())
-                            .selected(self.measure.unit == unit)
-                            .width(170.0),
-                    );
-                    if response.clicked() {
-                        self.measure.unit = unit;
-                        ui.close_menu();
-                    }
-                    keytips::register(
-                        ui,
-                        &response,
-                        "measure_units",
-                        "Units",
-                        key,
-                        keytips::Kind::Button,
-                    );
-                }
-            });
-        ribbon_controls::register(
-            ui,
-            &units.response,
-            "U",
-            keytips::Kind::Menu {
-                scope: "measure_units",
-            },
-        );
-        units.response.widget_info(|| {
-            WidgetInfo::labeled(
-                WidgetType::ComboBox,
-                units.response.enabled(),
-                "Measurement units",
-            )
-        });
-        units.response.on_hover_text("Physical distance uses the picture's horizontal and vertical DPI. Pixel distance is always shown.");
     }
 
     pub(in crate::app) fn measure_readout(&mut self, ctx: &Context) {
