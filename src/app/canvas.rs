@@ -143,6 +143,19 @@ impl PaintApp {
                             .interact(rect, Id::new("canvas"), Sense::click_and_drag())
                             .on_hover_cursor(match self.tool {
                                 _ if self.measure.enabled => CursorIcon::Crosshair,
+                                Tool::Text
+                                    if self.active_layer_editable()
+                                        && ctx
+                                            .input(|input| input.pointer.hover_pos())
+                                            .is_some_and(|position| {
+                                                self.selected_equation_at(
+                                                    self.point(position, rect),
+                                                )
+                                                .is_some()
+                                            }) =>
+                                {
+                                    CursorIcon::Move
+                                }
                                 Tool::Text => CursorIcon::Text,
                                 Tool::Select if self.object.is_some() => CursorIcon::Move,
                                 _ => CursorIcon::Crosshair,

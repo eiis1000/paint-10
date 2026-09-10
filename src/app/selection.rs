@@ -130,6 +130,33 @@ impl PaintApp {
         self.object = Some(index);
     }
 
+    /// Retained objects use their complete transformed boxes as pointer targets,
+    /// including the whitespace between letters and inside equations.
+    pub(in crate::app) fn object_at(&self, point: Point) -> Option<usize> {
+        self.doc
+            .objects
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, object)| {
+                if !object.editable() {
+                    return None;
+                }
+                let (width, height) = object.rendered_dimensions()?;
+                let x = i64::from(point.0) - i64::from(object.pos.0);
+                let y = i64::from(point.1) - i64::from(object.pos.1);
+                (x >= 0 && y >= 0 && x < i64::from(width) && y < i64::from(height)).then_some(index)
+            })
+    }
+
+    pub(in crate::app) fn selected_equation_at(&self, point: Point) -> Option<usize> {
+        let index = self.object?;
+        let object = self.doc.objects.get(index)?;
+        (matches!(&object.kind, ObjectKind::Text { format, .. } if format.latex)
+            && self.object_at(point) == Some(index))
+        .then_some(index)
+    }
+
     pub(in crate::app) fn selected_region(&self) -> Option<Region> {
         if let Some(shape) = &self.shape_draft {
             return shape.bounds(&self.doc.image);

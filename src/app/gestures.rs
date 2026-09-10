@@ -208,25 +208,15 @@ impl PaintApp {
             self.curve = Some(curve);
             return;
         }
-        if response.double_clicked() && self.tool == Tool::Select && self.active_layer_editable() {
-            let hit = self
-                .doc
-                .objects
-                .iter()
-                .enumerate()
-                .rev()
-                .find_map(|(i, o)| {
-                    if !matches!(o.kind, ObjectKind::Text { .. }) {
-                        return None;
-                    }
-                    let img = o.render();
-                    (p.0 >= o.pos.0
-                        && p.1 >= o.pos.1
-                        && p.0 < o.pos.0 + img.width() as i32
-                        && p.1 < o.pos.1 + img.height() as i32)
-                        .then_some(i)
-                });
-            if let Some(i) = hit {
+        if response.double_clicked() && self.active_layer_editable() {
+            let hit = match self.tool {
+                Tool::Select => self.object_at(p),
+                Tool::Text => self.selected_equation_at(p),
+                _ => None,
+            };
+            if let Some(i) =
+                hit.filter(|&i| matches!(self.doc.objects[i].kind, ObjectKind::Text { .. }))
+            {
                 self.doc.cancel();
                 self.gesture = None;
                 self.select_object(i);
@@ -316,47 +306,22 @@ impl PaintApp {
                 self.magnify_at(p, right, ctx);
             }
             Tool::Text => {
-                self.gesture = Some(Gesture::TextBox { start: p });
+                if let Some(index) = self.selected_equation_at(p) {
+                    self.begin_object_move(index, p, ctx.input(|input| input.modifiers.ctrl));
+                } else {
+                    self.gesture = Some(Gesture::TextBox { start: p });
+                }
             }
             Tool::Select => {
-                let hit = self
-                    .doc
-                    .objects
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .find_map(|(i, o)| {
-                        if !o.editable() {
-                            return None;
-                        }
-                        let img = o.render();
-                        let x = p.0 - o.pos.0;
-                        let y = p.1 - o.pos.1;
-                        if x >= 0 && y >= 0 && x < img.width() as i32 && y < img.height() as i32 {
-                            Some(i)
-                        } else {
-                            None
-                        }
-                    });
+                let hit = self.object_at(p);
                 let duplicate = ctx.input(|i| i.modifiers.ctrl);
-                if let Some(mut i) =
-                    hit.filter(|index| self.object == Some(*index) && !self.selection_contains(p))
-                {
-                    if !self.ensure_active_layer_editable() {
-                        return;
-                    }
-                    self.doc.begin();
-                    if duplicate {
-                        let obj = self.doc.objects[i].clone();
-                        i = self.doc.add_object(obj);
-                    }
-                    self.select_object(i);
-                    self.gesture = Some(Gesture::Move {
-                        start: p,
-                        origin: self.doc.objects[i].pos,
-                        index: i,
-                        last_stamp: p,
-                    });
+                if let Some(index) = hit.filter(|&index| {
+                    !self.selection_contains(p)
+                        && (self.object == Some(index)
+                            || (!self.free_select
+                                && matches!(self.doc.objects[index].kind, ObjectKind::Text { .. })))
+                }) {
+                    self.begin_object_move(index, p, duplicate);
                 } else if self.selection_contains(p) {
                     if !self.ensure_active_layer_editable() {
                         return;
@@ -405,6 +370,24 @@ impl PaintApp {
                 });
             }
         }
+    }
+
+    fn begin_object_move(&mut self, mut index: usize, point: Point, duplicate: bool) {
+        if !self.ensure_active_layer_editable() {
+            return;
+        }
+        self.doc.begin();
+        if duplicate {
+            let object = self.doc.objects[index].clone();
+            index = self.doc.add_object(object);
+        }
+        self.select_object(index);
+        self.gesture = Some(Gesture::Move {
+            start: point,
+            origin: self.doc.objects[index].pos,
+            index,
+            last_stamp: point,
+        });
     }
 
     fn continue_canvas_gesture(
@@ -1004,6 +987,7 @@ mod tests {
     use super::*;
 
     mod key_order_tests;
+    mod move_text_tests;
     mod reopen_text_tests;
 
     fn pointer_app_frame(app: &mut PaintApp, ctx: &Context, events: Vec<Event>) -> FullOutput {

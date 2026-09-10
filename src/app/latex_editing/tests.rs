@@ -180,3 +180,72 @@ fn equation_draft_cannot_change_a_hidden_or_locked_layer() {
     assert!(app.apply_latex().is_err());
     assert!(app.doc.objects.is_empty());
 }
+
+#[test]
+fn applied_equation_drags_and_reopens_without_leaving_the_text_tool() {
+    let ctx = Context::default();
+    let size = vec2(1180.0, 800.0);
+    let mut app = editor_app(&ctx, r"\frac{a}{b}");
+    app.text_edit.as_mut().unwrap().format.minimum_height = 100;
+    app.open_latex_editor();
+    app.apply_latex().unwrap();
+    app.dialog = None;
+    let index = app.object.unwrap();
+    let before = app.doc.objects[index].clone();
+    for _ in 0..4 {
+        frame(&mut app, &ctx, vec![], size);
+    }
+    let start = app.canvas_rect.min + vec2(100.5, 70.5) * app.zoom;
+    let end = start + vec2(40.0, 35.0) * app.zoom;
+    let hover = frame(&mut app, &ctx, vec![Event::PointerMoved(start)], size);
+    assert_eq!(hover.platform_output.cursor_icon, CursorIcon::Move);
+    for (position, pressed) in [(start, true), (end, false)] {
+        frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::PointerMoved(position),
+                Event::PointerButton {
+                    pos: position,
+                    button: PointerButton::Primary,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+            size,
+        );
+    }
+    let mut moved = before.clone();
+    moved.pos = (before.pos.0 + 40, before.pos.1 + 35);
+    assert!(app.doc.objects[index] == moved);
+    assert_eq!(app.tool, Tool::Text);
+    assert!(app.text_edit.is_none());
+    assert!(app.gesture.is_none());
+
+    // A source edit remains a double-click, distinct from the completed drag.
+    for _ in 0..20 {
+        frame(&mut app, &ctx, vec![], size);
+    }
+    for _ in 0..2 {
+        let events = [true, false]
+            .into_iter()
+            .map(|pressed| Event::PointerButton {
+                pos: end,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            })
+            .collect();
+        frame(&mut app, &ctx, events, size);
+    }
+    for _ in 0..3 {
+        frame(&mut app, &ctx, vec![], size);
+    }
+    assert!(app.dialog == Some(Dialog::Latex));
+    assert_eq!(app.latex_edit.as_ref().unwrap().source, r"\frac{a}{b}");
+    assert!(app.doc.objects[index] == moved);
+    app.cancel_latex();
+    app.dialog = None;
+    app.doc.undo();
+    assert!(app.doc.objects[index] == before);
+}
