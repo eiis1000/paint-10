@@ -360,15 +360,27 @@ pub(super) fn command(canvas: &Canvas<'_>, icon: Icon) {
             canvas.line((12.0, 12.0), (20.0, 5.0), BLUE, 1.7);
             canvas.path(&[(14.0, 5.0), (20.0, 5.0), (20.0, 11.0)], BLUE, 1.7, false);
         }
-        Icon::Rotate => {
-            canvas.rect((3.0, 10.0), (15.0, 22.0), LIGHT_BLUE, BLUE);
-            canvas.curve(
-                [(6.0, 7.0), (10.0, 0.0), (23.0, 2.0), (21.0, 14.0)],
-                BLUE,
-                2.0,
-            );
-            canvas.polygon(&[(17.0, 12.0), (21.0, 18.0), (24.0, 11.0)], BLUE, CLEAR);
-        }
+        Icon::Rotate
+        | Icon::RotateLeft
+        | Icon::RotateRight
+        | Icon::FlipHorizontal
+        | Icon::FlipVertical
+        | Icon::Adjustments
+        | Icon::Grayscale
+        | Icon::Invert
+        | Icon::ResetImage
+        | Icon::CropImage
+        | Icon::CropCanvas
+        | Icon::ActualSize
+        | Icon::FitWindow
+        | Icon::Rulers
+        | Icon::Grid
+        | Icon::StatusBar
+        | Icon::Layers
+        | Icon::Thumbnail
+        | Icon::Fullscreen
+        | Icon::Measure
+        | Icon::ResetMeasurement => view_image::draw(canvas, icon),
         Icon::Outline => {
             canvas.rect((3.0, 4.0), (20.0, 19.0), CLEAR, BLUE);
             canvas.line((3.0, 21.0), (22.0, 21.0), INK, 2.7);
@@ -384,15 +396,6 @@ pub(super) fn command(canvas: &Canvas<'_>, icon: Icon) {
             if matches!(icon, Icon::ZoomIn) {
                 canvas.line((9.0, 5.5), (9.0, 12.5), INK, 1.5);
             }
-        }
-        Icon::ActualSize => {
-            canvas.rect((2.0, 3.0), (22.0, 21.0), Color32::WHITE, BLUE);
-            canvas.path(&[(5.0, 9.0), (8.0, 7.0), (8.0, 17.0)], INK, 1.5, false);
-            canvas.line((5.0, 17.0), (10.0, 17.0), INK, 1.5);
-            canvas.circle((12.0, 10.0), 0.6, INK, CLEAR);
-            canvas.circle((12.0, 15.0), 0.6, INK, CLEAR);
-            canvas.path(&[(15.0, 9.0), (18.0, 7.0), (18.0, 17.0)], INK, 1.5, false);
-            canvas.line((15.0, 17.0), (20.0, 17.0), INK, 1.5);
         }
         Icon::ChevronDown => canvas.path(&[(5.0, 8.0), (12.0, 15.0), (19.0, 8.0)], INK, 1.8, false),
         Icon::ChevronUp => canvas.path(&[(5.0, 16.0), (12.0, 9.0), (19.0, 16.0)], INK, 1.8, false),
