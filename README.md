@@ -1,5 +1,11 @@
 # Paint 10
 
+Since switching to Linux full-time, there has been only one thing I've sorely missed about Windows:
+MS Paint. So I asked Astra to recreate Windows-10-era MS Paint, from scratch, in Rust, cross-platform
+— with some additional improvements that I've always wanted, of course. Astra's README is below.
+
+---
+
 <img src="assets/paint-10.svg" width="96" height="96" align="right" alt="Paint 10 palette and brush icon">
 
 A Rust drawing app inspired by Windows 10 Paint, with its familiar ribbon,
