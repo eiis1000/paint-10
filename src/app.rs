@@ -28,6 +28,7 @@ mod text_preview;
 mod theme;
 mod thumbnail;
 mod transforms;
+mod view_ribbon;
 
 use canvas::dashed_rect;
 use gestures::pointer_press_in;
