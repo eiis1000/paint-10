@@ -62,6 +62,10 @@ also makes the browser clipboard APIs available subject to user permissions.
 Images and projects stay in the browser; publishing the app does not upload your
 pictures.
 
+The static HTML includes a search description, canonical URL, social previews,
+and structured application metadata. When hosting a fork or changing domains,
+update the absolute URLs in `web/index.html` to the intended public site.
+
 ## Files, text, and clipboard
 
 - **Open** loads an image or editable `.p10` project. **Paste from** and dropping
