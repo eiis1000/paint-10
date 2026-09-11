@@ -1,8 +1,13 @@
 {
   description = "Paint 10 — a native Rust Windows 10 Paint recreation";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.crane.url = "github:ipetkov/crane";
   outputs =
-    { self, nixpkgs }:
+    {
+      self,
+      nixpkgs,
+      crane,
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -48,36 +53,60 @@
       };
       mkPaint =
         pkgs:
-        pkgs.rustPlatform.buildRustPackage {
-          pname = "paint-10";
-          version = "0.1.0";
-          src = source;
-          cargoLock.lockFile = ./Cargo.lock;
-          nativeBuildInputs = [
-            pkgs.wrapGAppsHook3
-            pkgs.pkg-config
-          ];
-          buildInputs = [
-            pkgs.gtk3
-            pkgs.gsettings-desktop-schemas
-          ];
-          postInstall = ''
-            install -Dm644 assets/paint-10.desktop "$out/share/applications/paint-10.desktop"
-            install -Dm644 assets/paint-10.svg "$out/share/icons/hicolor/scalable/apps/paint-10.svg"
-            install -Dm644 assets/fonts/DejaVu-LICENSE.txt "$out/share/licenses/paint-10/DejaVu-LICENSE.txt"
-            cp LICENSE assets/licenses/*.txt "$out/share/licenses/paint-10/"
-          '';
-          preFixup = ''
-            gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath (desktopLibs pkgs)})
-            gappsWrapperArgs+=(--prefix PATH : ${pkgs.lib.makeBinPath (captureTools pkgs)})
-          '';
-          meta = {
-            description = "A native Rust drawing application with the Windows 10 Paint workflow";
-            license = pkgs.lib.licenses.mit;
-            platforms = systems;
-            mainProgram = "paint-10";
+        let
+          craneLib = crane.mkLib pkgs;
+          commonArgs = {
+            pname = "paint-10";
+            version = "0.1.0";
+            src = source;
+            strictDeps = true;
+            nativeBuildInputs = [
+              pkgs.wrapGAppsHook3
+              pkgs.pkg-config
+            ];
+            buildInputs = [
+              pkgs.gtk3
+              pkgs.gsettings-desktop-schemas
+            ];
           };
-        };
+          cargoArtifacts = craneLib.buildDepsOnly (
+            commonArgs
+            // {
+              # The patched egui-winit is a real dependency of eframe, so its
+              # implementation must remain available when Paint itself is stubbed.
+              # Reference only this subtree to keep Paint edits out of the cache key.
+              extraDummyScript = ''
+                rm -r "$out/vendor/egui-winit"
+                cp -r ${./vendor/egui-winit} "$out/vendor/egui-winit"
+              '';
+              buildPhaseCargoCommand = "cargoWithProfile build --locked";
+              cargoTestExtraArgs = "--all-targets --no-run";
+            }
+          );
+        in
+        craneLib.buildPackage (
+          commonArgs
+          // {
+            inherit cargoArtifacts;
+            cargoTestExtraArgs = "--all-targets";
+            postInstall = ''
+              install -Dm644 assets/paint-10.desktop "$out/share/applications/paint-10.desktop"
+              install -Dm644 assets/paint-10.svg "$out/share/icons/hicolor/scalable/apps/paint-10.svg"
+              install -Dm644 assets/fonts/DejaVu-LICENSE.txt "$out/share/licenses/paint-10/DejaVu-LICENSE.txt"
+              cp LICENSE assets/licenses/*.txt "$out/share/licenses/paint-10/"
+            '';
+            preFixup = ''
+              gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath (desktopLibs pkgs)})
+              gappsWrapperArgs+=(--prefix PATH : ${pkgs.lib.makeBinPath (captureTools pkgs)})
+            '';
+            meta = {
+              description = "A native Rust drawing application with the Windows 10 Paint workflow";
+              license = pkgs.lib.licenses.mit;
+              platforms = systems;
+              mainProgram = "paint-10";
+            };
+          }
+        );
       mkWeb =
         pkgs:
         pkgs.rustPlatform.buildRustPackage {
