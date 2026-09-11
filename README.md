@@ -337,6 +337,14 @@ retain line information for backtraces, omit dependency debug information, and
 disable incremental caches; variable-level debugging requires a debug profile
 override. Release builds use link-time optimization and stripped symbols.
 
+The native Nix package uses [Crane](https://crane.dev/introduction/artifact-reuse.html)
+to cache compiled Rust dependencies separately from Paint's source. Application
+edits rebuild and test Paint while reusing those dependencies. Dependency,
+toolchain, build-profile, and vendored clipboard-patch changes invalidate the
+relevant artifacts. CI preserves them in GitHub Actions' cache between runs;
+the first build still compiles them, and every package build runs the tests.
+Use `nix build -L .#paint-10` to see compilation and test progress.
+
 For manual testing on a private desktop:
 
 ```sh
