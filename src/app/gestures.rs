@@ -994,6 +994,69 @@ mod tests {
         pointer_app_frame_at(app, ctx, events, ctx.cumulative_pass_nr() as f64 / 30.0)
     }
 
+    #[test]
+    fn pinch_and_control_wheel_zoom_at_pointer_while_plain_scroll_only_pans() {
+        let ctx = Context::default();
+        let mut app = PaintApp::new_with_context(&ctx, false);
+        app.doc = Document::new(1600, 1200);
+        let pointer = pos2(380.0, 350.0);
+        for _ in 0..4 {
+            pointer_app_frame(&mut app, &ctx, vec![Event::PointerMoved(pointer)]);
+        }
+        let original = app.doc.composite();
+        let anchor = (pointer - app.canvas_rect.min) / app.zoom;
+        pointer_app_frame(&mut app, &ctx, vec![Event::Zoom(1.5)]);
+        for _ in 0..4 {
+            pointer_app_frame(&mut app, &ctx, vec![]);
+        }
+        assert!((app.zoom - 1.5).abs() < 0.001);
+        assert!(((pointer - app.canvas_rect.min) / app.zoom - anchor).length() < 1.0);
+        pointer_app_frame(&mut app, &ctx, vec![Event::Zoom(0.8)]);
+        for _ in 0..4 {
+            pointer_app_frame(&mut app, &ctx, vec![]);
+        }
+        assert!((app.zoom - 1.2).abs() < 0.001);
+        assert!(((pointer - app.canvas_rect.min) / app.zoom - anchor).length() < 1.0);
+        let before = app.zoom;
+        pointer_app_frame(
+            &mut app,
+            &ctx,
+            vec![Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, 4.0),
+                modifiers: Modifiers::CTRL,
+            }],
+        );
+        assert!(app.zoom > before);
+        let before = app.zoom;
+        let top = app.canvas_rect.top();
+        pointer_app_frame(
+            &mut app,
+            &ctx,
+            vec![Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, -4.0),
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        for _ in 0..4 {
+            pointer_app_frame(&mut app, &ctx, vec![]);
+        }
+        assert_eq!(app.zoom, before);
+        assert!(app.canvas_rect.top() < top);
+        pointer_app_frame(
+            &mut app,
+            &ctx,
+            vec![Event::PointerMoved(pos2(80.0, 40.0)), Event::Zoom(2.0)],
+        );
+        assert_eq!(
+            app.zoom, before,
+            "Pinching over the ribbon must not zoom the canvas"
+        );
+        assert_eq!(app.doc.composite(), original);
+        assert!(!app.doc.can_undo());
+    }
+
     fn pointer_app_frame_at(
         app: &mut PaintApp,
         ctx: &Context,

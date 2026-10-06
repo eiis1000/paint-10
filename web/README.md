@@ -110,6 +110,11 @@ their developer tools. Use the equivalent ribbon or File menu command when a
 browser shortcut takes precedence. These limitations do not remove the drawing,
 selection, text, image transformation, history, zoom, or export tools.
 
+Pinch on a touchpad over the canvas to zoom the picture around the pointer;
+Ctrl+wheel / Command+wheel also zooms. Ordinary scrolling pans the canvas.
+The sun / Auto / moon switch beside Help chooses light, system, or dark mode
+and remembers the choice across reloads when browser storage is available.
+
 In Chrome, Ctrl+N / Command+N opens a browser window; use **File → New** for a
 new picture. Ctrl+Page Up / Page Down changes browser tabs; use **View → Zoom in /
 Zoom out** or the status-bar zoom controls for the picture. These reserved keys

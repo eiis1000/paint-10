@@ -414,6 +414,7 @@ impl PaintApp {
                             self.collapsed = !self.collapsed;
                             revealed = false;
                         }
+                        self.theme_switcher(ui, ctx);
                     });
                 });
             });

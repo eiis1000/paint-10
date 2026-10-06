@@ -192,6 +192,36 @@ fn bucket(canvas: &Canvas<'_>) {
 
 pub(super) fn command(canvas: &Canvas<'_>, icon: Icon) {
     match icon {
+        Icon::Sun => {
+            canvas.circle((12.0, 12.0), 4.5, CLEAR, INK);
+            for step in 0..8 {
+                let angle = step as f32 * std::f32::consts::FRAC_PI_4;
+                let (y, x) = angle.sin_cos();
+                canvas.line(
+                    (12.0 + 7.0 * x, 12.0 + 7.0 * y),
+                    (12.0 + 10.0 * x, 12.0 + 10.0 * y),
+                    INK,
+                    1.4,
+                );
+            }
+        }
+        Icon::Moon => {
+            canvas.curve(
+                [(15.0, 2.0), (0.0, 0.0), (0.0, 24.0), (15.0, 22.0)],
+                INK,
+                1.6,
+            );
+            canvas.curve(
+                [(15.0, 22.0), (19.0, 21.0), (22.0, 18.0), (22.0, 15.0)],
+                INK,
+                1.6,
+            );
+            canvas.curve(
+                [(22.0, 15.0), (10.0, 19.0), (6.0, 7.0), (15.0, 2.0)],
+                INK,
+                1.6,
+            );
+        }
         Icon::Appearance => {
             canvas.circle((12.0, 12.0), 9.0, CLEAR, INK);
             let points: Vec<_> = (0..=16)
