@@ -71,7 +71,7 @@ fn pixel_cell(
     // one-pixel block completely at the smallest menu size.
     mesh.add_colored_rect(
         Rect::from_min_size(min / pixels_per_point, Vec2::splat(size / pixels_per_point)),
-        INK,
+        canvas.color(INK),
     );
 }
 
@@ -314,7 +314,10 @@ mod tests {
 
                 assert!(!mesh.indices.is_empty());
                 for vertex in &mesh.vertices {
-                    assert_eq!(vertex.color, INK);
+                    assert_eq!(
+                        vertex.color,
+                        Canvas::new(&ctx.layer_painter(LayerId::background()), rect).color(INK)
+                    );
                     assert!(rect.contains(vertex.pos));
                     for coordinate in [vertex.pos.x, vertex.pos.y] {
                         let physical = coordinate * ctx.pixels_per_point();

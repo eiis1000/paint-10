@@ -133,7 +133,7 @@ pub(super) fn register(
         ui.painter().rect_stroke(
             response.rect.shrink(1.0),
             0.0,
-            Stroke::new(2.0_f32, Color32::from_rgb(0, 80, 160)),
+            Stroke::new(2.0_f32, theme::palette(ui.ctx()).accent),
             StrokeKind::Inside,
         );
     }

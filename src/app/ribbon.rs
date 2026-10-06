@@ -59,7 +59,7 @@ fn ribbon_focus(ui: &Ui, response: &Response) {
         ui.painter().rect_stroke(
             response.rect.shrink(1.0),
             0.0,
-            Stroke::new(2.0_f32, Color32::from_rgb(0, 80, 160)),
+            Stroke::new(2.0_f32, theme::palette(ui.ctx()).accent),
             StrokeKind::Inside,
         );
     }
@@ -230,7 +230,7 @@ pub(super) fn ribbon_menu_button<R>(
     let mut text = egui::text::LayoutJob::simple(
         label.to_owned(),
         FontId::proportional(12.0),
-        Color32::from_gray(35),
+        theme::palette(ui.ctx()).text,
         (size.x - text_left - 20.0).max(1.0),
     );
     text.wrap.max_rows = 1;
@@ -265,7 +265,7 @@ pub(super) fn ribbon_menu_button<R>(
             rect.center().y - galley.size().y / 2.0,
         ),
         galley,
-        Color32::from_gray(35),
+        theme::palette(ui.ctx()).text,
     );
     icons::draw(
         ui.painter(),
@@ -297,7 +297,7 @@ impl PaintApp {
         let mut tab_activated = false;
         let tabs = TopBottomPanel::top("tabs")
             .exact_height(27.)
-            .frame(Frame::NONE.fill(Color32::WHITE))
+            .frame(Frame::NONE.fill(theme::palette(ctx).title))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.scope(|ui| {
@@ -422,8 +422,8 @@ impl PaintApp {
             return;
         }
         let frame = Frame::NONE
-            .fill(RIBBON)
-            .stroke(Stroke::new(1.0_f32, Color32::from_gray(218)));
+            .fill(theme::palette(ctx).ribbon)
+            .stroke(Stroke::new(1.0_f32, theme::palette(ctx).separator));
         let ribbon_rect = if self.collapsed {
             Area::new(Id::new("temporary_ribbon"))
                 .order(Order::Foreground)
@@ -478,14 +478,14 @@ impl PaintApp {
     pub(in crate::app) fn group(ui: &Ui, origin: Pos2, x: f32, w: f32, label: &str) {
         ui.painter().line_segment(
             [origin + vec2(x + w, 5.), origin + vec2(x + w, 106.)],
-            Stroke::new(1.0_f32, Color32::from_gray(220)),
+            Stroke::new(1.0_f32, theme::palette(ui.ctx()).separator),
         );
         ui.painter().text(
             origin + vec2(x + w / 2., 102.),
             Align2::CENTER_CENTER,
             label,
             FontId::proportional(11.),
-            Color32::from_gray(112),
+            theme::palette(ui.ctx()).muted,
         );
     }
 
@@ -510,7 +510,7 @@ impl PaintApp {
         );
         if response.hovered() && enabled {
             ui.painter()
-                .rect_filled(r, 0., Color32::from_rgb(224, 240, 253));
+                .rect_filled(r, 0., theme::palette(ui.ctx()).hover);
         }
         let mut painter = ui.painter().clone();
         if !enabled {
@@ -526,7 +526,7 @@ impl PaintApp {
             Align2::LEFT_CENTER,
             label,
             FontId::proportional(12.),
-            Color32::from_gray(30),
+            theme::palette(ui.ctx()).text,
         );
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
         controls::named(ui, &response, label);
@@ -902,7 +902,7 @@ impl PaintApp {
         ui.painter().rect_filled(
             Rect::from_min_size(o + vec2(450., 7.), vec2(149., 80.)),
             0.,
-            Color32::WHITE,
+            theme::palette(ui.ctx()).field,
         );
         let offset_id = ui.id().with("shape_gallery_offset");
         let mut offset = ui
@@ -1108,7 +1108,7 @@ impl PaintApp {
                                 let right = choice.rect.right_center() - vec2(15.0, 0.0);
                                 ui.painter().line_segment(
                                     [right - vec2(100.0, 0.0), right],
-                                    Stroke::new(size as f32, Color32::from_gray(42)),
+                                    Stroke::new(size as f32, theme::palette(ui.ctx()).text),
                                 );
                                 self.preview_shape_style(&choice, shapes::StylePreview::Size(size));
                                 if choice.clicked() {
@@ -1153,7 +1153,7 @@ impl PaintApp {
                     let y = rect.top() + 8.0 + row as f32 * 10.0;
                     ui.painter().line_segment(
                         [pos2(rect.left() + 8.0, y), pos2(rect.right() - 8.0, y)],
-                        Stroke::new(width, Color32::from_gray(40)),
+                        Stroke::new(width, theme::palette(ui.ctx()).text),
                     );
                 }
                 ui.painter().text(
@@ -1161,7 +1161,7 @@ impl PaintApp {
                     Align2::CENTER_CENTER,
                     "Size",
                     FontId::proportional(12.0),
-                    Color32::from_gray(35),
+                    theme::palette(ui.ctx()).text,
                 );
                 icons::draw(
                     ui.painter(),
@@ -1228,8 +1228,8 @@ impl PaintApp {
                 ui.painter().rect(
                     r,
                     0.,
-                    Color32::from_rgb(222, 237, 250),
-                    Stroke::new(1.0_f32, Color32::from_rgb(166, 202, 233)),
+                    theme::palette(ui.ctx()).selected,
+                    Stroke::new(1.0_f32, theme::palette(ui.ctx()).accent),
                     StrokeKind::Inside,
                 );
             }
@@ -1255,7 +1255,7 @@ impl PaintApp {
                 Align2::CENTER_CENTER,
                 format!("Color {}", i + 1),
                 FontId::proportional(12.),
-                Color32::from_gray(35),
+                theme::palette(ui.ctx()).text,
             );
             if response.clicked() {
                 self.active_color = i;
@@ -1346,7 +1346,8 @@ impl PaintApp {
             ui.painter().rect(
                 r,
                 0.,
-                c.map(display::color).unwrap_or(RIBBON),
+                c.map(display::color)
+                    .unwrap_or(theme::palette(ui.ctx()).ribbon),
                 Stroke::new(1.0_f32, Color32::from_gray(210)),
                 StrokeKind::Inside,
             );

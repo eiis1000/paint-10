@@ -141,7 +141,7 @@ pub(super) fn show(
         } else {
             11.0
         }),
-        Color32::from_gray(35),
+        theme::palette(ui.ctx()).text,
     );
     icons::draw(
         button_ui.painter(),

@@ -131,6 +131,17 @@ adjustments, and original image recovery. Color 1 is the foreground and Color 2 
 Right-click a palette swatch to set Color 2. Ribbon groups collapse into menus
 at narrow widths. The title-bar dropdown customizes the Quick Access Toolbar.
 
+**Appearance:** **View → Appearance** offers System, Light, and Dark modes.
+System follows your desktop or browser preference. Dark mode uses charcoal
+surfaces and blue accents, including menus, dialogs, rulers, and the Layers pane.
+**New canvas** defaults to Match theme: dark mode starts with a charcoal picture
+and light foreground paint. Choose White canvas or Dark canvas to set a fixed
+default. This is the picture's actual background, including in saved exports.
+Changing appearance never recolors an existing picture; use New to apply a new
+canvas default. Both settings survive desktop restarts and browser reloads,
+alongside custom colors and Quick Access settings. Browser storage must be
+available; private browsing or clearing site data can remove saved preferences.
+
 **Captions and memes:** choose Text and drag a box. Format selected words
 independently, or use a bold, centered caption with a contrasting outline over
 a photograph. Drag the box border to move it and its handles to reflow it.

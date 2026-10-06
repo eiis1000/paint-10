@@ -18,6 +18,41 @@ struct Preferences {
     custom_colors: Vec<Color>,
     recent_custom_colors: Option<Vec<Color>>,
     quick_access: QuickAccess,
+    appearance: Appearance,
+    canvas_background: CanvasBackground,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Appearance {
+    Light,
+    Dark,
+    #[default]
+    #[serde(other)]
+    System,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CanvasBackground {
+    White,
+    Dark,
+    #[default]
+    #[serde(other)]
+    MatchTheme,
+}
+
+pub fn appearance() -> (Appearance, CanvasBackground) {
+    let preferences = read_preferences();
+    (preferences.appearance, preferences.canvas_background)
+}
+
+pub fn save_appearance(
+    appearance: Appearance,
+    canvas_background: CanvasBackground,
+) -> Result<(), String> {
+    let mut preferences = read_preferences();
+    preferences.appearance = appearance;
+    preferences.canvas_background = canvas_background;
+    write_preferences(&preferences)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -259,6 +294,37 @@ pub fn save_quick_access(quick_access: &QuickAccess) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appearance_roundtrips_and_legacy_preferences_keep_existing_settings() {
+        for appearance in [Appearance::System, Appearance::Light, Appearance::Dark] {
+            for canvas_background in [
+                CanvasBackground::MatchTheme,
+                CanvasBackground::White,
+                CanvasBackground::Dark,
+            ] {
+                let preferences = Preferences {
+                    appearance,
+                    canvas_background,
+                    custom_colors: vec![[1, 2, 3, 255]],
+                    ..Default::default()
+                };
+                let decoded = decode_preferences(&encode_preferences(&preferences).unwrap());
+                assert_eq!(decoded.appearance, appearance);
+                assert_eq!(decoded.canvas_background, canvas_background);
+                assert_eq!(decoded.custom_colors, preferences.custom_colors);
+            }
+        }
+        for json in [
+            br#"{"custom_colors":[[1,2,3,255]]}"#.as_slice(),
+            br#"{"appearance":"Future","canvas_background":"Future","custom_colors":[[1,2,3,255]]}"#.as_slice(),
+        ] {
+            let decoded = decode_preferences(json);
+            assert_eq!(decoded.appearance, Appearance::System);
+            assert_eq!(decoded.canvas_background, CanvasBackground::MatchTheme);
+            assert_eq!(decoded.custom_colors, [[1, 2, 3, 255]]);
+        }
+    }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]

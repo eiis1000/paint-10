@@ -58,7 +58,8 @@ impl PaintApp {
                     )
                 });
                 ctx.data_mut(|data| data.insert_temp(Id::new(IMAGE_RECT), picture));
-                ui.painter().rect_filled(frame, 0.0, RIBBON);
+                ui.painter()
+                    .rect_filled(frame, 0.0, theme::palette(ctx).ribbon);
                 ui.painter().image(
                     texture,
                     picture,

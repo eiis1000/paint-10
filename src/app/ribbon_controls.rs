@@ -235,11 +235,12 @@ pub(super) fn split_button(
         || menu.response.has_focus()
         || menu.inner.is_some()
     {
-        let border = Stroke::new(1.0_f32, Color32::from_rgb(125, 181, 224));
+        let colors = theme::palette(ui.ctx());
+        let border = Stroke::new(1.0_f32, colors.accent);
         let fill = if split.selected || menu.inner.is_some() {
-            Color32::from_rgb(206, 231, 252)
+            colors.selected
         } else {
-            Color32::from_rgb(229, 243, 255)
+            colors.hover
         };
         ui.painter()
             .set(background, egui::Shape::rect_filled(split.rect, 0.0, fill));
@@ -299,7 +300,7 @@ pub(super) fn icon_row(
         Align2::LEFT_CENTER,
         label,
         FontId::proportional(12.0),
-        Color32::from_gray(35),
+        theme::palette(ui.ctx()).text,
     );
     if response.has_focus() {
         painter.rect_stroke(

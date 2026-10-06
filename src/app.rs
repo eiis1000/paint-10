@@ -46,7 +46,6 @@ use image::{imageops, Rgba, RgbaImage};
 use std::borrow::Cow;
 use std::path::PathBuf;
 
-const RIBBON: Color32 = Color32::from_rgb(245, 246, 247);
 const BLUE: Color32 = Color32::from_rgb(25, 121, 202);
 const MIN_ZOOM: f32 = 0.125;
 const MAX_ZOOM: f32 = 32.0;
@@ -183,6 +182,9 @@ pub struct PaintApp {
     custom_colors: Vec<Color>,
     recent_custom_colors: Vec<Color>,
     persist_preferences: bool,
+    appearance: crate::preferences::Appearance,
+    canvas_background: crate::preferences::CanvasBackground,
+    initialize_canvas: bool,
     outline: PaintStyle,
     fill: PaintStyle,
     fill_gradient: Option<Gradient>,
@@ -264,6 +266,12 @@ impl PaintApp {
 
     fn new_with_context(ctx: &Context, load_environment: bool) -> Self {
         theme::install(ctx);
+        let (appearance, canvas_background) = if load_environment {
+            crate::preferences::appearance()
+        } else {
+            (crate::preferences::Appearance::Light, Default::default())
+        };
+        theme::set_appearance(ctx, appearance);
         let doc = Document::new(900, 600);
         let mut font_db = fontdb::Database::new();
         #[cfg(not(target_arch = "wasm32"))]
@@ -302,6 +310,9 @@ impl PaintApp {
             custom_colors,
             recent_custom_colors,
             persist_preferences: load_environment,
+            appearance,
+            canvas_background,
+            initialize_canvas: load_environment,
             outline: PaintStyle::Solid,
             fill: PaintStyle::None,
             fill_gradient: None,
@@ -415,6 +426,11 @@ impl eframe::App for PaintApp {
     }
 
     fn update(&mut self, ctx: &Context, _: &mut eframe::Frame) {
+        // WebRunner supplies the system theme on its first frame, after new().
+        // Resolve a new canvas then; never recolor a file loaded at startup.
+        if std::mem::take(&mut self.initialize_canvas) && self.file.is_none() {
+            self.new_canvas(ctx);
+        }
         #[cfg(target_arch = "wasm32")]
         self.poll_browser(ctx);
         self.poll_job();
@@ -473,7 +489,7 @@ impl eframe::App for PaintApp {
         if let Some(preview) = &mut self.print_preview {
             let mut action = None;
             CentralPanel::default()
-                .frame(Frame::NONE.fill(RIBBON))
+                .frame(Frame::NONE.fill(theme::palette(ctx).ribbon))
                 .show(ctx, |ui| {
                     ui.add_enabled_ui(preview_interactive, |ui| {
                         action = preview.show(ui, &self.page);

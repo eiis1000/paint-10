@@ -148,7 +148,7 @@ impl ImageDialog {
         let available = vec2(ui.available_width(), height);
         let (panel, _) = ui.allocate_exact_size(available, Sense::hover());
         ui.painter()
-            .rect_filled(panel, 0.0, Color32::from_gray(234));
+            .rect_filled(panel, 0.0, theme::palette(ui.ctx()).workspace);
         let Some(texture) = &self.preview else {
             return;
         };
@@ -167,7 +167,12 @@ impl ImageDialog {
                 painter.rect_filled(
                     square,
                     0.0,
-                    Color32::from_gray(if (row + column) % 2 == 0 { 250 } else { 218 }),
+                    Color32::from_gray(match (ui.visuals().dark_mode, (row + column) % 2 == 0) {
+                        (true, true) => 57,
+                        (true, false) => 45,
+                        (false, true) => 250,
+                        (false, false) => 218,
+                    }),
                 );
             }
         }
@@ -183,7 +188,7 @@ impl ImageDialog {
         ui.painter().rect_stroke(
             panel,
             0.0,
-            Stroke::new(1.0_f32, Color32::from_gray(190)),
+            Stroke::new(1.0_f32, theme::palette(ui.ctx()).border),
             StrokeKind::Inside,
         );
     }

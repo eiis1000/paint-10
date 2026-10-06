@@ -158,7 +158,7 @@ impl PaintApp {
         }
         match action {
             Action::New => {
-                self.doc = Document::new(900, 600);
+                self.new_canvas(ctx);
                 self.reset_layer_panel_state();
                 self.measure.reset();
                 self.file = None;

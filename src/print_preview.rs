@@ -51,7 +51,7 @@ impl PrintPreview {
         let layout = match layout {
             Ok(layout) => layout,
             Err(error) => {
-                ui.colored_label(Color32::DARK_RED, error);
+                ui.colored_label(ui.visuals().error_fg_color, error);
                 return action;
             }
         };

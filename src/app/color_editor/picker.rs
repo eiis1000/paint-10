@@ -268,7 +268,7 @@ fn caption(ui: &Ui, position: Pos2, align: Align2, text: &str) {
         align,
         text,
         FontId::proportional(10.0),
-        Color32::from_gray(80),
+        theme::palette(ui.ctx()).muted,
     );
 }
 
