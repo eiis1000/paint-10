@@ -1,5 +1,26 @@
 # Paint 10 verification log
 
+## October 5: saved appearance and new-canvas defaults
+
+Native tests pass 192 library and 312 application cases, including System theme
+events, explicit overrides, legacy settings, unchanged existing pictures, new
+canvas/export colors, contrast, and pointer-driven wide/compact Appearance menus.
+Strict native and WASM Clippy and the release browser build pass.
+
+The running browser retains Dark and White canvas choices across reloads.
+System mode follows simulated OS changes without recoloring the active image;
+reload creates a matching canvas. A downloaded 900×600 PNG has exact opaque
+charcoal background pixels (38,42,49) and light brush pixels (232,235,240).
+Opening a white PNG preserves its pixels in dark mode. Screenshots cover Home,
+View, File, save/color dialogs, Layers, and the 500×400 Appearance menu.
+Native testing on a private Xvfb display saves Dark in the existing preferences
+JSON, then exits and restarts into dark chrome and a charcoal canvas.
+
+Evidence: `/tmp/paint10-dark-visual/`, `/tmp/paint10-dark-tests.log`,
+`/tmp/paint10-dark-clippy.log`, `/tmp/paint10-dark-wasm-clippy.log`, and
+`/tmp/paint10-dark-web-build.log`. Final CI and deployed-page checks follow the
+implementation commit; previous CI runs do not verify these changes.
+
 ## September 9: equations, transform menus, toolbar alignment, and UI copy
 
 The integrated native suite passes 191 library and 295 application tests.

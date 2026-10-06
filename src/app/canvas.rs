@@ -17,7 +17,16 @@ pub(super) fn checkerboard(painter: &Painter, rect: Rect, cell: f32) {
     if !clip.is_positive() {
         return;
     }
-    painter.rect_filled(clip, 0.0, Color32::WHITE);
+    let dark = painter.ctx().theme() == Theme::Dark;
+    painter.rect_filled(
+        clip,
+        0.0,
+        if dark {
+            Color32::from_gray(57)
+        } else {
+            Color32::WHITE
+        },
+    );
     let x_start = ((clip.left() - rect.left()) / cell).floor() as i32;
     let y_start = ((clip.top() - rect.top()) / cell).floor() as i32;
     let x_end = ((clip.right() - rect.left()) / cell).ceil() as i32;
@@ -29,7 +38,11 @@ pub(super) fn checkerboard(painter: &Painter, rect: Rect, cell: f32) {
                     rect.min + vec2(x as f32, y as f32) * cell,
                     Vec2::splat(cell),
                 );
-                painter.rect_filled(tile.intersect(clip), 0.0, Color32::from_gray(215));
+                painter.rect_filled(
+                    tile.intersect(clip),
+                    0.0,
+                    Color32::from_gray(if dark { 45 } else { 215 }),
+                );
             }
         }
     }
@@ -80,7 +93,7 @@ impl PaintApp {
         self.sync_image_transparency();
         self.refresh_texture(ctx);
         CentralPanel::default()
-            .frame(Frame::NONE.fill(Color32::from_rgb(199, 211, 227)))
+            .frame(Frame::NONE.fill(theme::palette(ctx).workspace))
             .show(ctx, |ui| {
                 let wheel = ctx.input(|i| {
                     if i.modifiers.ctrl || i.modifiers.command {
@@ -175,7 +188,10 @@ impl PaintApp {
                                 let xx = rect.left() + x as f32 * step;
                                 ui.painter().line_segment(
                                     [pos2(xx, clip.top()), pos2(xx, clip.bottom())],
-                                    Stroke::new(0.5_f32, Color32::from_black_alpha(65)),
+                                    Stroke::new(
+                                        0.5_f32,
+                                        Color32::from_rgba_unmultiplied(128, 128, 128, 100),
+                                    ),
                                 );
                             }
                             for y in (((clip.top() - rect.top()) / step).max(0.) as u32)
@@ -184,7 +200,10 @@ impl PaintApp {
                                 let yy = rect.top() + y as f32 * step;
                                 ui.painter().line_segment(
                                     [pos2(clip.left(), yy), pos2(clip.right(), yy)],
-                                    Stroke::new(0.5_f32, Color32::from_black_alpha(65)),
+                                    Stroke::new(
+                                        0.5_f32,
+                                        Color32::from_rgba_unmultiplied(128, 128, 128, 100),
+                                    ),
                                 );
                             }
                         }
@@ -497,8 +516,10 @@ impl PaintApp {
     pub(in crate::app) fn draw_rulers(&self, ui: &Ui, r: Rect) {
         let top = Rect::from_min_max(r.min - vec2(0., 22.), r.right_top());
         let left = Rect::from_min_max(r.min - vec2(22., 0.), r.left_bottom());
-        ui.painter().rect_filled(top, 0., RIBBON);
-        ui.painter().rect_filled(left, 0., RIBBON);
+        ui.painter()
+            .rect_filled(top, 0., theme::palette(ui.ctx()).ribbon);
+        ui.painter()
+            .rect_filled(left, 0., theme::palette(ui.ctx()).ribbon);
         for (vertical, length) in [
             (false, self.doc.image.width()),
             (true, self.doc.image.height()),
@@ -525,7 +546,7 @@ impl PaintApp {
                             vec2(0., -5.)
                         },
                     ],
-                    Stroke::new(1.0_f32, Color32::from_gray(100)),
+                    Stroke::new(1.0_f32, theme::palette(ui.ctx()).muted),
                 );
                 ui.painter().text(
                     p + if vertical {
@@ -540,7 +561,7 @@ impl PaintApp {
                     },
                     n.to_string(),
                     FontId::proportional(9.),
-                    Color32::from_gray(85),
+                    theme::palette(ui.ctx()).muted,
                 );
             }
         }

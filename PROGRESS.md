@@ -1,5 +1,24 @@
 # Paint 10 work in progress
 
+## October 5: dark mode and remembered canvas defaults
+
+- User requests a tasteful dark mode, dark canvases by default in dark mode,
+  and preferences that survive browser reloads and desktop restarts.
+- Implementation adds saved System/Light/Dark appearance and Match theme/White/
+  Dark new-canvas defaults under View → Appearance. Existing pictures are never
+  recolored by a theme change. Dark new pictures use charcoal pixels and light
+  foreground paint; that background is part of saved exports.
+- Shared chrome, hand-drawn controls/icons, menus, rulers, Layers and dialogs
+  now follow the theme. Browser loading colors respect saved/system appearance.
+- Baseline 563c5a2 (metadata and Crane cache) passed all six CI/Pages jobs in
+  run 34642634529. Dark-mode changes still require their own full verification.
+- Local verification passes 192 library and 312 application tests, strict native
+  and WASM Clippy, and the release browser build. Browser reload/OS-theme/new
+  canvas/export checks and native exit/restart persistence pass. Visual evidence
+  is in /tmp/paint10-dark-visual; TESTING.md records the cases.
+- Builds use /tmp/paint10-dark-target and /tmp/paint10-dark-web-target. Final CI
+  and deployed-page verification remain pending on the implementation commit.
+
 ## September 9: LaTeX, transforms, ribbon alignment, and UI copy
 
 - User additionally requests LaTeX compilation in editable text boxes if feasible,

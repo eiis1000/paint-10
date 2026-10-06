@@ -395,7 +395,7 @@ fn alignment_button(
         let y = center.y - 6.0 + index as f32 * 4.0;
         ui.painter().line_segment(
             [pos2(x, y), pos2(x + width, y)],
-            Stroke::new(1.0_f32, Color32::from_gray(40)),
+            Stroke::new(1.0_f32, theme::palette(ui.ctx()).text),
         );
     }
     response.widget_info(|| {

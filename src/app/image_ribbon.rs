@@ -241,7 +241,7 @@ impl PaintApp {
                 Align2::LEFT_CENTER,
                 format!("Original: {width} × {height} px"),
                 FontId::proportional(12.0),
-                Color32::from_gray(65),
+                theme::palette(ui.ctx()).muted,
             );
         }
     }

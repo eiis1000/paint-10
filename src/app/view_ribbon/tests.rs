@@ -21,6 +21,84 @@ fn fixture() -> (PaintApp, Context) {
     (app, ctx)
 }
 
+#[test]
+fn appearance_menus_switch_theme_and_new_canvas_without_recoloring_work() {
+    use crate::preferences::{Appearance, CanvasBackground};
+    fn control(output: &FullOutput, label: &str) -> Rect {
+        bounds(
+            output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .map(|(_, node)| node)
+                .find(|node| node.role() == Role::Button && node.label() == Some(label))
+                .unwrap_or_else(|| panic!("Missing {label}")),
+        )
+    }
+    for size in [vec2(1200.0, 760.0), vec2(500.0, 400.0)] {
+        let (mut app, ctx) = fixture();
+        let original = app.doc.composite();
+        let mut output = settle(&mut app, &ctx, size);
+        if size.x < 600.0 {
+            click(
+                &mut app,
+                &ctx,
+                size,
+                control(&output, "Appearance").center(),
+            );
+            output = settle(&mut app, &ctx, size);
+        }
+        if size.x >= 600.0 {
+            click(
+                &mut app,
+                &ctx,
+                size,
+                control(&output, "Light mode").center(),
+            );
+            output = settle(&mut app, &ctx, size);
+        }
+        click(&mut app, &ctx, size, control(&output, "Dark mode").center());
+        settle(&mut app, &ctx, size);
+        assert_eq!(app.appearance, Appearance::Dark, "theme menu at {size:?}");
+        assert_eq!(ctx.theme(), Theme::Dark);
+        assert_eq!(app.doc.composite(), original);
+        dismiss_popup(&mut app, &ctx, size);
+        output = settle(&mut app, &ctx, size);
+        if size.x < 600.0 {
+            click(
+                &mut app,
+                &ctx,
+                size,
+                control(&output, "Appearance").center(),
+            );
+            output = settle(&mut app, &ctx, size);
+        }
+        if size.x >= 600.0 {
+            click(
+                &mut app,
+                &ctx,
+                size,
+                control(&output, "New canvas").center(),
+            );
+            output = settle(&mut app, &ctx, size);
+        }
+        click(
+            &mut app,
+            &ctx,
+            size,
+            control(&output, "White canvas").center(),
+        );
+        settle(&mut app, &ctx, size);
+        assert_eq!(app.canvas_background, CanvasBackground::White);
+        assert_eq!(app.doc.composite(), original);
+        app.execute(Action::New, &ctx);
+        assert_eq!(app.doc.image.get_pixel(0, 0).0, WHITE);
+    }
+}
+
 fn frame(app: &mut PaintApp, ctx: &Context, size: Vec2, events: Vec<Event>) -> FullOutput {
     let mut input = RawInput {
         screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),

@@ -45,13 +45,25 @@ impl PaintApp {
                 keys: "ZM",
                 popup: "view_measure",
             },
+            Group {
+                label: "Appearance",
+                width: 154.0,
+                icon: Icon::Appearance,
+                keys: "ZA",
+                popup: "view_appearance",
+            },
         ];
-        let widths =
-            ribbon_layout::widths(&groups, ui.max_rect().right() - origin.x, &[4, 3, 2, 1, 0]);
+        let widths = ribbon_layout::widths(
+            &groups,
+            ui.max_rect().right() - origin.x,
+            &[4, 3, 2, 5, 1, 0],
+        );
         let mut x = origin.x;
         for (index, (group, width)) in groups.into_iter().zip(widths).enumerate() {
             ribbon_layout::show(ui, pos2(x, origin.y), width, "view", group, |ui, o| {
-                Self::group(ui, o, 0.0, group.width - 1.0, group.label);
+                if !controls::current(ui).is_some_and(|scope| scope.name == "view_appearance") {
+                    Self::group(ui, o, 0.0, group.width - 1.0, group.label);
+                }
                 match index {
                     0 => self.view_zoom_group(ui, o, ctx),
                     1 => self.view_canvas_group(ui, o),
@@ -66,10 +78,93 @@ impl PaintApp {
                             self.show_picture(ctx);
                         }
                     }
-                    _ => self.measure_group(ui, o, ctx),
+                    4 => self.measure_group(ui, o, ctx),
+                    _ => self.appearance_group(ui, o, ctx),
                 }
             });
             x += width;
+        }
+    }
+
+    fn appearance_group(&mut self, ui: &mut Ui, o: Pos2, ctx: &Context) {
+        use crate::preferences::Appearance;
+        let before = (self.appearance, self.canvas_background);
+        if controls::current(ui).is_some_and(|scope| scope.name == "view_appearance") {
+            ui.scope_builder(
+                UiBuilder::new().max_rect(Rect::from_min_size(o, vec2(194.0, 230.0))),
+                |ui| {
+                    theme::menu(ui);
+                    theme::menu_heading(ui, "Theme", 194.0);
+                    self.appearance_choices(ui, false);
+                    theme::menu_heading(ui, "New canvas", 194.0);
+                    self.appearance_choices(ui, true);
+                },
+            );
+            if before != (self.appearance, self.canvas_background) {
+                self.save_appearance(ctx);
+            }
+            return;
+        }
+        for (row, label, keys, scope, icon) in [
+            (
+                0,
+                match self.appearance {
+                    Appearance::System => "System theme",
+                    Appearance::Light => "Light mode",
+                    Appearance::Dark => "Dark mode",
+                },
+                "A",
+                "appearance_theme",
+                Icon::Appearance,
+            ),
+            (1, "New canvas", "B", "appearance_canvas", Icon::New),
+        ] {
+            ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(
+                o + vec2(4.0, 14.0 + row as f32 * 36.0), vec2(144.0, 28.0),
+            )), |ui| {
+                ribbon::ribbon_menu_button(ui, label, keys, scope, Some(icon), |ui| {
+                    self.appearance_choices(ui, row != 0);
+                }).response.on_hover_text(if row == 0 {
+                    "Appearance is saved on this device. System follows your desktop or browser theme."
+                } else {
+                    "Background for new pictures, including saved exports. Existing pictures are unchanged."
+                });
+            });
+        }
+        if before != (self.appearance, self.canvas_background) {
+            self.save_appearance(ctx);
+        }
+    }
+
+    fn appearance_choices(&mut self, ui: &mut Ui, canvas: bool) {
+        use crate::preferences::{Appearance, CanvasBackground};
+        let appearances = [Appearance::System, Appearance::Light, Appearance::Dark];
+        let backgrounds = [
+            CanvasBackground::MatchTheme,
+            CanvasBackground::White,
+            CanvasBackground::Dark,
+        ];
+        let labels = if canvas {
+            ["Match theme", "White canvas", "Dark canvas"]
+        } else {
+            ["System theme", "Light mode", "Dark mode"]
+        };
+        for (index, label) in labels.into_iter().enumerate() {
+            let selected = if canvas {
+                self.canvas_background == backgrounds[index]
+            } else {
+                self.appearance == appearances[index]
+            };
+            let choice = ui.add(theme::MenuItem::new(label).width(194.0).selected(selected));
+            controls::named(ui, &choice, label);
+            if choice.clicked() {
+                if canvas {
+                    self.canvas_background = backgrounds[index];
+                } else {
+                    self.appearance = appearances[index];
+                }
+                ui.close_menu();
+            }
         }
     }
 

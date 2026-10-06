@@ -3,8 +3,6 @@
 use super::*;
 
 const ROW_HEIGHT: f32 = 54.0;
-const SELECTED: Color32 = Color32::from_rgb(204, 232, 255);
-const BORDER: Color32 = Color32::from_rgb(190, 195, 201);
 
 #[derive(Default)]
 pub(super) struct LayersState {
@@ -227,12 +225,16 @@ impl PaintApp {
         SidePanel::right("paint10_layers")
             .resizable(false)
             .exact_width(width)
-            .frame(Frame::NONE.fill(RIBBON).inner_margin(Margin::same(7)))
+            .frame(
+                Frame::NONE
+                    .fill(theme::palette(ctx).ribbon)
+                    .inner_margin(Margin::same(7)),
+            )
             .show(ctx, |ui| {
                 ui.painter().vline(
                     ui.max_rect().left() - 7.0,
                     ui.max_rect().y_range(),
-                    Stroke::new(1.0_f32, BORDER),
+                    Stroke::new(1.0_f32, theme::palette(ctx).border),
                 );
                 ui.horizontal(|ui| {
                     ui.strong("Layers");
@@ -384,11 +386,11 @@ impl PaintApp {
             )
         });
         let background = if selected {
-            SELECTED
+            theme::palette(ui.ctx()).selected
         } else if response.hovered() || response.has_focus() {
-            Color32::from_rgb(229, 243, 255)
+            theme::palette(ui.ctx()).hover
         } else {
-            Color32::WHITE
+            theme::palette(ui.ctx()).field
         };
         ui.painter().rect(
             rect,
@@ -399,7 +401,7 @@ impl PaintApp {
                 if selected || response.has_focus() {
                     BLUE
                 } else {
-                    BORDER
+                    theme::palette(ui.ctx()).border
                 },
             ),
             StrokeKind::Inside,
@@ -496,8 +498,12 @@ impl PaintApp {
                 Color32::from_white_alpha(if row.visible { 255 } else { 110 }),
             );
         }
-        ui.painter()
-            .rect_stroke(thumb, 0.0, Stroke::new(1.0_f32, BORDER), StrokeKind::Inside);
+        ui.painter().rect_stroke(
+            thumb,
+            0.0,
+            Stroke::new(1.0_f32, theme::palette(ui.ctx()).border),
+            StrokeKind::Inside,
+        );
         let name_rect = Rect::from_min_max(rect.min + vec2(80.0, 5.0), rect.max - vec2(5.0, 5.0));
         if self
             .layer_ui
@@ -546,13 +552,20 @@ impl PaintApp {
             let mut job = egui::text::LayoutJob::simple_singleline(
                 row.name.clone(),
                 FontId::proportional(12.0),
-                Color32::from_gray(if row.visible { 32 } else { 115 }),
+                if row.visible {
+                    theme::palette(ui.ctx()).text
+                } else {
+                    theme::palette(ui.ctx()).muted
+                },
             );
             job.wrap.max_width = name_rect.width();
             job.wrap.max_rows = 1;
             let galley = ui.painter().layout_job(job);
-            ui.painter()
-                .galley(name_rect.min + vec2(0.0, 3.0), galley, Color32::BLACK);
+            ui.painter().galley(
+                name_rect.min + vec2(0.0, 3.0),
+                galley,
+                theme::palette(ui.ctx()).text,
+            );
             let detail = match (row.locked, row.visible, row.opacity) {
                 (true, false, _) => "Locked · Hidden".into(),
                 (true, true, _) => "Locked".into(),
@@ -565,7 +578,7 @@ impl PaintApp {
                 Align2::LEFT_TOP,
                 detail,
                 FontId::proportional(10.0),
-                Color32::from_gray(100),
+                theme::palette(ui.ctx()).muted,
             );
         }
         response.context_menu(|ui| self.layer_options(ui, row, action));
@@ -784,7 +797,8 @@ fn drop_destination(from: usize, target: usize, above: bool) -> usize {
 
 fn draw_eye(painter: &Painter, rect: Rect, visible: bool, focused: bool) {
     let center = rect.center();
-    let ink = Color32::from_gray(if visible { 75 } else { 150 });
+    let colors = theme::palette(painter.ctx());
+    let ink = if visible { colors.text } else { colors.muted };
     if focused {
         painter.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, BLUE), StrokeKind::Inside);
     }

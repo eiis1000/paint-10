@@ -249,7 +249,7 @@ impl PaintApp {
         TopBottomPanel::top("measurement_readout")
             .frame(
                 Frame::NONE
-                    .fill(Color32::from_rgb(232, 243, 252))
+                    .fill(theme::palette(ctx).hover)
                     .inner_margin(Margin::symmetric(10, 5)),
             )
             .show(ctx, |ui| {

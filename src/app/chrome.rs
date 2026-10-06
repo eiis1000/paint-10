@@ -240,7 +240,7 @@ impl PaintApp {
         if self.quick_access.below_ribbon {
             TopBottomPanel::top("quick_access_below")
                 .exact_height(29.0)
-                .frame(Frame::NONE.fill(RIBBON))
+                .frame(Frame::NONE.fill(theme::palette(ctx).ribbon))
                 .show(ctx, |ui| {
                     self.quick_access_controls(ui, ui.max_rect().min + vec2(5.0, 2.0));
                 });
@@ -250,7 +250,7 @@ impl PaintApp {
     pub(in crate::app) fn titlebar(&mut self, ctx: &Context) {
         TopBottomPanel::top("title")
             .exact_height(31.)
-            .frame(Frame::NONE.fill(Color32::WHITE))
+            .frame(Frame::NONE.fill(theme::palette(ctx).title))
             .show(ctx, |ui| {
                 let r = ui.max_rect();
                 ui.painter().image(
@@ -267,7 +267,7 @@ impl PaintApp {
                 let title_x = 44.0 + quick_width;
                 ui.painter().line_segment(
                     [r.min + vec2(title_x, 8.), r.min + vec2(title_x, 23.)],
-                    Stroke::new(1.0_f32, Color32::from_gray(217)),
+                    Stroke::new(1.0_f32, theme::palette(ctx).separator),
                 );
                 let name = self
                     .file
@@ -289,7 +289,7 @@ impl PaintApp {
                     Align2::LEFT_CENTER,
                     &title,
                     FontId::proportional(13.),
-                    Color32::from_gray(25),
+                    theme::palette(ctx).text,
                 );
                 // Viewport commands request another repaint. Send the title
                 // only when it changes, so an idle picture can remain idle.
@@ -343,14 +343,14 @@ impl PaintApp {
                                 if i == 2 {
                                     Color32::from_rgb(232, 17, 35)
                                 } else {
-                                    Color32::from_gray(231)
+                                    theme::palette(ctx).hover
                                 },
                             );
                         }
                         let c = if i == 2 && response.hovered() {
                             Color32::WHITE
                         } else {
-                            Color32::from_gray(30)
+                            theme::palette(ctx).text
                         };
                         let center = rr.center();
                         if i == 0 {
@@ -388,7 +388,7 @@ impl PaintApp {
                             ui.painter().rect_stroke(
                                 rr.shrink(3.0),
                                 0.0,
-                                Stroke::new(2.0_f32, Color32::from_rgb(0, 80, 160)),
+                                Stroke::new(2.0_f32, theme::palette(ctx).accent),
                                 StrokeKind::Inside,
                             );
                         }
@@ -406,7 +406,7 @@ impl PaintApp {
             .exact_height(26.)
             .frame(
                 Frame::NONE
-                    .fill(Color32::from_rgb(240, 240, 240))
+                    .fill(theme::palette(ctx).ribbon)
                     .inner_margin(Margin::symmetric(8, 3)),
             )
             .show(ctx, |ui| {

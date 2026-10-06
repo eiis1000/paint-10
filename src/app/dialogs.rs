@@ -594,7 +594,7 @@ impl PaintApp {
                         }
                     });
                     if let Some(error) = &self.dialog_error {
-                        ui.colored_label(Color32::RED, error);
+                        ui.colored_label(ui.visuals().error_fg_color, error);
                     }
                 });
             if let Some(shown) = shown {
@@ -674,7 +674,7 @@ impl PaintApp {
                     }
                     if dialog != Dialog::Colors {
                         if let Some(error) = &self.dialog_error {
-                            ui.colored_label(Color32::RED, error);
+                            ui.colored_label(ui.visuals().error_fg_color, error);
                         }
                     }
                 });
@@ -1095,7 +1095,7 @@ impl PaintApp {
                 ));
             }
             Err(e) => {
-                ui.colored_label(Color32::RED, e);
+                ui.colored_label(ui.visuals().error_fg_color, e);
             }
         }
         ui.separator();

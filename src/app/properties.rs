@@ -99,7 +99,10 @@ impl PaintApp {
         });
         let valid = d::valid_size(self.resize_w, self.resize_h);
         if !valid {
-            ui.colored_label(Color32::RED, "The canvas must fit within 16 megapixels.");
+            ui.colored_label(
+                ui.visuals().error_fg_color,
+                "The canvas must fit within 16 megapixels.",
+            );
         }
         ui.add_space(12.0);
         let mut close = false;

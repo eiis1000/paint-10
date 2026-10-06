@@ -192,6 +192,17 @@ fn bucket(canvas: &Canvas<'_>) {
 
 pub(super) fn command(canvas: &Canvas<'_>, icon: Icon) {
     match icon {
+        Icon::Appearance => {
+            canvas.circle((12.0, 12.0), 9.0, CLEAR, INK);
+            let points: Vec<_> = (0..=16)
+                .map(|i| {
+                    let angle =
+                        -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::PI / 16.0;
+                    (12.0 + 7.0 * angle.cos(), 12.0 + 7.0 * angle.sin())
+                })
+                .collect();
+            canvas.polygon(&points, BLUE, CLEAR);
+        }
         Icon::New => document(canvas),
         Icon::Open => {
             canvas.rect((2.0, 5.0), (10.0, 12.0), GOLD, WOOD);

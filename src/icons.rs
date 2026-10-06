@@ -60,6 +60,7 @@ pub enum Icon {
     Fullscreen,
     Measure,
     ResetMeasurement,
+    Appearance,
     ChevronDown,
     ChevronUp,
 }
@@ -118,6 +119,7 @@ impl Icon {
             Self::Fullscreen => "Full screen",
             Self::Measure => "Measure",
             Self::ResetMeasurement => "Reset measurement",
+            Self::Appearance => "Appearance",
             Self::ChevronDown => "Expand",
             Self::ChevronUp => "Collapse",
         }
@@ -168,13 +170,13 @@ pub fn button(
             rect,
             0.0,
             if pressed {
-                Color32::from_rgb(183, 218, 247)
+                ui.visuals().widgets.active.bg_fill
             } else if selected {
-                Color32::from_rgb(206, 231, 252)
+                ui.visuals().selection.bg_fill
             } else {
-                Color32::from_rgb(229, 243, 255)
+                ui.visuals().widgets.hovered.bg_fill
             },
-            Stroke::new(1.0_f32, Color32::from_rgb(125, 181, 224)),
+            ui.visuals().widgets.hovered.bg_stroke,
             StrokeKind::Inside,
         );
     }
@@ -194,7 +196,7 @@ pub fn button(
         let mut job = egui::text::LayoutJob::simple(
             label.to_owned(),
             FontId::proportional(12.0),
-            Color32::from_gray(35),
+            ui.visuals().text_color(),
             (rect.width() - 4.0).max(1.0),
         );
         job.halign = Align::Center;
@@ -202,7 +204,7 @@ pub fn button(
         painter.galley(
             pos2(rect.center().x, rect.bottom() - 4.0 - text.size().y),
             text,
-            Color32::from_gray(35),
+            ui.visuals().text_color(),
         );
     }
     if response.has_focus() && enabled {
@@ -221,7 +223,7 @@ pub fn button(
 
 fn focus_outline(painter: &Painter, rect: Rect) {
     let pixel = 1.0 / painter.pixels_per_point();
-    let stroke = Stroke::new(pixel, Color32::from_rgb(25, 67, 101));
+    let stroke = Stroke::new(pixel, painter.ctx().style().visuals.hyperlink_color);
     for [start, end] in [
         [rect.left_top(), rect.right_top()],
         [rect.right_top(), rect.right_bottom()],
@@ -261,6 +263,20 @@ struct Canvas<'a> {
 }
 
 impl<'a> Canvas<'a> {
+    // Theme the icon's structural ink, not document pixels or palette swatches.
+    fn color(&self, color: Color32) -> Color32 {
+        if self.painter.ctx().style().visuals.dark_mode {
+            match color {
+                INK => Color32::from_rgb(205, 215, 226),
+                BLUE => Color32::from_rgb(113, 179, 231),
+                LIGHT_BLUE => Color32::from_rgb(55, 84, 111),
+                SILVER => Color32::from_rgb(110, 127, 143),
+                _ => color,
+            }
+        } else {
+            color
+        }
+    }
     fn new(painter: &'a Painter, rect: Rect) -> Self {
         let side = rect.width().min(rect.height());
         Self {
@@ -296,12 +312,13 @@ impl<'a> Canvas<'a> {
         if start.1 == end.1 {
             points.iter_mut().for_each(|point| point.y = snap(point.y));
         }
-        self.painter.line_segment(points, Stroke::new(width, color));
+        self.painter
+            .line_segment(points, Stroke::new(width, self.color(color)));
     }
 
     fn path(&self, points: &[(f32, f32)], color: Color32, width: f32, closed: bool) {
         let points = points.iter().map(|&point| self.point(point)).collect();
-        let stroke = Stroke::new(self.width(width), color);
+        let stroke = Stroke::new(self.width(width), self.color(color));
         self.painter.add(if closed {
             Shape::closed_line(points, stroke)
         } else {
@@ -313,11 +330,11 @@ impl<'a> Canvas<'a> {
         let stroke = if outline == CLEAR {
             Stroke::NONE
         } else {
-            Stroke::new(self.width(1.0), outline)
+            Stroke::new(self.width(1.0), self.color(outline))
         };
         self.painter.add(Shape::convex_polygon(
             points.iter().map(|&point| self.point(point)).collect(),
-            fill,
+            self.color(fill),
             stroke,
         ));
     }
@@ -325,7 +342,7 @@ impl<'a> Canvas<'a> {
     fn rect(&self, min: (f32, f32), max: (f32, f32), fill: Color32, outline: Color32) {
         let rect = Rect::from_min_max(self.point(min), self.point(max));
         if fill != CLEAR {
-            self.painter.rect_filled(rect, 0.0, fill);
+            self.painter.rect_filled(rect, 0.0, self.color(fill));
         }
         if outline != CLEAR {
             self.line(min, (max.0, min.1), outline, 1.0);
@@ -339,11 +356,11 @@ impl<'a> Canvas<'a> {
         self.painter.circle(
             self.point(center),
             radius * self.scale,
-            fill,
+            self.color(fill),
             if outline == CLEAR {
                 Stroke::NONE
             } else {
-                Stroke::new(self.width(1.2), outline)
+                Stroke::new(self.width(1.2), self.color(outline))
             },
         );
     }
@@ -354,7 +371,7 @@ impl<'a> Canvas<'a> {
                 points.map(|point| self.point(point)),
                 false,
                 CLEAR,
-                Stroke::new(self.width(width), color),
+                Stroke::new(self.width(width), self.color(color)),
             ));
     }
 }
