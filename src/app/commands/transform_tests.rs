@@ -1,5 +1,70 @@
 use super::*;
 
+#[test]
+fn pasted_image_rotation_grows_canvas_and_keeps_selection_layers_and_undo() {
+    for extra_layer in [false, true] {
+        for combined in [false, true] {
+            let ctx = Context::default();
+            let mut app = PaintApp::new_with_context(&ctx, false);
+            app.doc = Document::new(20, 15);
+            if extra_layer {
+                app.doc.add_layer().unwrap();
+            }
+            let image = RgbaImage::from_fn(30, 10, |x, y| Rgba([x as u8, y as u8, 200, 255]));
+            app.insert_image(image.clone());
+            assert_eq!(app.doc.image.dimensions(), (30, 15));
+            let before = app.doc.layers().to_vec();
+            if combined {
+                app.resize_skew_rotate_picture(30, 10, 0.0, 0.0, 90.0)
+                    .unwrap();
+            } else {
+                assert!(app.rotate_picture(90.0, false));
+            }
+            assert_eq!(app.doc.image.dimensions(), (30, 30));
+            assert_eq!(app.doc.active_layer_index(), usize::from(extra_layer));
+            let object = &app.doc.objects[app.object.unwrap()];
+            assert!(matches!(&object.kind, ObjectKind::Image(source) if source == &image));
+            assert_eq!(object.rendered_dimensions(), Some((10, 30)));
+            let rotated = object.render();
+            let composite = app.doc.composite();
+            for y in 0..30 {
+                for x in 0..10 {
+                    assert_eq!(composite.get_pixel(x, y), rotated.get_pixel(x, y));
+                }
+            }
+            let restored =
+                crate::project::decode(&crate::project::encode(&app.doc).unwrap()).unwrap();
+            assert_eq!(restored.composite(), composite);
+            app.doc.undo();
+            assert!(app.doc.layers() == before);
+            app.doc.redo();
+            assert_eq!(app.doc.composite(), composite);
+        }
+    }
+}
+
+#[test]
+fn rotated_image_growth_accounts_for_position_and_rejects_oversized_canvas_atomically() {
+    let ctx = Context::default();
+    let mut app = PaintApp::new_with_context(&ctx, false);
+    app.doc = Document::new(20, 15);
+    app.insert_image(RgbaImage::from_pixel(30, 10, Rgba(BLACK)));
+    app.doc.objects[app.object.unwrap()].pos = (12, 8);
+    assert!(app.rotate_picture(37.0, true));
+    let object = &app.doc.objects[app.object.unwrap()];
+    let (w, h) = object.rendered_dimensions().unwrap();
+    assert_eq!(
+        app.doc.image.dimensions(),
+        ((12 + w).max(30), (8 + h).max(15))
+    );
+    app.doc.objects[app.object.unwrap()].pos = (i32::MAX, 0);
+    let before = app.doc.layers().to_vec();
+    let selected = app.object;
+    assert!(!app.rotate_picture(90.0, false));
+    assert!(app.doc.layers() == before);
+    assert_eq!(app.object, selected);
+}
+
 fn frame(app: &mut PaintApp, ctx: &Context, size: Vec2, events: Vec<Event>) -> FullOutput {
     let mut input = RawInput {
         screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),

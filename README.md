@@ -131,16 +131,22 @@ adjustments, and original image recovery. Color 1 is the foreground and Color 2 
 Right-click a palette swatch to set Color 2. Ribbon groups collapse into menus
 at narrow widths. The title-bar dropdown customizes the Quick Access Toolbar.
 
-**Appearance:** **View → Appearance** offers System, Light, and Dark modes.
-System follows your desktop or browser preference. Dark mode uses charcoal
+**Appearance:** the **sun / Auto / moon** switch beside Help stays visible on
+every tab, even with the ribbon minimized. Choose the sun for light mode, the
+moon for dark mode, or Auto to follow your desktop or browser preference.
+The selected setting is highlighted. Dark mode uses charcoal
 surfaces and blue accents, including menus, dialogs, rulers, and the Layers pane.
-**New canvas** defaults to Match theme: dark mode starts with a charcoal picture
-and light foreground paint. Choose White canvas or Dark canvas to set a fixed
+**View → Appearance → New canvas** defaults to Match theme: dark mode starts
+with a charcoal picture and light foreground paint. Choose White canvas or Dark canvas to set a fixed
 default. This is the picture's actual background, including in saved exports.
 Changing appearance never recolors an existing picture; use New to apply a new
 canvas default. Both settings survive desktop restarts and browser reloads,
 alongside custom colors and Quick Access settings. Browser storage must be
 available; private browsing or clearing site data can remove saved preferences.
+
+**Navigation:** pinch on a touchpad to zoom the picture around the pointer.
+Ctrl+wheel (Command+wheel on macOS) also zooms; ordinary two-finger scrolling
+or the mouse wheel pans the canvas. Zoom is limited to 12.5–3200%.
 
 **Captions and memes:** choose Text and drag a box. Format selected words
 independently, or use a bold, centered caption with a contrasting outline over
@@ -194,6 +200,10 @@ resizes first, then skews, then rotates, as one Undo step. The operation affects
 the selected object or pixel selection; with nothing selected, it affects the
 whole picture. Right-click rectangular or free-form selections for **Rotate**,
 including custom angles and flips.
+Pasting a larger image expands the canvas to fit. Rotating a selected image
+also expands the right and bottom edges as needed, including custom angles
+and rotation in the Resize dialog. Growth and rotation undo together; existing
+pixels and layers are preserved, within the usual canvas size limits.
 
 **Measurements:** enable **View → Measure distance** and drag between pixel
 centers. Adjust either endpoint with the mouse or arrows (Shift: ten pixels).
@@ -405,6 +415,7 @@ history. Complete behavioral or visual equivalence is not claimed.
 
 | Area | Paint 10 behavior |
 | --- | --- |
+| Appearance | The sun / Auto / moon switch offers saved light, system, and dark themes. New pictures can match the theme or use a fixed white/dark background. Existing artwork is never recolored by a theme change. |
 | Editable text | Finished boxes can be reopened, moved, and reformatted. Mixed formatting, paragraph alignment, strikeout, and caption outlines are available. Transformed text uses an upright editor while typing, then restores its transform. |
 | LaTeX equations | Text boxes can render math source locally with a live preview, bundled math fonts, and retained source in projects. This supports math notation rather than full TeX documents. |
 | Editable images | Inserted pictures retain their original pixels for repeated scaling, arbitrary rotation, reversible source crops, color/detail adjustments, and Reset image. |
@@ -412,7 +423,7 @@ history. Complete behavioral or visual equivalence is not claimed.
 | Transparency | Full alpha is supported on the canvas, in colors, and in suitable exports. Erasing a transparent layer reveals the layers beneath it. |
 | Color editor | Adds HSV, linear RGB, approximate CMYK, OKLab/OKLCH, CSS color entry, alpha, and gamut fitting alongside familiar RGB/HSL controls. |
 | Shapes and precision | Adds gradient fills, arbitrary-angle rotation, remembered tool widths, 3200% zoom, nearest-neighbor scaling, and a distance/angle measurement tool. |
-| Transform workflow | Resize, skew, and rotation share one dialog and one Undo step. The selection context menu includes custom rotation and flips. |
+| Transform workflow | Resize, skew, and rotation share one dialog and one Undo step. The selection context menu includes custom rotation and flips. Rotating a selected image grows the canvas as needed to keep its right/bottom edges visible. |
 | Projects and exports | `.p10` keeps editable objects, source images, embedded fonts, and layers. Raster saves flatten visible content; Save a copy and Save selection as preserve the working destination. WebP, ICO, and PDF output are also available. |
 | Interface | Adds an Image ribbon and extra Text controls. View uses grouped icon toggles for guides, panels, and measurement. Narrow windows collapse ribbon groups into menus. Icons and keytip mappings are independently implemented. |
 | Rendering | Brush dynamics, textured fills, font rasterization, and native dialogs differ; matching Microsoft's exact pixels is not guaranteed. |

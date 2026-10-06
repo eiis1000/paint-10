@@ -95,20 +95,31 @@ impl PaintApp {
         CentralPanel::default()
             .frame(Frame::NONE.fill(theme::palette(ctx).workspace))
             .show(ctx, |ui| {
-                let wheel = ctx.input(|i| {
-                    if i.modifiers.ctrl || i.modifiers.command {
-                        i.raw_scroll_delta.y
-                    } else {
-                        0.
-                    }
-                });
-                if wheel != 0. {
-                    self.zoom =
-                        (self.zoom * if wheel > 0. { 1.25 } else { 0.8 }).clamp(MIN_ZOOM, MAX_ZOOM);
+                // Egui combines native/browser pinch events and Ctrl/Command
+                // wheel input into one scale factor. Ordinary scrolling pans.
+                let zoom_anchor = if self.canvas_rect.is_positive()
+                    && self.dialog.is_none()
+                    && self.pending.is_none()
+                    && ui.rect_contains_pointer(ui.max_rect())
+                {
+                    ctx.input(|input| {
+                        let factor = input.zoom_delta();
+                        input.pointer.hover_pos().and_then(|pointer| {
+                            (factor.is_finite() && factor > 0.0 && factor != 1.0)
+                                .then_some((pointer, factor))
+                        })
+                    })
+                } else {
+                    None
                 }
+                .map(|(pointer, factor)| {
+                    let point = (pointer - self.canvas_rect.min) / self.zoom;
+                    self.zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+                    (pointer, point)
+                });
                 let scroll = ScrollArea::both()
                     .auto_shrink([false, false])
-                    .animated(center_request.is_none())
+                    .animated(center_request.is_none() && zoom_anchor.is_none())
                     .show_viewport(ui, |ui, viewport| {
                         let ruler = if self.rulers { 22. } else { 0. };
                         let origin = ui.cursor().min + vec2(8. + ruler, 8. + ruler);
@@ -119,6 +130,9 @@ impl PaintApp {
                         let rect = Rect::from_min_size(origin, size);
                         self.canvas_rect = rect;
                         ui.allocate_space(size + vec2(22. + ruler, 22. + ruler));
+                        if let Some((pointer, point)) = zoom_anchor {
+                            ui.scroll_with_delta(pointer - (origin + point * self.zoom));
+                        }
                         if let Some(point) = center_request {
                             let offset = (vec2(point.0 as f32, point.1 as f32) * self.zoom
                                 + Vec2::splat(8.0 + ruler)

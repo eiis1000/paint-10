@@ -61,6 +61,8 @@ pub enum Icon {
     Measure,
     ResetMeasurement,
     Appearance,
+    Sun,
+    Moon,
     ChevronDown,
     ChevronUp,
 }
@@ -120,6 +122,8 @@ impl Icon {
             Self::Measure => "Measure",
             Self::ResetMeasurement => "Reset measurement",
             Self::Appearance => "Appearance",
+            Self::Sun => "Light mode",
+            Self::Moon => "Dark mode",
             Self::ChevronDown => "Expand",
             Self::ChevronUp => "Collapse",
         }

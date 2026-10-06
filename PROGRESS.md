@@ -1,5 +1,24 @@
 # Paint 10 work in progress
 
+## October 6: visible theme switch, rotated image bounds, touchpad zoom
+
+- User asks for a discoverable three-setting sun/Auto/moon theme control, canvas
+  growth after rotating pasted images, working touchpad zoom, and README updates.
+- Theme switch is visible beside Help on every tab, including a minimized ribbon.
+  View's old state-dependent theme dropdown label is now the stable Color theme.
+- Image rotation grows right/bottom canvas edges in the same undo transaction,
+  preserving all layers and reselecting the image when padding shifts indices.
+- Canvas uses egui's pinch/modified-wheel zoom factor with pointer anchoring;
+  unmodified scrolling still pans. README and browser guide describe the changes.
+- Local 192 library + 316 app tests, strict native/WASM Clippy and browser build
+  pass. Browser clipboard/rotation/export/pinch and compact theme-control checks
+  pass. Final CI/deployment and public-site replay remain pending.
+  Logs/evidence use /tmp/paint10-oct6-*; reused compiler outputs are in the
+  /tmp/paint10-dark-target and /tmp/paint10-dark-web-target directories.
+- Previous dark-mode commit d92b544 passed all six CI/Pages jobs in run
+  37403423756 and the live-site settings replay; its historical pending notes
+  below are superseded by that result.
+
 ## October 5: dark mode and remembered canvas defaults
 
 - User requests a tasteful dark mode, dark canvases by default in dark mode,

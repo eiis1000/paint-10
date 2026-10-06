@@ -531,8 +531,19 @@ mod tests {
             let ctx = Context::default();
             let mut app = PaintApp::new_with_context(&ctx, false);
             let initial = app.zoom;
+            for _ in 0..3 {
+                let _ = ctx.run(
+                    RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                        events: vec![Event::PointerMoved(pos2(100.0, 200.0))],
+                        ..Default::default()
+                    },
+                    |ctx| app.canvas(ctx),
+                );
+            }
             let _ = ctx.run(
                 RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
                     modifiers,
                     events: vec![Event::MouseWheel {
                         unit: MouseWheelUnit::Point,
@@ -543,15 +554,14 @@ mod tests {
                 },
                 |ctx| app.canvas(ctx),
             );
-            assert_eq!(
-                app.zoom,
-                initial
-                    * if modifiers == Modifiers::NONE {
-                        1.0
-                    } else {
-                        1.25
-                    }
-            );
+            if modifiers == Modifiers::NONE {
+                assert_eq!(app.zoom, initial);
+            } else {
+                assert!(
+                    app.zoom > initial,
+                    "Modified wheel input must zoom the picture"
+                );
+            }
         }
     }
 

@@ -1,5 +1,76 @@
 use super::*;
 
+#[test]
+fn theme_switcher_is_visible_on_every_tab_and_when_ribbon_is_collapsed() {
+    use crate::preferences::Appearance;
+    for width in [500.0, 1200.0] {
+        for tab in 0..4 {
+            for collapsed in [false, true] {
+                let ctx = Context::default();
+                ctx.enable_accesskit();
+                let mut app = PaintApp::new_with_context(&ctx, false);
+                app.view_tab = tab == 1;
+                app.image_tab = tab == 2;
+                app.collapsed = collapsed;
+                if tab == 3 {
+                    let index = app.doc.add_object(Object::new(
+                        ObjectKind::Text {
+                            text: "Caption".into(),
+                            format: Default::default(),
+                        },
+                        (10, 10),
+                    ));
+                    app.edit_text_object(index);
+                    app.text_tab = true;
+                }
+                let original = app.doc.composite();
+                let mut output = settle(&mut app, &ctx, width);
+                let light = bounds(&output, "Use light theme");
+                let auto = bounds(&output, "Use system theme");
+                let dark = bounds(&output, "Use dark theme");
+                for (_, node) in &output
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()
+                    .unwrap()
+                    .nodes
+                {
+                    if node.role() == egui::accesskit::Role::Tab {
+                        assert!(
+                            node.bounds().unwrap().x1 <= light.left() as f64,
+                            "Theme overlaps a tab at width {width}"
+                        );
+                    }
+                }
+                assert!(light.right() <= auto.left() && auto.right() <= dark.left());
+                assert!(
+                    dark.right()
+                        < bounds(
+                            &output,
+                            if collapsed {
+                                "Expand the ribbon"
+                            } else {
+                                "Minimize the ribbon"
+                            }
+                        )
+                        .left()
+                );
+                assert!(light.left() > bounds(&output, "Help").left() - 160.0);
+                for (label, value) in [
+                    ("Use dark theme", Appearance::Dark),
+                    ("Use system theme", Appearance::System),
+                    ("Use light theme", Appearance::Light),
+                ] {
+                    click(&mut app, &ctx, width, bounds(&output, label).center());
+                    output = settle(&mut app, &ctx, width);
+                    assert_eq!(app.appearance, value);
+                    assert_eq!(app.doc.composite(), original);
+                }
+            }
+        }
+    }
+}
+
 fn frame(app: &mut PaintApp, ctx: &Context, width: f32, events: Vec<Event>) -> FullOutput {
     let mut input = RawInput {
         screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 400.0))),

@@ -75,6 +75,81 @@ pub(super) const DARK_PAPER: Color = [38, 42, 49, 255];
 const LIGHT_PAINT: Color = [232, 235, 240, 255];
 
 impl PaintApp {
+    pub(super) fn theme_switcher(&mut self, ui: &mut Ui, ctx: &Context) {
+        let previous = self.appearance;
+        ui.allocate_ui_with_layout(
+            vec2(94.0, 24.0),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                Frame::NONE
+                    .stroke(Stroke::new(1.0_f32, palette(ctx).border))
+                    .corner_radius(3)
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        for (value, icon, label, tip, keys) in [
+                            (
+                                Appearance::Light,
+                                Some(Icon::Sun),
+                                "Use light theme",
+                                "Light mode",
+                                "DL",
+                            ),
+                            (
+                                Appearance::System,
+                                None,
+                                "Use system theme",
+                                "Auto: follow your system's light or dark theme",
+                                "DA",
+                            ),
+                            (
+                                Appearance::Dark,
+                                Some(Icon::Moon),
+                                "Use dark theme",
+                                "Dark mode",
+                                "DD",
+                            ),
+                        ] {
+                            let selected = self.appearance == value;
+                            let response = ui
+                                .add_sized(
+                                    vec2(if icon.is_some() { 26.0 } else { 40.0 }, 24.0),
+                                    Button::new(if icon.is_some() { "" } else { "Auto" })
+                                        .selected(selected),
+                                )
+                                .on_hover_text(tip);
+                            if let Some(icon) = icon {
+                                icons::draw(
+                                    ui.painter(),
+                                    Rect::from_center_size(
+                                        response.rect.center(),
+                                        vec2(16.0, 16.0),
+                                    ),
+                                    icon,
+                                );
+                            }
+                            response.widget_info(|| {
+                                WidgetInfo::selected(WidgetType::Button, true, selected, label)
+                            });
+                            keytips::register(
+                                ui,
+                                &response,
+                                "tabs",
+                                "Theme",
+                                keys,
+                                keytips::Kind::Button,
+                            );
+                            if response.clicked() {
+                                self.appearance = value;
+                            }
+                        }
+                    });
+            },
+        );
+        if self.appearance != previous {
+            self.save_appearance(ctx);
+        }
+    }
+
     pub(super) fn new_canvas(&mut self, ctx: &Context) {
         let dark = match self.canvas_background {
             CanvasBackground::MatchTheme => ctx.theme() == Theme::Dark,

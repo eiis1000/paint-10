@@ -1,5 +1,28 @@
 # Paint 10 verification log
 
+## October 6: theme switch, rotation growth, and touchpad zoom
+
+192 library and 316 application tests pass, plus strict native/WASM Clippy and
+the release browser build. New regressions cover all four tabs at 500/1200 px,
+minimized ribbons, direct theme changes, rotated pasted-image bounds on multiple
+layers, object-index shifts, custom/combined rotation, size-limit rollback,
+project exports, Undo/Redo, pinch zoom anchoring, modified wheel zoom, and plain
+scrolling. The older wheel test now exercises a real pointer over the canvas
+and checks zoom direction rather than the removed fixed 25% step.
+
+Isolated Chromium replay pasted a 1000×400 PNG into a 900×600 picture, producing
+a 1000×600 canvas. A ribbon rotation grew it to 1000×1000; Undo/Redo restored
+the respective bounds. Downloaded PNG pixels match the full rotated source
+exactly, including the bottom corners previously clipped off. Browser pinch
+events changed image zoom from 100% to 50% and back to 74%, with webpage scale
+remaining 1; plain wheel input panned without changing image zoom. Theme choices
+survive reload, and compact Text/Image screenshots show the sun/Auto/moon control
+without overlap. Evidence and logs use `/tmp/paint10-oct6-*`.
+
+Final CI and public-site replay remain separate gates on the implementation
+commit. The prior dark-mode commit d92b544 passed all six CI/Pages jobs in run
+37403423756 and a live settings replay.
+
 ## October 5: saved appearance and new-canvas defaults
 
 Native tests pass 192 library and 312 application cases, including System theme

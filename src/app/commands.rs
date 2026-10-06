@@ -483,7 +483,15 @@ impl PaintApp {
         // A lifted free-form selection already carries its alpha coverage.
         // Keep its color key without introducing opaque rotation/skew corners.
         resized.color_key = self.doc.objects[index].color_key;
-        self.doc.objects[index] = resized;
+        if angle != 0.0 {
+            if let Err(error) = self.replace_rotated_object(index, resized) {
+                self.doc.cancel();
+                self.clear_selection();
+                return Err(error);
+            }
+        } else {
+            self.doc.objects[index] = resized;
+        }
         self.doc.commit();
         self.refresh = true;
         Ok(())
@@ -535,6 +543,31 @@ impl PaintApp {
         self.refresh = true;
     }
 
+    /// Grow right/bottom bounds for a rotated image in the same history step.
+    /// Canvas padding can insert an object below the selection, shifting its index.
+    fn replace_rotated_object(&mut self, index: usize, object: Object) -> Result<(), String> {
+        let mut selected = index;
+        if matches!(object.kind, ObjectKind::Image(_)) {
+            let (width, height) = object
+                .rendered_dimensions()
+                .ok_or("The rotated picture would exceed the 16 megapixel limit.")?;
+            let width =
+                (i64::from(object.pos.0) + i64::from(width)).max(i64::from(self.doc.image.width()));
+            let height = (i64::from(object.pos.1) + i64::from(height))
+                .max(i64::from(self.doc.image.height()));
+            let width = u32::try_from(width).map_err(|_| "The expanded canvas is too large.")?;
+            let height = u32::try_from(height).map_err(|_| "The expanded canvas is too large.")?;
+            let previous_count = self.doc.objects.len();
+            if (width, height) != self.doc.image.dimensions() {
+                self.doc.resize_canvas(width, height, self.colors[1])?;
+            }
+            selected += self.doc.objects.len() - previous_count;
+        }
+        self.doc.objects[selected] = object;
+        self.select_object(selected);
+        Ok(())
+    }
+
     pub(in crate::app) fn rotate_picture(&mut self, angle: f32, absolute: bool) -> bool {
         if (self.object.is_some() || self.selection.is_some() || self.shape_draft.is_some())
             && !self.ensure_active_layer_editable()
@@ -559,7 +592,11 @@ impl PaintApp {
                 return false;
             }
             self.doc.begin();
-            self.doc.objects[index] = rotated;
+            if let Err(error) = self.replace_rotated_object(index, rotated) {
+                self.doc.cancel();
+                self.message = error;
+                return false;
+            }
             self.doc.commit();
             self.refresh = true;
         } else {
@@ -588,7 +625,11 @@ impl PaintApp {
                 let Some(index) = self.lift_selection() else {
                     return false;
                 };
-                if let Err(error) = self.doc.objects[index].rotate_to(angle) {
+                let mut rotated = self.doc.objects[index].clone();
+                if let Err(error) = rotated
+                    .rotate_to(angle)
+                    .and_then(|()| self.replace_rotated_object(index, rotated))
+                {
                     self.doc.cancel();
                     self.clear_selection();
                     self.message = error;

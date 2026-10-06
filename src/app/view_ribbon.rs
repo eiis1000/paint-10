@@ -87,7 +87,6 @@ impl PaintApp {
     }
 
     fn appearance_group(&mut self, ui: &mut Ui, o: Pos2, ctx: &Context) {
-        use crate::preferences::Appearance;
         let before = (self.appearance, self.canvas_background);
         if controls::current(ui).is_some_and(|scope| scope.name == "view_appearance") {
             ui.scope_builder(
@@ -106,17 +105,7 @@ impl PaintApp {
             return;
         }
         for (row, label, keys, scope, icon) in [
-            (
-                0,
-                match self.appearance {
-                    Appearance::System => "System theme",
-                    Appearance::Light => "Light mode",
-                    Appearance::Dark => "Dark mode",
-                },
-                "A",
-                "appearance_theme",
-                Icon::Appearance,
-            ),
+            (0, "Color theme", "A", "appearance_theme", Icon::Appearance),
             (1, "New canvas", "B", "appearance_canvas", Icon::New),
         ] {
             ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(

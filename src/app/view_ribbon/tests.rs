@@ -56,7 +56,7 @@ fn appearance_menus_switch_theme_and_new_canvas_without_recoloring_work() {
                 &mut app,
                 &ctx,
                 size,
-                control(&output, "Light mode").center(),
+                control(&output, "Color theme").center(),
             );
             output = settle(&mut app, &ctx, size);
         }
