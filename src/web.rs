@@ -10,15 +10,14 @@ let unsaved = false;
 export function installBrowserEvents(notify, canvas) {
     notifyPaint = notify;
 
-    // eframe forwards Ctrl/Cmd+R to Paint but deliberately leaves the browser's
-    // Reload default enabled. Keep the ruler shortcut inside the focused canvas;
-    // F5 and the browser Reload button still provide normal page reload.
+    // Keep canvas Select All and ruler shortcuts inside Paint instead of also
+    // selecting the page's HTML or reloading it. F5 still reloads the page.
     canvas.addEventListener('keydown', event => {
         if (
             (event.ctrlKey || event.metaKey)
             && !event.shiftKey
             && !event.altKey
-            && event.key.toLowerCase() === 'r'
+            && ['a', 'r'].includes(event.key.toLowerCase())
         ) {
             event.preventDefault();
         }

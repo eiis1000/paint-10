@@ -174,7 +174,7 @@ test('image paste reaches Paint before the backend stops bubbling; text stays wi
     assert.deepEqual(adapter.takePastedImages(), []);
 });
 
-test('ruler shortcut suppresses reload without taking over F5 or hard reload', async () => {
+test('canvas Select All and rulers suppress page actions without taking over other keys', async () => {
     globalThis.window = new Target();
     const canvas = new Target();
     adapter.installBrowserEvents(() => {}, canvas);
@@ -182,6 +182,9 @@ test('ruler shortcut suppresses reload without taking over F5 or hard reload', a
     for (const [properties, expected] of [
         [{ key: 'r', ctrlKey: true }, true],
         [{ key: 'R', metaKey: true }, true],
+        [{ key: 'a', ctrlKey: true }, true],
+        [{ key: 'A', metaKey: true }, true],
+        [{ key: 'a', ctrlKey: true, shiftKey: true }, false],
         [{ key: 'r', ctrlKey: true, shiftKey: true }, false],
         [{ key: 'F5' }, false],
         [{ key: 's', ctrlKey: true }, false],
@@ -189,6 +192,7 @@ test('ruler shortcut suppresses reload without taking over F5 or hard reload', a
         const key = event(properties);
         await canvas.dispatch('keydown', key, true);
         assert.equal(key.prevented, expected);
+        assert.equal(key.stopped, false, 'Paint must still receive its shortcut');
     }
 });
 
