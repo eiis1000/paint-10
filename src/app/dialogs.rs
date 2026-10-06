@@ -517,6 +517,14 @@ impl PaintApp {
     }
 
     pub(in crate::app) fn dialogs(&mut self, ctx: &Context) {
+        // The browser's About text lives in the initial HTML, so it is readable
+        // outside WebGL as well as through the app's usual Help entry points.
+        #[cfg(target_arch = "wasm32")]
+        if self.pending.is_none() && self.dialog == Some(Dialog::About) {
+            self.dialog = None;
+            crate::web::show_about(ctx.theme() == Theme::Dark);
+            return;
+        }
         if ctx.data(|data| {
             data.get_temp::<Vec<Event>>(pending_modal_input_key())
                 .is_some_and(|events| !events.is_empty())

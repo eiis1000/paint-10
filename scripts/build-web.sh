@@ -16,7 +16,9 @@ cargo build --locked --release --lib --target wasm32-unknown-unknown \
 mkdir -p "$paint_web_dir/pkg"
 wasm-bindgen --target web --out-dir "$paint_web_dir/pkg" --out-name paint_10 \
     "$paint_target_dir/wasm32-unknown-unknown/release/paint_10.wasm"
-cp web/index.html web/about.html web/sitemap.xml "$paint_web_dir/"
+cp web/index.html web/sitemap.xml "$paint_web_dir/"
+# Retire the standalone page from reused build directories and CI caches.
+rm -f "$paint_web_dir/about.html"
 cp assets/paint-10.svg assets/paint-10.png assets/paint-10.ico "$paint_web_dir/"
 cp assets/fonts/DejaVu-LICENSE.txt "$paint_web_dir/"
 mkdir -p "$paint_web_dir/licenses"

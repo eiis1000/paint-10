@@ -62,11 +62,12 @@ also makes the browser clipboard APIs available subject to user permissions.
 Images and projects stay in the browser; publishing the app does not upload your
 pictures.
 
-Search metadata lives in `web/index.html`; `web/about.html` provides a readable
-app description outside the canvas. Both pages are listed in `web/sitemap.xml`.
-For a fork or new domain, update the absolute URLs in all three files.
+Search metadata and the Help/About dialog's text are included in the initial
+`web/index.html`, outside the canvas. The dialog opens from Help, F1, or the
+File menu. For a fork or new domain, update the absolute URLs in that file and
+`web/sitemap.xml`.
 The site owner can submit `https://eiis1000.github.io/paint-10/sitemap.xml` in
-Google Search Console and request indexing for the two pages. A project-level
+Google Search Console and request indexing for the app. A project-level
 `robots.txt` would not control crawling: that file must live at the domain root.
 
 ## Files, text, and clipboard

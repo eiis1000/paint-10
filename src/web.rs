@@ -259,8 +259,19 @@ export async function writeClipboard(bytes) {
         }),
     ]);
 }
+
+export function showAbout(dark) {
+    document.documentElement.dataset.theme = dark ? 'Dark' : 'Light';
+    const dialog = document.querySelector('#about');
+    if (!dialog.open) {
+        window.getSelection()?.removeAllRanges();
+        dialog.showModal();
+    }
+}
 "#)]
 extern "C" {
+    #[wasm_bindgen(js_name = showAbout)]
+    pub(crate) fn show_about(dark: bool);
     #[wasm_bindgen(js_name = installBrowserEvents)]
     fn install_browser_events(notify: &js_sys::Function, canvas: &web_sys::HtmlCanvasElement);
     #[wasm_bindgen(js_name = takePastedImages)]
