@@ -319,9 +319,3 @@ pub(super) fn icon_row(
     keytips::set_badge_anchor(ui, &response, rect.left_center() + vec2(14.0, 0.0));
     response
 }
-
-pub(super) fn selectable(ui: &mut Ui, selected: bool, label: &str) -> Response {
-    let response = ui.selectable_label(selected, label);
-    named(ui, &response, label);
-    response
-}

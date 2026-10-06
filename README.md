@@ -225,7 +225,7 @@ Regenerate icons with `nix develop .#test -c bash scripts/build-icons.sh`.
 | Colors | HSV, linear RGB, approximate CMYK, OKLab/OKLCH, CSS input, alpha, gamut fitting |
 | Precision | Gradient fills, remembered tool widths, 3200% zoom, nearest-neighbor scaling, distance/angle measurement |
 | Files | Editable `.p10` projects; WebP, ICO, and PDF exports |
-| Interface | Image ribbon, extra Text controls, collapsible ribbon groups |
+| Interface | Evenly spaced ribbon tabs with an active underline, Image ribbon, extra Text controls, collapsible groups |
 | Rendering | Brush textures, fonts, dialogs, and keytips differ from Microsoft's implementation |
 | Platforms | Desktop and browser; file handling, fonts, and system integration vary by platform |
 
