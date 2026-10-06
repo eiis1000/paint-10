@@ -9,8 +9,9 @@ MS Paint. So I asked Astra to recreate Windows-10-era MS Paint, from scratch, in
 <img src="assets/paint-10.svg" width="96" height="96" align="right" alt="Paint 10 palette and brush icon">
 
 Paint 10 is a free, open-source MS Paint alternative for Linux, Windows, macOS,
-and the web. It recreates the Windows 10 ribbon interface and adds editable text,
-layers, transparency, and dark mode. Built in Rust with egui/eframe.
+and the web. It combines the Windows 10 ribbon interface with editable text and
+images, LaTeX equations, layers, arbitrary rotation, and pixel-art tools.
+Built in Rust with egui/eframe.
 
 **[Use Paint 10 online](https://eiis1000.github.io/paint-10/)** ·
 [Build status](https://github.com/eiis1000/paint-10/actions/workflows/build.yml)
@@ -85,19 +86,21 @@ desktop and OpenGL. `nix build .#paint-10-web` builds the static website.
 
 ## Using Paint 10
 
-- **Draw:** pencil, fill, eraser, eyedropper, nine brushes, and 23 shapes.
-  Color 1 is the foreground; right-click a swatch to set Color 2.
 - **Edit:** rectangular/free-form selections, crop, resize, skew, flips, and
-  arbitrary rotation. Ctrl+W opens the combined transform dialog.
-  Pasting or rotating an oversized image expands the canvas to fit.
-- **Text:** drag a text box, format words, and press Ctrl+Enter to finish.
-  Double-click it to edit again. **Text → LaTeX…** adds equations.
+  arbitrary rotation. Inserted images keep their originals for reversible crops
+  and color adjustments. Ctrl+W opens the combined transform dialog.
+- **Text:** drag a box, format individual words, add caption outlines, and press
+  Ctrl+Enter to finish. Double-click a finished box to edit it again.
   In the browser, **Font list → Load font** imports TTF, OTF, or TTC files.
+- **LaTeX:** **Text → LaTeX…** renders equations with a live preview.
+  Save a project to retain the editable math source.
 - **Layers:** enable **View → Layers** for ordering, visibility, locking,
   opacity, duplication, and merging. Edits affect the active layer.
-- **Pixel art:** use a 1-pixel Pencil, **View → Gridlines**, and
-  **Keep hard pixel edges** when resizing. Transparent Color 2 makes
-  clear, erase, and fill remove opacity.
+- **Pixel art:** 1-pixel Pencil, gridlines, 3200% zoom, and nearest-neighbor
+  resizing with **Keep hard pixel edges**. Transparent Color 2 makes clear,
+  erase, and fill remove opacity.
+- **Draw:** pencil, fill, eraser, eyedropper, nine brushes, and 23 shapes.
+  Color 1 is the foreground; right-click a swatch to set Color 2.
 - **Navigate:** touchpad pinch or Ctrl+wheel zooms around the pointer
   (Command+wheel on macOS); ordinary scrolling pans. Zoom spans 12.5–3200%.
 - **Appearance:** the **sun / Auto / moon** switch beside Help selects light,
@@ -216,15 +219,14 @@ Regenerate icons with `nix develop .#test -c bash scripts/build-icons.sh`.
 
 | Area | Paint 10 additions or differences |
 | --- | --- |
-| Appearance | Saved light, dark, and system themes; theme-aware canvas defaults |
 | Text | Reopenable boxes, mixed formatting, alignment, strikeout, caption outlines, LaTeX equations |
-| Images | Retained originals, reversible crops and adjustments, arbitrary rotation, canvas growth on rotation |
+| Images | Retained originals, reversible crops and adjustments, arbitrary rotation |
 | Layers | Optional layers with visibility, locking, opacity, and merging |
 | Transparency | Full alpha in the canvas, colors, and supported exports |
 | Colors | HSV, linear RGB, approximate CMYK, OKLab/OKLCH, CSS input, alpha, gamut fitting |
 | Precision | Gradient fills, remembered tool widths, 3200% zoom, nearest-neighbor scaling, distance/angle measurement |
 | Files | Editable `.p10` projects; WebP, ICO, and PDF exports |
-| Interface | Evenly spaced ribbon tabs with an active underline, Image ribbon, extra Text controls, collapsible groups |
+| Interface | Image ribbon, extra Text controls, collapsible groups |
 | Rendering | Brush textures, fonts, dialogs, and keytips differ from Microsoft's implementation |
 | Platforms | Desktop and browser; file handling, fonts, and system integration vary by platform |
 
