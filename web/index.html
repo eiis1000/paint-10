@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <title>Paint 10 — Free MS Paint Online Alternative</title>
-    <meta name="description" content="Use Paint 10, a free MS Paint alternative online. Draw, edit photos, add text and use layers in your browser. No sign-up; images stay on your device.">
+    <meta name="description" content="Paint 10 brings Windows 10-style MS Paint to the web. Draw, edit images, add text and layers online for free. No sign-up or uploads; light and dark modes.">
     <meta name="application-name" content="Paint 10">
     <meta name="robots" content="index, follow, max-image-preview:large">
     <link rel="canonical" href="https://eiis1000.github.io/paint-10/">
@@ -100,8 +100,19 @@
         padding: 24px;
       }
 
-      #loading strong {
+      #loading h1 {
         font-size: 30px;
+        margin: 0;
+      }
+
+      #loading p {
+        max-width: 42ch;
+        margin: 0 auto;
+        line-height: 1.5;
+      }
+
+      #loading a {
+        color: inherit;
       }
 
       #loading[hidden] {
@@ -113,8 +124,13 @@
   <body>
     <canvas id="paint" aria-label="Paint 10 drawing application"></canvas>
     <div id="loading">
-      <strong>Paint 10</strong>
-      <span id="status">Loading…</span>
+      <h1>Paint 10 — MS Paint online alternative</h1>
+      <p>A free drawing and image editor inspired by Windows 10 Paint.
+        Brushes, shapes, text, layers, and dark mode, right in your web browser.</p>
+      <span id="status" role="status">Loading…</span>
+      <p><a href="./about.html">About Paint 10</a> ·
+        <a href="https://github.com/eiis1000/paint-10#readme">Source and desktop downloads</a></p>
+      <noscript><p>Enable JavaScript to use the editor. Your images stay on your device.</p></noscript>
     </div>
 
     <script type="module">

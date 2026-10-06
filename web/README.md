@@ -62,9 +62,12 @@ also makes the browser clipboard APIs available subject to user permissions.
 Images and projects stay in the browser; publishing the app does not upload your
 pictures.
 
-The static HTML includes a search description, canonical URL, social previews,
-and structured application metadata. When hosting a fork or changing domains,
-update the absolute URLs in `web/index.html` to the intended public site.
+Search metadata lives in `web/index.html`; `web/about.html` provides a readable
+app description outside the canvas. Both pages are listed in `web/sitemap.xml`.
+For a fork or new domain, update the absolute URLs in all three files.
+The site owner can submit `https://eiis1000.github.io/paint-10/sitemap.xml` in
+Google Search Console and request indexing for the two pages. A project-level
+`robots.txt` would not control crawling: that file must live at the domain root.
 
 ## Files, text, and clipboard
 
