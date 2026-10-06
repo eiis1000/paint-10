@@ -13,7 +13,6 @@ and the web. It recreates the Windows 10 ribbon interface and adds editable text
 layers, transparency, and dark mode. Built in Rust with egui/eframe.
 
 **[Use Paint 10 online](https://eiis1000.github.io/paint-10/)** ·
-[About the web app](https://eiis1000.github.io/paint-10/about.html) ·
 [Build status](https://github.com/eiis1000/paint-10/actions/workflows/build.yml)
 
 ## Contents

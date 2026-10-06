@@ -130,7 +130,7 @@
             runHook preInstall
             mkdir -p "$out/pkg"
             wasm-bindgen --target web --out-dir "$out/pkg" --out-name paint_10 target/wasm32-unknown-unknown/release/paint_10.wasm
-            cp web/index.html web/about.html web/sitemap.xml "$out/"
+            cp web/index.html web/sitemap.xml "$out/"
             cp assets/paint-10.svg assets/paint-10.png assets/paint-10.ico "$out/"
             cp assets/fonts/DejaVu-LICENSE.txt "$out/"
             mkdir -p "$out/licenses"
