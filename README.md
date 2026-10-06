@@ -21,30 +21,46 @@ Paint 10 is an independent project. Linux and the browser are manually tested;
 CI builds and tests Linux, Windows, macOS, Nix, and WebAssembly.
 See [platform status and limits](#platform-status-and-limits).
 
+## Contents
+
+- [Get started](#get-started)
+  - [Linux, Windows, or macOS with Cargo](#linux-windows-or-macos-with-cargo)
+  - [In your browser](#in-your-browser)
+  - [Linux with Nix](#linux-with-nix)
+- [Drawing and editing](#drawing-and-editing)
+- [Saving your work](#saving-your-work)
+- [Keyboard shortcuts](#keyboard-shortcuts)
+- [Install in NixOS or Home Manager](#install-in-nixos-or-home-manager)
+- [Development](#development)
+- [Platform status and limits](#platform-status-and-limits)
+- [Differences from Windows 10 Paint](#differences-from-windows-10-paint)
+- [License](#license)
+
 ## Get started
 
-### Linux with Nix
+### Linux, Windows, or macOS with Cargo
 
-With Nix flakes enabled, run directly from GitHub; no checkout is needed:
+From a checkout, install Rust and your platform's native build dependencies:
 
-```sh
-nix run github:eiis1000/paint-10#paint-10
-# Or open an existing picture or Paint 10 project:
-nix run github:eiis1000/paint-10#paint-10 -- /path/to/picture.png
-```
-
-To run your local changes from a checkout:
+| Platform | Build prerequisites |
+| --- | --- |
+| Linux | C/C++ build tools, `pkg-config`, GTK 3, and X11/Wayland/OpenGL development libraries; see the [Ubuntu packages in CI](.github/workflows/build.yml) |
+| Windows | Visual Studio C++ build tools and the Rust MSVC toolchain |
+| macOS | Xcode Command Line Tools and Rust |
 
 ```sh
-nix run path:.
-# Or open an existing picture or Paint 10 project:
-nix run path:. -- /path/to/picture.png
+cargo build --locked --release
 ```
 
-To build separately, use `nix build path:.` and then `./result/bin/paint-10`.
-The flake supports `x86_64-linux` and `aarch64-linux`, with dependencies pinned
-in `flake.lock`. Running the native app requires a graphical desktop and OpenGL.
-NixOS and Home Manager installation is covered [below](#install-in-nixos-or-home-manager).
+Run `target/release/paint-10` on Linux/macOS or `target/release/paint-10.exe` on
+Windows. Pass an image or `.p10` path to open it. These are the default output
+paths; `CARGO_TARGET_DIR` overrides `target/`.
+
+For a distributable archive, run `python3 scripts/package-native.py` with Python
+3.12 or newer (`python` on Windows). It produces a ZIP on Windows or a tar.gz on
+Linux/macOS in the Cargo target directory. The macOS archive contains
+**Paint 10.app**. Linux archives require the corresponding system libraries
+at runtime.
 
 ### In your browser
 
@@ -72,29 +88,28 @@ browser checks pass and Pages is configured to use **GitHub Actions**.
 The [browser guide](web/README.md) also covers building
 without Nix, font loading, downloads, and clipboard permissions.
 
-### Linux, Windows, or macOS with Cargo
+### Linux with Nix
 
-From a checkout, install Rust and your platform's native build dependencies:
-
-| Platform | Build prerequisites |
-| --- | --- |
-| Linux | C/C++ build tools, `pkg-config`, GTK 3, and X11/Wayland/OpenGL development libraries; see the [Ubuntu packages in CI](.github/workflows/build.yml) |
-| Windows | Visual Studio C++ build tools and the Rust MSVC toolchain |
-| macOS | Xcode Command Line Tools and Rust |
+With Nix flakes enabled, run directly from GitHub; no checkout is needed:
 
 ```sh
-cargo build --locked --release
+nix run github:eiis1000/paint-10#paint-10
+# Or open an existing picture or Paint 10 project:
+nix run github:eiis1000/paint-10#paint-10 -- /path/to/picture.png
 ```
 
-Run `target/release/paint-10` on Linux/macOS or `target/release/paint-10.exe` on
-Windows. Pass an image or `.p10` path to open it. These are the default output
-paths; `CARGO_TARGET_DIR` overrides `target/`.
+To run your local changes from a checkout:
 
-For a distributable archive, run `python3 scripts/package-native.py` with Python
-3.12 or newer (`python` on Windows). It produces a ZIP on Windows or a tar.gz on
-Linux/macOS in the Cargo target directory. The macOS archive contains
-**Paint 10.app**. Linux archives require the corresponding system libraries
-at runtime.
+```sh
+nix run path:.
+# Or open an existing picture or Paint 10 project:
+nix run path:. -- /path/to/picture.png
+```
+
+To build separately, use `nix build path:.` and then `./result/bin/paint-10`.
+The flake supports `x86_64-linux` and `aarch64-linux`, with dependencies pinned
+in `flake.lock`. Running the native app requires a graphical desktop and OpenGL.
+NixOS and Home Manager installation is covered [below](#install-in-nixos-or-home-manager).
 
 ## Drawing and editing
 
