@@ -65,6 +65,38 @@ fn ribbon_focus(ui: &Ui, response: &Response) {
     }
 }
 
+fn ribbon_tab(ui: &mut Ui, label: &str, selected: bool) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(70.0, 28.0), Sense::click());
+    let colors = theme::palette(ui.ctx());
+    if selected || response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            0.0,
+            if selected {
+                colors.ribbon
+            } else {
+                colors.hover
+            },
+        );
+    }
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::proportional(13.0),
+        colors.text,
+    );
+    if selected {
+        ui.painter().rect_filled(
+            Rect::from_min_max(pos2(rect.left(), rect.bottom() - 2.0), rect.max),
+            0.0,
+            colors.accent,
+        );
+    }
+    ribbon_focus(ui, &response);
+    response
+}
+
 fn paint_style_choice(
     ui: &mut Ui,
     selected: bool,
@@ -296,18 +328,39 @@ impl PaintApp {
         }
         let mut tab_activated = false;
         let tabs = TopBottomPanel::top("tabs")
-            .exact_height(27.)
+            .exact_height(28.0)
             .frame(Frame::NONE.fill(theme::palette(ctx).title))
             .show(ctx, |ui| {
+                // Tabs occupy the whole strip. Generic button spacing leaves
+                // detached boxes with uneven gaps above, below, and between them.
+                ui.spacing_mut().item_spacing = Vec2::ZERO;
+                ui.spacing_mut().interact_size.y = 28.0;
                 ui.horizontal(|ui| {
                     ui.scope(|ui| {
-                        ui.visuals_mut().widgets.inactive.bg_fill = BLUE;
-                        ui.visuals_mut().widgets.inactive.weak_bg_fill = BLUE;
+                        ui.spacing_mut().button_padding = Vec2::ZERO;
+                        let widgets = &mut ui.visuals_mut().widgets;
+                        for widget in [
+                            &mut widgets.inactive,
+                            &mut widgets.hovered,
+                            &mut widgets.active,
+                            &mut widgets.open,
+                        ] {
+                            widget.bg_fill = BLUE;
+                            widget.weak_bg_fill = BLUE;
+                            widget.bg_stroke = Stroke::NONE;
+                        }
+                        widgets.hovered.weak_bg_fill = Color32::from_rgb(18, 102, 174);
+                        widgets.open.weak_bg_fill = Color32::from_rgb(18, 102, 174);
                         ui.visuals_mut().override_text_color = Some(Color32::WHITE);
-                        let file =
-                            egui::menu::menu_custom_button(ui, Button::new("  File  "), |ui| {
+                        let file = egui::menu::menu_custom_button(
+                            ui,
+                            Button::new("File").min_size(vec2(52.0, 28.0)),
+                            |ui| {
+                                ui.set_style(ctx.style());
                                 self.file_menu(ui, ctx);
-                            });
+                            },
+                        );
+                        ribbon_focus(ui, &file.response);
                         keytips::register(
                             ui,
                             &file.response,
@@ -320,12 +373,7 @@ impl PaintApp {
                             ribbon_layout::close_groups(ctx);
                         }
                     });
-                    for (index, label) in [
-                        (0, "   Home   "),
-                        (1, "   View   "),
-                        (2, "   Image   "),
-                        (3, "   Text   "),
-                    ] {
+                    for (index, label) in [(0, "Home"), (1, "View"), (2, "Image"), (3, "Text")] {
                         if index == 3 && self.text_edit.is_none() {
                             continue;
                         }
@@ -335,7 +383,7 @@ impl PaintApp {
                             2 => self.image_tab && !self.text_tab,
                             _ => self.text_tab,
                         };
-                        let response = controls::selectable(ui, selected, label);
+                        let response = ribbon_tab(ui, label, selected);
                         let (keys, scope) = match index {
                             0 => ("H", "home"),
                             1 => ("V", "view"),
