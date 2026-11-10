@@ -9,6 +9,18 @@ permissions:
   contents: read
 
 jobs:
+  privacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/check-repository-privacy.py --all-history
+      - run: python -m unittest discover -s scripts/tests -p test_repository_privacy.py -v
+
   native:
     strategy:
       fail-fast: false

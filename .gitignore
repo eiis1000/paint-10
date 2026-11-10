@@ -1,6 +1,10 @@
 /target/
 /tmp/
 /PROGRESS.md
+/PARITY_AUDIT.md
+/.agents/
+/.codex/
+/.aws/
 /result
 /result-*
 /.direnv/

@@ -196,8 +196,8 @@ nix develop .#test -c scripts/headless-desktop.sh
 ```
 
 Engine code is in `src/`, the GUI in `src/app/`, and the browser host in `web/`.
-See [TESTING.md](TESTING.md) for verification, [FEATURES.md](FEATURES.md) for
-coverage, and [PARITY_AUDIT.md](PARITY_AUDIT.md) for the detailed Paint comparison.
+See [TESTING.md](TESTING.md) for verification and [FEATURES.md](FEATURES.md) for
+coverage and compatibility limits.
 Regenerate icons with `nix develop .#test -c bash scripts/build-icons.sh`.
 
 ## Platform support and limits

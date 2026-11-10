@@ -1,6 +1,6 @@
 # Paint 10 compatibility checklist
 
-The target is Windows 10's ribbon-based Paint. A checked feature means implemented; manual verification is recorded separately in `TESTING.md`. `PARITY_AUDIT.md` records the reopened audit and remaining differences; this checklist alone does not establish completion.
+The target is Windows 10's ribbon-based Paint. A checked feature means implemented; verification and its limits are recorded in `TESTING.md`. This checklist alone does not establish completion.
 
 - [x] Home/View ribbon, quick save/undo/redo, palette, Color 1/2, status, scrolling canvas
 - [x] Responsive ribbon groups down to 500px, keytips anchored to real controls, group and menu navigation
