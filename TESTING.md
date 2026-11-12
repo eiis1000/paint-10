@@ -34,3 +34,25 @@ restricting commit authorship. It is a targeted regression check, not a
 comprehensive secret scanner.
 With `uv` installed, enable the local commit/push checks using
 `git config core.hooksPath .githooks`. CI also checks reachable history.
+
+## CI cost controls
+
+- Pushes to `main` and pull requests run CI; feature-branch pushes do not also
+  duplicate their PR run. New commits cancel superseded runs of the same ref.
+- Documentation-only changes run the lightweight checks. Native code changes
+  run tests and Clippy on Linux, Windows and macOS; web-only changes use Linux.
+- Linux native and browser builds share a job and Cargo cache. Compiled target
+  code remains specific to its platform, compiler and profile. PRs restore
+  these caches but do not save separate copies.
+- Ordinary native checks use the development profile. `v*` tags and manual
+  **full** runs test and package in the release profile, reusing dependencies
+  within that profile. Formatting and Python tests run once per workflow.
+- Nix package builds run for flake, dependency, build-script and workflow
+  changes, plus full runs. Ordinary Rust edits rely on native Cargo tests;
+  use a full run to verify those changes against the pinned Nix toolchain.
+- Native archives expire after seven days. Browser previews and Pages uploads
+  expire after one day; default-branch builds upload only the Pages artifact.
+  Artifact expiry does not remove an already deployed Pages site.
+- CI downloads the checksum-pinned official `wasm-bindgen` binary instead of
+  compiling its CLI. Update its version and checksum together when updating
+  the matching Cargo dependency and browser build script.

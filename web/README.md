@@ -36,8 +36,10 @@ The binding generator version must match the crate pinned in `Cargo.toml`.
 ## Publish with GitHub Pages
 
 The repository's [Build and test workflow](../.github/workflows/build.yml) builds
-the browser app and deploys it to GitHub Pages only after the native, Nix, and
-browser checks all pass. This repository's site is configured already.
+the browser app and deploys it to GitHub Pages after all checks selected for
+that change pass. Native checks run for shared code changes; Nix builds run for
+packaging/dependency changes or explicit full runs. This repository's site is
+configured already.
 For a fork or a new repository:
 
 1. Open **Settings → Pages → Build and deployment** and set **Source** to
@@ -48,11 +50,13 @@ For a fork or a new repository:
    A project repository normally appears at
    `https://OWNER.github.io/REPOSITORY/`.
 
-The workflow detects the default branch instead of assuming `main` or `master`.
-Pull requests, tags, and other branches are tested without deployment. GitHub's
+Deployment checks the repository's default branch. The push trigger targets
+`main`; adjust it if a fork uses another default branch. Pull requests and
+version tags are tested without deployment. GitHub's
 built-in token handles deployment; no personal access token or repository secret
 is needed. Until the Pages source is enabled, the deployment job reports a Pages
-configuration error; the build artifacts remain downloadable from the run.
+configuration error. The Pages artifact is retained for one day; PR builds
+provide a browser preview archive with the same retention.
 These steps follow [GitHub's custom Pages workflow documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
 
 The deployed artifact contains only the generated static app, icons, and bundled

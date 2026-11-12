@@ -189,6 +189,10 @@ nix flake check
 
 Set `CARGO_TARGET_DIR` to relocate Cargo, web, and packaging output.
 Nix builds use Crane to cache compiled dependencies; CI retains that cache.
+CI tests changed native code on Linux, Windows, and macOS. Native release
+archives are built for `v*` tags or **Run workflow → full**, and retained for
+seven days. Ordinary pushes build the website without also packaging native
+releases. See [verification](TESTING.md) for the CI checks and caching policy.
 For GUI testing on an isolated Xvfb desktop:
 
 ```sh
